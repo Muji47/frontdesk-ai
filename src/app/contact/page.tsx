@@ -139,8 +139,8 @@ export default function ContactPage() {
               <h3 className="font-bold text-sm text-slate-900">Direct Inquiries</h3>
               <p>For custom partnerships, API access, or enterprise practice networks:</p>
               <div className="space-y-1 font-mono text-[11px] text-indigo-600">
-                <div>hello@frontdesk.ai</div>
-                <div>support@frontdesk.ai</div>
+                <div>hello@echo.ai</div>
+                <div>support@echo.ai</div>
               </div>
             </div>
 

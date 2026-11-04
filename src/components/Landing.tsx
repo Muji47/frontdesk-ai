@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { industries, industryList, type Industry } from "@/content/industries";
 import { DemoWidget } from "./DemoWidget";
 
-const STORAGE_KEY = "frontdesk.industry";
+const STORAGE_KEY = "echo.industry";
 
 export function Landing({ initial, switchable }: { initial: string; switchable: boolean }) {
   const [slug, setSlug] = useState(initial);

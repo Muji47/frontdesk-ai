@@ -381,8 +381,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         <div>
           {/* Logo & Org Header */}
           <div className="p-4 border-b border-slate-100">
-            <Link href="/" className="flex items-center gap-2.5 font-bold text-sm text-slate-900 group">
-              <EchoLogo size={22} tile={true} tileSize="h-9 w-9" showWordmark={true} wordmarkClassName="text-base font-extrabold text-slate-900 tracking-tight" />
+            <Link href="/" className="flex items-center gap-2.5 font-bold text-slate-900 group">
+              <EchoLogo size={22} tile={true} tileSize="h-9 w-9" />
+              <span className="font-extrabold tracking-tight text-slate-900 text-lg">
+                Echo<span className="text-indigo-600">.ai</span>
+              </span>
             </Link>
             <div className="mt-3 rounded-xl bg-slate-50 p-2.5 border border-slate-100">
               <div className="text-xs font-bold text-slate-900 truncate">{user.orgName}</div>

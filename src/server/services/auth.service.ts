@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { db, hashPassword, verifyPassword, dummyPasswordCheck, withTransaction } from "@/lib/db";
+import { db, hashPassword, verifyPassword, dummyPasswordCheck, withTransaction, seedOrganizationData } from "@/lib/db";
 import {
   RegisterInputSchema,
   LoginInputSchema,
@@ -71,6 +71,9 @@ export class AuthService {
         VALUES (?, ?, ?, ?, ?, 'right', 'Friendly')
       `).run(agentId, orgId, defaultAgentName, defaultGreeting, defaultColor);
     });
+
+    // Seed realistic initial operational data for the new organization
+    seedOrganizationData(orgId, input.industry, input.businessName);
 
     // 3. Issue Session Token
     const { token, expiresAt } = this.createSession(userId);

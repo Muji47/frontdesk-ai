@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { DashboardService } from "@/server/services/dashboard.service";
 import { DashboardClient } from "./DashboardClient";
 
 export default async function DashboardPage() {
@@ -9,5 +10,7 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  return <DashboardClient user={user} />;
+  const initialData = DashboardService.getDashboardData(user.orgId, user.industry);
+
+  return <DashboardClient user={user} initialData={initialData} />;
 }

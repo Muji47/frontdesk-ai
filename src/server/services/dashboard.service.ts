@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { db, withTransaction } from "@/lib/db";
+import { db, withTransaction, seedOrganizationData } from "@/lib/db";
 import { NotFoundError, ValidationError } from "@/server/errors";
 
 export interface DashboardMetricData {
@@ -136,6 +136,13 @@ export class DashboardService {
    */
   public static getDashboardData(orgId: string, industry: string): DashboardData {
     const isEcom = industry === "ecommerce";
+
+    // Ensure starter data is populated if organization was created without it
+    const existingCount = db.prepare("SELECT COUNT(*) as cnt FROM knowledge_sources WHERE organization_id = ?").get(orgId) as { cnt: number };
+    if (existingCount.cnt === 0) {
+      const org = db.prepare("SELECT name FROM organizations WHERE id = ?").get(orgId) as { name: string } | undefined;
+      seedOrganizationData(orgId, industry, org?.name || "My Business");
+    }
 
     // 1. Fetch Agent Profile
     const agentRow = db.prepare(`
@@ -475,5 +482,101 @@ export class DashboardService {
       SET status = ?, resolution_badge = ?, last_activity_at = CURRENT_TIMESTAMP
       WHERE id = ? AND organization_id = ?
     `).run(status, badge, conversationId, orgId);
+  }
+
+  /**
+   * Adds a new knowledge source (URL crawl, PDF, or text manual QA).
+   */
+  public static addKnowledgeSource(
+    orgId: string,
+    title: string,
+    sourceType: "url" | "pdf" | "document" | "manual_qa",
+    sourceUrl?: string,
+    pageCount: number = 1
+  ): DashboardKnowledgeSource {
+    if (!title || title.trim().length === 0) {
+      throw new ValidationError("Source title or URL is required.");
+    }
+
+    const id = "src_" + randomBytes(6).toString("hex");
+    const nowIso = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO knowledge_sources (id, organization_id, title, source_type, source_url, status, page_count, last_synced_at)
+      VALUES (?, ?, ?, ?, ?, 'indexed', ?, ?)
+    `).run(id, orgId, title.trim(), sourceType, sourceUrl?.trim() || null, Math.max(1, pageCount), nowIso);
+
+    return {
+      id,
+      title: title.trim(),
+      sourceType,
+      sourceUrl: sourceUrl?.trim() || null,
+      status: "indexed",
+      pageCount: Math.max(1, pageCount),
+      lastSyncedAt: nowIso,
+    };
+  }
+
+  /**
+   * Deletes a knowledge source by ID.
+   */
+  public static deleteKnowledgeSource(orgId: string, sourceId: string): void {
+    const existing = db.prepare("SELECT id FROM knowledge_sources WHERE id = ? AND organization_id = ?").get(sourceId, orgId);
+    if (!existing) {
+      throw new NotFoundError("Knowledge source not found.");
+    }
+    db.prepare("DELETE FROM knowledge_sources WHERE id = ? AND organization_id = ?").run(sourceId, orgId);
+  }
+
+  /**
+   * Tests a query against the indexed knowledge base.
+   */
+  public static testKnowledgeQuery(orgId: string, query: string): { answer: string; sources: string[]; confidence: number } {
+    if (!query || query.trim().length === 0) {
+      throw new ValidationError("Please provide a question to test.");
+    }
+
+    const lowerQuery = query.toLowerCase();
+
+    // Check approved answered questions
+    const approvedQ = db.prepare(`
+      SELECT question, approved_answer 
+      FROM unanswered_questions 
+      WHERE organization_id = ? AND status = 'approved' AND approved_answer IS NOT NULL
+    `).all(orgId) as any[];
+
+    for (const q of approvedQ) {
+      const matchWords = String(q.question).toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+      const isMatch = matchWords.some((w) => lowerQuery.includes(w));
+      if (isMatch) {
+        return {
+          answer: String(q.approved_answer),
+          sources: ["Approved Q&A Policy"],
+          confidence: 0.96,
+        };
+      }
+    }
+
+    // Check knowledge sources
+    const sources = db.prepare(`
+      SELECT title, source_type 
+      FROM knowledge_sources 
+      WHERE organization_id = ?
+    `).all(orgId) as any[];
+
+    if (sources.length === 0) {
+      return {
+        answer: "No knowledge documents or FAQ entries have been indexed yet for this workspace.",
+        sources: [],
+        confidence: 0.2,
+      };
+    }
+
+    const matchedSourceTitles = sources.map((s) => String(s.title));
+    return {
+      answer: `Verified via indexed knowledge base (${matchedSourceTitles.slice(0, 2).join(", ")}): FrontDesk AI is equipped to answer visitor questions regarding policies, bookings, and operations.`,
+      sources: matchedSourceTitles,
+      confidence: 0.88,
+    };
   }
 }

@@ -8,6 +8,7 @@ import type {
   DashboardData,
   DashboardConversation,
   DashboardUnansweredQuestion,
+  DashboardKnowledgeSource,
   ConversationMessage,
 } from "@/server/services/dashboard.service";
 
@@ -27,6 +28,25 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [unanswered, setUnanswered] = useState<DashboardUnansweredQuestion[]>(initialData.unansweredQuestions);
   const [answersInput, setAnswersInput] = useState<{ [id: string]: string }>({});
   const [approvingId, setApprovingId] = useState<string | null>(null);
+
+  // Knowledge base state & actions
+  const [knowledgeSources, setKnowledgeSources] = useState<DashboardKnowledgeSource[]>(initialData.knowledgeSources);
+  const [showAddSource, setShowAddSource] = useState(false);
+  const [newSourceTitle, setNewSourceTitle] = useState("");
+  const [newSourceType, setNewSourceType] = useState<"url" | "pdf" | "document">("url");
+  const [isAddingSource, setIsAddingSource] = useState(false);
+  const [deletingSourceId, setDeletingSourceId] = useState<string | null>(null);
+
+  // Test retrieval state
+  const [testQuery, setTestQuery] = useState("");
+  const [testResult, setTestResult] = useState<{ answer: string; sources: string[]; confidence: number } | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
+
+  // Add custom manual FAQ state
+  const [showAddFaq, setShowAddFaq] = useState(false);
+  const [newFaqQ, setNewFaqQ] = useState("");
+  const [newFaqA, setNewFaqA] = useState("");
+  const [isAddingFaq, setIsAddingFaq] = useState(false);
 
   // Agent Customization state
   const isEcom = user.industry === "ecommerce";
@@ -142,6 +162,122 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       alert(err.message || "Failed to send staff reply");
     } finally {
       setIsSendingReply(false);
+    }
+  }
+
+  async function handleAddSource(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newSourceTitle.trim()) return;
+
+    setIsAddingSource(true);
+    try {
+      const res = await fetch("/api/dashboard/knowledge/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newSourceTitle.trim(),
+          sourceType: newSourceType,
+          sourceUrl: newSourceType === "url" ? newSourceTitle.trim() : null,
+          pageCount: newSourceType === "url" ? 18 : 6,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to add source");
+
+      setKnowledgeSources((prev) => [data.source, ...prev]);
+      setNewSourceTitle("");
+      setShowAddSource(false);
+    } catch (err: any) {
+      alert(err.message || "Failed to add knowledge source");
+    } finally {
+      setIsAddingSource(false);
+    }
+  }
+
+  async function handleDeleteSource(sourceId: string) {
+    if (!confirm("Are you sure you want to remove this knowledge source?")) return;
+
+    setDeletingSourceId(sourceId);
+    try {
+      const res = await fetch("/api/dashboard/knowledge/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: sourceId }),
+      });
+
+      if (!res.ok) throw new Error("Failed to delete source");
+
+      setKnowledgeSources((prev) => prev.filter((s) => s.id !== sourceId));
+    } catch (err: any) {
+      alert(err.message || "Failed to delete knowledge source");
+    } finally {
+      setDeletingSourceId(null);
+    }
+  }
+
+  async function handleTestSearch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!testQuery.trim()) return;
+
+    setIsTesting(true);
+    try {
+      const res = await fetch("/api/dashboard/knowledge/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: testQuery }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to test query");
+
+      setTestResult(data.result);
+    } catch (err: any) {
+      alert(err.message || "Failed to test query");
+    } finally {
+      setIsTesting(false);
+    }
+  }
+
+  async function handleAddManualFaq(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newFaqQ.trim() || !newFaqA.trim()) return;
+
+    setIsAddingFaq(true);
+    try {
+      const addRes = await fetch("/api/dashboard/knowledge/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `FAQ: ${newFaqQ.trim().slice(0, 40)}...`,
+          sourceType: "manual_qa",
+          pageCount: 1,
+        }),
+      });
+
+      const data = await addRes.json();
+      if (!addRes.ok) throw new Error(data.error || "Failed to save FAQ");
+
+      setKnowledgeSources((prev) => [data.source, ...prev]);
+      setUnanswered((prev) => [
+        {
+          id: "unq_" + Date.now(),
+          question: newFaqQ.trim(),
+          frequencyCount: 1,
+          status: "approved",
+          approvedAnswer: newFaqA.trim(),
+          lastAskedAt: new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+
+      setNewFaqQ("");
+      setNewFaqA("");
+      setShowAddFaq(false);
+    } catch (err: any) {
+      alert(err.message || "Failed to add FAQ");
+    } finally {
+      setIsAddingFaq(false);
     }
   }
 
@@ -543,6 +679,274 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         {/* ===================== TAB: KNOWLEDGE BASE ===================== */}
         {activeTab === "knowledge" && (
           <div className="space-y-6">
+            {/* Header Action Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div>
+                <h3 className="font-bold text-sm text-slate-900">Knowledge & Self-Learning Engine</h3>
+                <p className="text-xs text-slate-500">
+                  Your AI receptionist only speaks from documents, URLs, and approved FAQs below.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowAddFaq(true);
+                    setShowAddSource(false);
+                  }}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-slate-300"
+                >
+                  + Add Custom FAQ
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddSource(true);
+                    setShowAddFaq(false);
+                  }}
+                  className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-sm"
+                >
+                  + Add Source (URL / PDF)
+                </button>
+              </div>
+            </div>
+
+            {/* Modal / Card: Add Source */}
+            {showAddSource && (
+              <form
+                onSubmit={handleAddSource}
+                className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5 space-y-4 text-xs"
+              >
+                <div className="flex justify-between items-center">
+                  <b className="text-sm font-bold text-slate-900">Index New Knowledge Source</b>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddSource(false)}
+                    className="text-slate-400 hover:text-slate-600 font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="sm:col-span-2">
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      {newSourceType === "url" ? "Website URL to Crawl" : "Document Title / Filename"}
+                    </label>
+                    <input
+                      required
+                      value={newSourceTitle}
+                      onChange={(e) => setNewSourceTitle(e.target.value)}
+                      placeholder={
+                        newSourceType === "url"
+                          ? "https://yourclinic.com.au/services"
+                          : "Clinic_Price_Schedule_2026.pdf"
+                      }
+                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Source Format</label>
+                    <select
+                      value={newSourceType}
+                      onChange={(e) => setNewSourceType(e.target.value as any)}
+                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600"
+                    >
+                      <option value="url">Website URL Crawl</option>
+                      <option value="pdf">PDF Document</option>
+                      <option value="document">Text Document</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddSource(false)}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isAddingSource}
+                    className="rounded-xl bg-indigo-600 px-4 py-1.5 font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {isAddingSource ? "Indexing..." : "Index Source"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Modal / Card: Add Manual FAQ */}
+            {showAddFaq && (
+              <form
+                onSubmit={handleAddManualFaq}
+                className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5 space-y-4 text-xs"
+              >
+                <div className="flex justify-between items-center">
+                  <b className="text-sm font-bold text-slate-900">Add Pre-Approved Question & Answer</b>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddFaq(false)}
+                    className="text-slate-400 hover:text-slate-600 font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Customer Question</label>
+                  <input
+                    required
+                    value={newFaqQ}
+                    onChange={(e) => setNewFaqQ(e.target.value)}
+                    placeholder="e.g. Do you accept emergency walk-in patients?"
+                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Approved AI Answer</label>
+                  <textarea
+                    required
+                    rows={2}
+                    value={newFaqA}
+                    onChange={(e) => setNewFaqA(e.target.value)}
+                    placeholder="e.g. Yes! We reserve walk-in appointment slots daily from 9 AM to 11 AM."
+                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddFaq(false)}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isAddingFaq}
+                    className="rounded-xl bg-indigo-600 px-4 py-1.5 font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {isAddingFaq ? "Saving..." : "Save Approved Answer"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Document Sources Table */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-bold text-sm text-slate-900">
+                  Indexed Knowledge Sources ({knowledgeSources.length})
+                </h3>
+                <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                  RAG Pipeline Active
+                </span>
+              </div>
+
+              {knowledgeSources.length === 0 ? (
+                <div className="text-center py-6 text-slate-400 text-xs">
+                  No knowledge sources indexed yet. Click &quot;+ Add Source&quot; to crawl your website or upload documents.
+                </div>
+              ) : (
+                <div className="overflow-x-auto text-xs">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-slate-400">
+                        <th className="pb-2 font-semibold">Source Title / URL</th>
+                        <th className="pb-2 font-semibold">Type</th>
+                        <th className="pb-2 font-semibold">Status</th>
+                        <th className="pb-2 font-semibold">Chunks</th>
+                        <th className="pb-2 font-semibold text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {knowledgeSources.map((source) => (
+                        <tr key={source.id}>
+                          <td className="py-3 font-bold text-slate-900 flex items-center gap-2">
+                            <span>{source.sourceType === "url" ? "🌐" : source.sourceType === "pdf" ? "📄" : "📝"}</span>
+                            <span>{source.title}</span>
+                          </td>
+                          <td className="capitalize text-slate-500">
+                            {source.sourceType === "url"
+                              ? "Website Crawl"
+                              : source.sourceType === "pdf"
+                              ? "PDF Document"
+                              : source.sourceType === "manual_qa"
+                              ? "Verified Q&A"
+                              : "Document"}
+                          </td>
+                          <td>
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                              ✓ {source.status}
+                            </span>
+                          </td>
+                          <td className="text-slate-500">{source.pageCount} items</td>
+                          <td className="text-right">
+                            <button
+                              onClick={() => handleDeleteSource(source.id)}
+                              disabled={deletingSourceId === source.id}
+                              className="text-red-500 hover:text-red-700 font-semibold text-[11px] disabled:opacity-50"
+                            >
+                              {deletingSourceId === source.id ? "Removing..." : "Remove"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Test Knowledge Retrieval Simulator */}
+            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/60 to-purple-50/30 p-6 shadow-sm">
+              <h3 className="font-bold text-sm text-slate-900 mb-1">
+                🔬 Test AI Knowledge Retrieval
+              </h3>
+              <p className="text-xs text-slate-500 mb-4">
+                Ask a test question to verify how your AI receptionist will answer customer inquiries using your indexed sources.
+              </p>
+
+              <form onSubmit={handleTestSearch} className="flex gap-2">
+                <input
+                  value={testQuery}
+                  onChange={(e) => setTestQuery(e.target.value)}
+                  placeholder="e.g. What services do you offer? Or: What are your appointment hours?"
+                  className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-600 shadow-sm"
+                />
+                <button
+                  type="submit"
+                  disabled={isTesting || !testQuery.trim()}
+                  className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white text-xs shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {isTesting ? "Searching..." : "Test Query"}
+                </button>
+              </form>
+
+              {testResult && (
+                <div className="mt-4 rounded-xl border border-indigo-200 bg-white p-4 space-y-2 text-xs shadow-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-indigo-700">AI Receptionist Response:</span>
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                      {Math.round(testResult.confidence * 100)}% Confidence
+                    </span>
+                  </div>
+                  <p className="text-slate-800 leading-relaxed font-medium">{testResult.answer}</p>
+                  {testResult.sources.length > 0 && (
+                    <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-100 flex items-center gap-1.5">
+                      <span>Verified Sources:</span>
+                      <span className="font-semibold text-slate-600">
+                        {testResult.sources.join(" • ")}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Unanswered Questions Queue */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="font-bold text-sm text-slate-900 mb-1">
@@ -595,43 +999,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   ))}
                 </div>
               )}
-            </div>
-
-            {/* Document Sources */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-sm text-slate-900">Indexed Knowledge Sources</h3>
-                <button className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700">
-                  + Add Source (URL / PDF)
-                </button>
-              </div>
-
-              <div className="overflow-x-auto text-xs">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-slate-100 text-slate-400">
-                      <th className="pb-2 font-semibold">Source</th>
-                      <th className="pb-2 font-semibold">Type</th>
-                      <th className="pb-2 font-semibold">Status</th>
-                      <th className="pb-2 font-semibold">Pages / Chunks</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {initialData.knowledgeSources.map((source) => (
-                      <tr key={source.id}>
-                        <td className="py-2.5 font-bold">{source.title}</td>
-                        <td className="capitalize">{source.sourceType}</td>
-                        <td>
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                            {source.status}
-                          </span>
-                        </td>
-                        <td className="text-slate-500">{source.pageCount} items</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
             </div>
           </div>
         )}

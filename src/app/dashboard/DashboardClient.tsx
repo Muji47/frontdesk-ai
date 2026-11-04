@@ -382,7 +382,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           {/* Logo & Org Header */}
           <div className="p-4 border-b border-slate-100">
             <Link href="/" className="flex items-center gap-2.5 font-bold text-sm text-slate-900 group">
-              <EchoLogo size={28} showWordmark={true} wordmarkClassName="text-base font-extrabold text-slate-900 tracking-tight" />
+              <EchoLogo size={22} tile={true} tileSize="h-9 w-9" showWordmark={true} wordmarkClassName="text-base font-extrabold text-slate-900 tracking-tight" />
             </Link>
             <div className="mt-3 rounded-xl bg-slate-50 p-2.5 border border-slate-100">
               <div className="text-xs font-bold text-slate-900 truncate">{user.orgName}</div>
@@ -443,13 +443,16 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       <main className="flex-1 min-w-0 p-6 md:p-8 overflow-y-auto">
         {/* Top Header */}
         <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-200">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 capitalize">
-              {navItems.find((n) => n.id === activeTab)?.label}
-            </h1>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Workspace ID: <code className="font-mono text-indigo-600">{user.orgId}</code>
-            </p>
+          <div className="flex items-center gap-3">
+            <EchoLogo size={24} tile={true} tileSize="h-11 w-11" />
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900 capitalize">
+                {navItems.find((n) => n.id === activeTab)?.label}
+              </h1>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Workspace: <b className="text-slate-700">{user.orgName}</b> · ID: <code className="font-mono text-indigo-600">{user.orgId}</code>
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -694,8 +697,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     className="p-3 text-white flex items-center gap-2.5"
                     style={{ backgroundColor: brandColor }}
                   >
-                    <div className="h-8 w-8 rounded-full bg-white/20 flex items-center justify-center font-bold">
-                      {agentName[0] || "A"}
+                    <div className="h-8 w-8 rounded-xl bg-slate-950/80 border border-white/20 flex items-center justify-center p-1 shrink-0">
+                      <EchoLogo size={18} />
                     </div>
                     <div>
                       <div className="font-bold leading-tight">{user.orgName}</div>

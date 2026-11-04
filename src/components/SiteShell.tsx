@@ -30,7 +30,7 @@ export function SiteHeader() {
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
         <Link href="/" className="flex items-center gap-2 font-bold group">
-          <EchoLogo size={30} showWordmark={true} />
+          <EchoLogo size={20} tile={true} tileSize="h-8 w-8" showWordmark={true} />
         </Link>
         <nav className="hidden gap-5 text-sm text-slate-600 lg:flex">
           {nav.map((n) => (
@@ -74,8 +74,8 @@ export function SiteFooter() {
     <footer className="border-t border-slate-200 bg-slate-50">
       <div className="mx-auto grid max-w-6xl gap-8 px-5 py-10 sm:grid-cols-2 md:grid-cols-5">
         <div className="md:col-span-1">
-          <Link href="/" className="inline-block">
-            <EchoLogo size={28} showWordmark={true} />
+          <Link href="/" className="inline-block group">
+            <EchoLogo size={18} tile={true} tileSize="h-7 w-7" showWordmark={true} />
           </Link>
           <p className="mt-3 text-sm text-slate-500">Autonomous AI reception and front-office intelligence for clinics, commerce, and enterprise.</p>
         </div>

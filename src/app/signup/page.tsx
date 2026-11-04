@@ -74,7 +74,7 @@ export default function SignupPage() {
       <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-8 shadow-xl">
         <div className="text-center">
           <Link href="/" className="inline-block group">
-            <EchoLogo size={34} showWordmark={true} wordmarkClassName="text-xl font-extrabold text-slate-900 tracking-tight" />
+            <EchoLogo size={24} tile={true} tileSize="h-10 w-10" showWordmark={true} wordmarkClassName="text-xl font-extrabold text-slate-900 tracking-tight" />
           </Link>
           <h1 className="mt-4 text-2xl font-bold text-slate-900">Start Your 14-Day Free Trial</h1>
           <p className="mt-1 text-xs text-slate-500">

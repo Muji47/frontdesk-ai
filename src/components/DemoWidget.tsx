@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Industry } from "@/content/industries";
+import { EchoLogo } from "@/components/EchoLogo";
 
 type Msg =
   | { from: "bot"; text: string; chips?: string[]; card?: { title: string; lines: string[]; badge?: string } }
@@ -45,7 +46,9 @@ export function DemoWidget({ cfg }: { cfg: Industry }) {
   return (
     <div className="flex h-[480px] w-full max-w-[360px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
       <div className="accent-bg flex items-center gap-3 px-4 py-3 text-white">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/25 font-bold">{d.agent[0]}</div>
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950/80 border border-white/20 p-1 shrink-0">
+          <EchoLogo size={20} />
+        </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">{d.site}</div>
           <div className="text-xs opacity-90">{d.agent} · AI assistant · Online</div>

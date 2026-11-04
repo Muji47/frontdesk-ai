@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { db, withTransaction, seedOrganizationData } from "@/lib/db";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { CrawlerService } from "./crawler.service";
+import { dashboardEventBus } from "@/lib/events";
 
 export interface DashboardMetricData {
   totalConversations: number;
@@ -467,6 +468,24 @@ export class DashboardService {
           last_activity_at = ?
         WHERE id = ?
       `).run(content.trim(), nowIso, conversationId);
+    });
+
+    dashboardEventBus.emitToOrg(orgId, {
+      type: "new_message",
+      title: "Staff Reply Sent",
+      message: content.trim(),
+      icon: "✉️",
+      targetTab: "inbox",
+      targetId: conversationId,
+      data: {
+        conversationId,
+        message: {
+          id: msgId,
+          sender: "staff",
+          content: content.trim(),
+          createdAt: nowIso,
+        },
+      },
     });
 
     return {

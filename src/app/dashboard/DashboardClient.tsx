@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { EchoLogo } from "@/components/EchoLogo";
@@ -79,6 +79,36 @@ function getSourcePreviewChunks(source: DashboardKnowledgeSource, isEcom: boolea
   ];
 }
 
+interface RealtimeToast {
+  id: string;
+  title: string;
+  message: string;
+  icon?: string;
+  targetTab: string;
+  targetId?: string;
+  timestamp: number;
+}
+
+function playNotificationChime() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    // Dual-frequency acoustic chime: D5 (587.33Hz) -> A5 (880Hz)
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.65);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.65);
+  } catch {}
+}
+
 export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<string>("overview");
@@ -130,6 +160,133 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   const currentConv = conversations[selectedConvIndex] || conversations[0];
   const pendingQuestionsCount = unanswered.filter((u) => u.status === "pending").length;
+
+  // Real-time Socket & Toast Notification State
+  const [toasts, setToasts] = useState<RealtimeToast[]>([]);
+  const [isSocketConnected, setIsSocketConnected] = useState<boolean>(false);
+  const [isSimulating, setIsSimulating] = useState<boolean>(false);
+
+  // Connect to SSE real-time socket stream
+  useEffect(() => {
+    let es: EventSource | null = null;
+    let reconnectTimer: NodeJS.Timeout;
+
+    function connect() {
+      es = new EventSource("/api/dashboard/events");
+
+      es.onopen = () => {
+        setIsSocketConnected(true);
+      };
+
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === "connected") {
+            setIsSocketConnected(true);
+            return;
+          }
+
+          // Trigger audio chime
+          playNotificationChime();
+
+          const toastId = "tst_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+          const newToast: RealtimeToast = {
+            id: toastId,
+            title: payload.title || "Live Customer Activity",
+            message: payload.message || "New incoming request",
+            icon: payload.icon || "💬",
+            targetTab: payload.targetTab === "inbox" ? "conversations" : payload.targetTab || "conversations",
+            targetId: payload.targetId,
+            timestamp: Date.now(),
+          };
+
+          setToasts((prev) => [newToast, ...prev.slice(0, 3)]);
+
+          // Auto dismiss after 6 seconds
+          setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== toastId));
+          }, 6000);
+
+          // Update local state dynamically
+          if (payload.type === "new_conversation" && payload.data) {
+            const newConv = payload.data as DashboardConversation;
+            setConversations((prev) => {
+              if (prev.some((c) => c.id === newConv.id)) return prev;
+              return [newConv, ...prev];
+            });
+            setMetrics((m) => ({
+              ...m,
+              totalConversations: m.totalConversations + 1,
+            }));
+          } else if (payload.type === "new_message" && payload.data) {
+            const { conversationId, message } = payload.data;
+            setConversations((prev) =>
+              prev.map((c) => {
+                if (c.id === conversationId) {
+                  const exists = c.messages.some((m) => m.id === message.id);
+                  const updatedMsgs = exists ? c.messages : [...c.messages, message];
+                  return {
+                    ...c,
+                    lastMessage: message.content,
+                    timeAgo: "just now",
+                    messages: updatedMsgs,
+                  };
+                }
+                return c;
+              })
+            );
+          } else if (payload.type === "new_appointment") {
+            router.refresh();
+          }
+        } catch (err) {
+          console.error("SSE parse error:", err);
+        }
+      };
+
+      es.onerror = () => {
+        setIsSocketConnected(false);
+        es?.close();
+        reconnectTimer = setTimeout(connect, 4000);
+      };
+    }
+
+    connect();
+
+    return () => {
+      es?.close();
+      clearTimeout(reconnectTimer);
+    };
+  }, [router]);
+
+  function handleToastClick(toast: RealtimeToast) {
+    const tab = toast.targetTab === "inbox" ? "conversations" : toast.targetTab;
+    setActiveTab(tab);
+
+    if (toast.targetId && tab === "conversations") {
+      const idx = conversations.findIndex((c) => c.id === toast.targetId);
+      if (idx !== -1) {
+        setSelectedConvIndex(idx);
+      }
+    }
+
+    setToasts((prev) => prev.filter((t) => t.id !== toast.id));
+  }
+
+  async function handleSimulateIncoming(type?: string) {
+    setIsSimulating(true);
+    try {
+      const res = await fetch("/api/dashboard/events/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventType: type }),
+      });
+      if (!res.ok) throw new Error("Simulation failed");
+    } catch (err: any) {
+      alert("Simulation failed: " + err.message);
+    } finally {
+      setIsSimulating(false);
+    }
+  }
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -443,22 +600,77 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       </aside>
 
       {/* Main Workspace Area */}
-      <main className="flex-1 min-w-0 p-6 md:p-8 overflow-y-auto">
+      <main className="flex-1 min-w-0 p-6 md:p-8 overflow-y-auto relative">
+        {/* Top-Right Real-Time Notification Stack */}
+        <div className="fixed top-5 right-5 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              onClick={() => handleToastClick(toast)}
+              className="pointer-events-auto bg-slate-950/95 border border-indigo-500/50 text-white rounded-2xl p-4 shadow-2xl backdrop-blur cursor-pointer hover:border-indigo-400 hover:scale-[1.02] transition-all transform animate-in slide-in-from-top-3 duration-300 relative overflow-hidden group"
+            >
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400"></div>
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-xl shrink-0">
+                  {toast.icon || "💬"}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white tracking-wide truncate">{toast.title}</span>
+                    <span className="text-[10px] text-indigo-300 font-mono">Just now</span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-1 line-clamp-2 leading-relaxed">{toast.message}</p>
+                  <div className="mt-2.5 flex items-center gap-1 text-[11px] font-bold text-sky-400 group-hover:text-sky-300">
+                    <span>Click to open in {toast.targetTab}</span>
+                    <span>→</span>
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setToasts((prev) => prev.filter((t) => t.id !== toast.id));
+                  }}
+                  className="text-slate-500 hover:text-white p-1 rounded-lg transition"
+                  title="Dismiss notification"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
         {/* Top Header */}
-        <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-8 pb-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
             <EchoLogo size={24} tile={true} tileSize="h-11 w-11" />
             <div>
-              <h1 className="text-2xl font-bold text-slate-900 capitalize">
-                {navItems.find((n) => n.id === activeTab)?.label}
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold text-slate-900 capitalize">
+                  {navItems.find((n) => n.id === activeTab)?.label}
+                </h1>
+                {/* Live Socket Status Pill */}
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 shadow-xs">
+                  <span className={`h-2 w-2 rounded-full ${isSocketConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-400"}`}></span>
+                  <span>{isSocketConnected ? "Socket Live" : "Connecting..."}</span>
+                </span>
+              </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 Workspace: <b className="text-slate-700">{user.orgName}</b> · ID: <code className="font-mono text-indigo-600">{user.orgId}</code>
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => handleSimulateIncoming()}
+              disabled={isSimulating}
+              className="rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-700 to-sky-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:opacity-95 transition flex items-center gap-1.5 disabled:opacity-50"
+              title="Test real-time socket delivery & top-right alert toast"
+            >
+              <span>{isSimulating ? "⏳" : "⚡"}</span>
+              <span>{isSimulating ? "Simulating..." : "Test Real-Time Inquiry"}</span>
+            </button>
             <Link
               href="/"
               className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-300"

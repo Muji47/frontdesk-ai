@@ -8,3 +8,8 @@ data/
 *.sqlite-shm
 
 *.tsbuildinfo
+
+# Agent Memory & Internal PRD files
+PRD.md
+*.memory.md
+memory/

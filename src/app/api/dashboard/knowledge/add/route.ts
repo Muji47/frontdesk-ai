@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       ? body.sourceType
       : "url";
 
-    const source = DashboardService.addKnowledgeSource(
+    const source = await DashboardService.addKnowledgeSource(
       user.orgId,
       body.title,
       sourceType,

@@ -18,6 +18,11 @@ interface DashboardClientProps {
 }
 
 function getSourcePreviewChunks(source: DashboardKnowledgeSource, isEcom: boolean) {
+  // If real extracted chunks are stored on the source, use them directly
+  if (source.chunks && source.chunks.length > 0) {
+    return source.chunks;
+  }
+
   if (source.sourceType === "manual_qa") {
     return [
       {

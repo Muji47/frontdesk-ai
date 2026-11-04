@@ -85,6 +85,23 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_knowledge_org ON knowledge_sources(organization_id);
 
+  -- 5b. Knowledge Chunks (Real extracted website & document text parameters)
+  CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(source_id) REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+    FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_chunks_source ON knowledge_chunks(source_id);
+  CREATE INDEX IF NOT EXISTS idx_chunks_org ON knowledge_chunks(organization_id);
+
   -- 6. Unanswered Questions Queue (Human-In-The-Loop Self-Learning)
   CREATE TABLE IF NOT EXISTS unanswered_questions (
     id TEXT PRIMARY KEY,
@@ -242,9 +259,12 @@ export function dummyPasswordCheck() {
 }
 
 /**
- * Seed operational tables for an organization with initial realistic data if empty.
+ * Seed operational tables ONLY for the demo test organization (never inject fake files into real user accounts).
  */
 export function seedOrganizationData(orgId: string, industry: string, businessName: string) {
+  // Guardrail: Never inject category mock files or fake documents into real user accounts
+  if (orgId !== "org_demo_101") return;
+
   const existingConv = db.prepare("SELECT COUNT(*) as cnt FROM conversations WHERE organization_id = ?").get(orgId) as { cnt: number };
   if (existingConv.cnt > 0) return;
 

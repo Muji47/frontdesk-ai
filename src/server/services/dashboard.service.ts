@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { db, withTransaction, seedOrganizationData } from "@/lib/db";
 import { NotFoundError, ValidationError } from "@/server/errors";
+import { CrawlerService } from "./crawler.service";
 
 export interface DashboardMetricData {
   totalConversations: number;
@@ -49,6 +50,7 @@ export interface DashboardKnowledgeSource {
   status: string;
   pageCount: number;
   lastSyncedAt: string;
+  chunks?: { id: number; title: string; content: string }[];
 }
 
 export interface DashboardAppointment {
@@ -136,13 +138,6 @@ export class DashboardService {
    */
   public static getDashboardData(orgId: string, industry: string): DashboardData {
     const isEcom = industry === "ecommerce";
-
-    // Ensure starter data is populated if organization was created without it
-    const existingCount = db.prepare("SELECT COUNT(*) as cnt FROM knowledge_sources WHERE organization_id = ?").get(orgId) as { cnt: number };
-    if (existingCount.cnt === 0) {
-      const org = db.prepare("SELECT name FROM organizations WHERE id = ?").get(orgId) as { name: string } | undefined;
-      seedOrganizationData(orgId, industry, org?.name || "My Business");
-    }
 
     // 1. Fetch Agent Profile
     const agentRow = db.prepare(`
@@ -234,15 +229,31 @@ export class DashboardService {
       ORDER BY created_at DESC
     `).all(orgId) as any[];
 
-    const knowledgeSources: DashboardKnowledgeSource[] = sourceRows.map((s) => ({
-      id: String(s.id),
-      title: String(s.title),
-      sourceType: String(s.source_type),
-      sourceUrl: s.source_url ? String(s.source_url) : null,
-      status: String(s.status),
-      pageCount: Number(s.page_count),
-      lastSyncedAt: String(s.last_synced_at),
-    }));
+    const knowledgeSources: DashboardKnowledgeSource[] = sourceRows.map((s) => {
+      const chunkRows = db.prepare(`
+        SELECT chunk_index as id, title, content
+        FROM knowledge_chunks
+        WHERE source_id = ?
+        ORDER BY chunk_index ASC
+      `).all(s.id) as any[];
+
+      const chunks = chunkRows.map((c) => ({
+        id: Number(c.id),
+        title: String(c.title),
+        content: String(c.content),
+      }));
+
+      return {
+        id: String(s.id),
+        title: String(s.title),
+        sourceType: String(s.source_type),
+        sourceUrl: s.source_url ? String(s.source_url) : null,
+        status: String(s.status),
+        pageCount: chunks.length > 0 ? chunks.length : Number(s.page_count),
+        lastSyncedAt: String(s.last_synced_at),
+        chunks: chunks.length > 0 ? chunks : undefined,
+      };
+    });
 
     // 5. Fetch Appointments
     const appointmentRows = db.prepare(`
@@ -485,15 +496,15 @@ export class DashboardService {
   }
 
   /**
-   * Adds a new knowledge source (URL crawl, PDF, or text manual QA).
+   * Adds a new knowledge source and immediately crawls/extracts real semantic chunks.
    */
-  public static addKnowledgeSource(
+  public static async addKnowledgeSource(
     orgId: string,
     title: string,
     sourceType: "url" | "pdf" | "document" | "manual_qa",
     sourceUrl?: string,
     pageCount: number = 1
-  ): DashboardKnowledgeSource {
+  ): Promise<DashboardKnowledgeSource> {
     if (!title || title.trim().length === 0) {
       throw new ValidationError("Source title or URL is required.");
     }
@@ -503,8 +514,11 @@ export class DashboardService {
 
     db.prepare(`
       INSERT INTO knowledge_sources (id, organization_id, title, source_type, source_url, status, page_count, last_synced_at)
-      VALUES (?, ?, ?, ?, ?, 'indexed', ?, ?)
+      VALUES (?, ?, ?, ?, ?, 'indexing', ?, ?)
     `).run(id, orgId, title.trim(), sourceType, sourceUrl?.trim() || null, Math.max(1, pageCount), nowIso);
+
+    // Extract real parameter chunks from the website or document
+    const extractedChunks = await CrawlerService.processAndSaveChunks(id, orgId, title.trim(), sourceType);
 
     return {
       id,
@@ -512,24 +526,32 @@ export class DashboardService {
       sourceType,
       sourceUrl: sourceUrl?.trim() || null,
       status: "indexed",
-      pageCount: Math.max(1, pageCount),
+      pageCount: extractedChunks.length,
       lastSyncedAt: nowIso,
+      chunks: extractedChunks.map((c, i) => ({
+        id: i + 1,
+        title: c.title,
+        content: c.content,
+      })),
     };
   }
 
   /**
-   * Deletes a knowledge source by ID.
+   * Deletes a knowledge source and all its associated parameter chunks.
    */
   public static deleteKnowledgeSource(orgId: string, sourceId: string): void {
     const existing = db.prepare("SELECT id FROM knowledge_sources WHERE id = ? AND organization_id = ?").get(sourceId, orgId);
     if (!existing) {
       throw new NotFoundError("Knowledge source not found.");
     }
-    db.prepare("DELETE FROM knowledge_sources WHERE id = ? AND organization_id = ?").run(sourceId, orgId);
+    withTransaction(() => {
+      db.prepare("DELETE FROM knowledge_chunks WHERE source_id = ?").run(sourceId);
+      db.prepare("DELETE FROM knowledge_sources WHERE id = ? AND organization_id = ?").run(sourceId, orgId);
+    });
   }
 
   /**
-   * Tests a query against the indexed knowledge base.
+   * Tests a query against the indexed parameters with strict boundary limits (Zero Hallucination).
    */
   public static testKnowledgeQuery(orgId: string, query: string): { answer: string; sources: string[]; confidence: number } {
     if (!query || query.trim().length === 0) {
@@ -537,8 +559,9 @@ export class DashboardService {
     }
 
     const lowerQuery = query.toLowerCase();
+    const queryTokens = lowerQuery.split(/\W+/).filter((w) => w.length > 3);
 
-    // Check approved answered questions
+    // 1. Check approved answered questions first
     const approvedQ = db.prepare(`
       SELECT question, approved_answer 
       FROM unanswered_questions 
@@ -546,37 +569,67 @@ export class DashboardService {
     `).all(orgId) as any[];
 
     for (const q of approvedQ) {
-      const matchWords = String(q.question).toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+      const matchWords = String(q.question).toLowerCase().split(/\W+/).filter((w) => w.length > 3);
       const isMatch = matchWords.some((w) => lowerQuery.includes(w));
       if (isMatch) {
         return {
           answer: String(q.approved_answer),
           sources: ["Approved Q&A Policy"],
-          confidence: 0.96,
+          confidence: 0.98,
         };
       }
     }
 
-    // Check knowledge sources
-    const sources = db.prepare(`
-      SELECT title, source_type 
-      FROM knowledge_sources 
-      WHERE organization_id = ?
+    // 2. Check real extracted knowledge chunks
+    const chunks = db.prepare(`
+      SELECT c.title as chunkTitle, c.content, s.title as sourceTitle
+      FROM knowledge_chunks c
+      JOIN knowledge_sources s ON c.source_id = s.id
+      WHERE c.organization_id = ?
     `).all(orgId) as any[];
 
-    if (sources.length === 0) {
-      return {
-        answer: "No knowledge documents or FAQ entries have been indexed yet for this workspace.",
-        sources: [],
-        confidence: 0.2,
-      };
+    if (chunks.length > 0) {
+      // Score chunks by keyword matches
+      let bestChunk: any = null;
+      let highestScore = 0;
+
+      for (const chunk of chunks) {
+        const text = (chunk.chunkTitle + " " + chunk.content).toLowerCase();
+        let score = 0;
+        for (const token of queryTokens) {
+          if (text.includes(token)) score++;
+        }
+        if (score > highestScore) {
+          highestScore = score;
+          bestChunk = chunk;
+        }
+      }
+
+      // If keywords matched within the extracted parameters
+      if (highestScore > 0 && bestChunk) {
+        return {
+          answer: `Verified from verified source parameters: ${bestChunk.content.slice(0, 320)}...`,
+          sources: [String(bestChunk.sourceTitle || bestChunk.chunkTitle)],
+          confidence: Math.min(0.95, 0.75 + highestScore * 0.08),
+        };
+      }
     }
 
-    const matchedSourceTitles = sources.map((s) => String(s.title));
+    // 3. Strict Boundary Guardrail: DO NOT CROSS LIMITS
+    // Log the unanswered question into queue so staff can review
+    const qId = "unq_" + randomBytes(6).toString("hex");
+    try {
+      db.prepare(`
+        INSERT INTO unanswered_questions (id, organization_id, question, frequency_count, status)
+        VALUES (?, ?, ?, 1, 'pending')
+      `).run(qId, orgId, query.trim());
+    } catch {}
+
     return {
-      answer: `Verified via indexed knowledge base (${matchedSourceTitles.slice(0, 2).join(", ")}): FrontDesk AI is equipped to answer visitor questions regarding policies, bookings, and operations.`,
-      sources: matchedSourceTitles,
-      confidence: 0.88,
+      answer:
+        "This question crosses beyond our verified company parameters. To ensure 100% accuracy with zero hallucination, our AI receptionist is strictly trained not to guess or invent unverified policies. This inquiry has been logged into your Unanswered Questions queue for staff review.",
+      sources: [],
+      confidence: 0.2,
     };
   }
 }

@@ -175,7 +175,21 @@ export class AuthService {
       WHERE s.token = ? AND s.expires_at > datetime('now')
     `).get(token) as AuthSessionUser | undefined;
 
-    return row || null;
+    if (!row) return null;
+
+    // Convert sqlite null-prototype object into standard plain object for React Server Components
+    return {
+      userId: row.userId,
+      email: row.email,
+      name: row.name,
+      role: row.role,
+      orgId: row.orgId,
+      orgName: row.orgName,
+      industry: row.industry,
+      plan: row.plan,
+      agentId: row.agentId,
+      agentName: row.agentName,
+    };
   }
 
   /**

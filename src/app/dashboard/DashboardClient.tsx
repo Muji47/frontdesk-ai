@@ -208,8 +208,22 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           }, 6000);
 
           // Update local state dynamically
-          if (payload.type === "new_conversation" && payload.data) {
-            const newConv = payload.data as DashboardConversation;
+          if ((payload.type === "new_conversation" || payload.type === "handover_alert") && payload.data) {
+            const raw = payload.data;
+            const convId = raw.id || raw.conversationId || ("conv_" + Math.random().toString(36).slice(2));
+            const newConv: DashboardConversation = {
+              id: convId,
+              visitorName: raw.visitorName || "Customer",
+              visitorContact: raw.visitorContact || "",
+              channel: raw.channel || "web",
+              status: raw.status || "ACTIVE",
+              badge: raw.badge || "AI Active",
+              lastMessage: raw.lastMessage || "",
+              externalRef: raw.externalRef || null,
+              timeAgo: "just now",
+              messages: raw.messages || [],
+            };
+
             setConversations((prev) => {
               if (prev.some((c) => c.id === newConv.id)) return prev;
               return [newConv, ...prev];
@@ -768,7 +782,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 <div className="divide-y divide-slate-100 text-xs">
                   {conversations.map((c, i) => (
                     <div
-                      key={c.id}
+                      key={c.id ? `${c.id}-${i}` : `ov-${i}`}
                       onClick={() => {
                         setSelectedConvIndex(i);
                         setActiveTab("conversations");
@@ -1145,8 +1159,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {knowledgeSources.map((source) => (
-                        <tr key={source.id}>
+                      {knowledgeSources.map((source, sIdx) => (
+                        <tr key={source.id ? `${source.id}-${sIdx}` : `src-${sIdx}`}>
                           <td className="py-3 font-bold text-slate-900 flex items-center gap-2">
                             <span>{source.sourceType === "url" ? "🌐" : source.sourceType === "pdf" ? "📄" : "📝"}</span>
                             <span>{source.title}</span>
@@ -1288,9 +1302,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       </div>
 
                       <div className="space-y-2.5">
-                        {getSourcePreviewChunks(viewingSource, isEcom).map((chunk) => (
+                        {getSourcePreviewChunks(viewingSource, isEcom).map((chunk, cIdx) => (
                           <div
-                            key={chunk.id}
+                            key={chunk.id ? `${chunk.id}-${cIdx}` : `chk-${cIdx}`}
                             className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-1"
                           >
                             <div className="flex justify-between items-center text-[10px] font-bold text-slate-500">
@@ -1405,9 +1419,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 <p className="text-xs text-slate-400 py-3">No unanswered questions in queue.</p>
               ) : (
                 <div className="space-y-3">
-                  {unanswered.map((item) => (
+                  {unanswered.map((item, uIdx) => (
                     <div
-                      key={item.id}
+                      key={item.id ? `${item.id}-${uIdx}` : `unq-${uIdx}`}
                       className="rounded-xl border border-slate-200 p-4 space-y-3 text-xs"
                     >
                       <div className="flex justify-between items-center">
@@ -1459,7 +1473,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               </div>
               {conversations.map((c, i) => (
                 <div
-                  key={c.id}
+                  key={c.id ? `${c.id}-${i}` : `conv-${i}`}
                   onClick={() => setSelectedConvIndex(i)}
                   className={`p-3.5 cursor-pointer transition text-xs ${
                     selectedConvIndex === i ? "bg-indigo-50/70" : "hover:bg-slate-50"
@@ -1502,9 +1516,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
                 {/* Message history */}
                 <div className="p-4 space-y-3 overflow-y-auto flex-1 text-xs min-h-[300px]">
-                  {currentConv.messages.map((m) => (
+                  {currentConv.messages.map((m, mIdx) => (
                     <div
-                      key={m.id}
+                      key={m.id ? `${m.id}-${mIdx}` : `msg-${mIdx}`}
                       className={`flex ${m.sender === "client" ? "justify-start" : "justify-end"}`}
                     >
                       <div
@@ -1580,8 +1594,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {initialData.orders.map((o) => (
-                      <tr key={o.id}>
+                    {initialData.orders.map((o, oIdx) => (
+                      <tr key={o.id ? `${o.id}-${oIdx}` : `ord-${oIdx}`}>
                         <td className="py-2.5 font-bold">{o.orderNumber}</td>
                         <td>{o.customerName} ({o.customerEmail})</td>
                         <td>${o.totalAmount.toFixed(2)} {o.currency}</td>
@@ -1607,8 +1621,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {initialData.appointments.map((a) => (
-                      <tr key={a.id}>
+                    {initialData.appointments.map((a, aIdx) => (
+                      <tr key={a.id ? `${a.id}-${aIdx}` : `apt-${aIdx}`}>
                         <td className="py-2.5 font-bold">{a.patientName}</td>
                         <td>{a.serviceName}</td>
                         <td>{a.practitionerName}</td>
@@ -1649,8 +1663,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {initialData.leads.map((l) => (
-                    <tr key={l.id}>
+                  {initialData.leads.map((l, lIdx) => (
+                    <tr key={l.id ? `${l.id}-${lIdx}` : `lead-${lIdx}`}>
                       <td className="py-2.5 font-bold">{l.name}</td>
                       <td>{l.email || "—"}</td>
                       <td>{l.phone || "—"}</td>
@@ -1671,8 +1685,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         {/* ===================== TAB: INTEGRATIONS ===================== */}
         {activeTab === "integrations" && (
           <div className="grid gap-4 md:grid-cols-2">
-            {initialData.integrations.map((int) => (
-              <div key={int.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            {initialData.integrations.map((int, iIdx) => (
+              <div key={int.id ? `${int.id}-${iIdx}` : `int-${iIdx}`} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex justify-between items-center">
                   <b className="text-sm font-bold text-slate-900 capitalize">
                     {int.provider === "cliniko"

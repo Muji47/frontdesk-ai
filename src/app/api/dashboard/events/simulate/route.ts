@@ -126,6 +126,7 @@ export async function POST(req: NextRequest) {
     targetTab: choice.targetTab,
     targetId: convId,
     data: {
+      id: convId,
       conversationId: convId,
       visitorName: choice.visitorName,
       visitorContact: choice.visitorContact,

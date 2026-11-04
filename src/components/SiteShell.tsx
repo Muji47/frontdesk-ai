@@ -13,8 +13,9 @@ export function SiteHeader() {
     fetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => {
-        if (d.authenticated && d.user) {
-          setUser(d.user);
+        const u = d.data?.user || (d.authenticated && d.user);
+        if (u) {
+          setUser(u);
         }
       })
       .catch(() => {});

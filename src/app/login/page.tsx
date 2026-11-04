@@ -4,16 +4,27 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+interface ApiErrorResponse {
+  success: boolean;
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, string[]>;
+  };
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [generalError, setGeneralError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
+    setGeneralError("");
+    setFieldErrors({});
     setLoading(true);
 
     try {
@@ -23,16 +34,19 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Login failed");
+      const data: ApiErrorResponse = await res.json();
+      if (!res.ok || !data.success) {
+        if (data.error?.details) {
+          setFieldErrors(data.error.details);
+        }
+        setGeneralError(data.error?.message || "Invalid email or password.");
+        return;
       }
 
       router.push("/dashboard");
       router.refresh();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Authentication failed";
-      setError(msg);
+    } catch {
+      setGeneralError("Unable to reach the server. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -41,7 +55,8 @@ export default function LoginPage() {
   function fillDemo() {
     setEmail("demo@frontdesk.ai");
     setPassword("password123");
-    setError("");
+    setGeneralError("");
+    setFieldErrors({});
   }
 
   return (
@@ -63,7 +78,7 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={fillDemo}
-              className="rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-indigo-700"
+              className="rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-indigo-700 transition"
             >
               Fill Credentials
             </button>
@@ -73,9 +88,11 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {error && (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-            {error}
+        {/* Global Error Banner */}
+        {generalError && (
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+            <span className="text-sm font-bold">⚠️</span>
+            <span>{generalError}</span>
           </div>
         )}
 
@@ -86,10 +103,20 @@ export default function LoginPage() {
               required
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (fieldErrors.email) setFieldErrors({ ...fieldErrors, email: [] });
+              }}
               placeholder="reception@yourclinic.com.au"
-              className="w-full rounded-xl border border-slate-200 p-2.5 outline-none focus:border-indigo-600 text-slate-900"
+              className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
+                fieldErrors.email?.length ? "border-red-500 bg-red-50/20" : "border-slate-200 focus:border-indigo-600"
+              }`}
             />
+            {fieldErrors.email?.map((err, i) => (
+              <span key={i} className="mt-1 block text-[11px] text-red-600 font-medium">
+                {err}
+              </span>
+            ))}
           </div>
 
           <div>
@@ -101,10 +128,20 @@ export default function LoginPage() {
               required
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (fieldErrors.password) setFieldErrors({ ...fieldErrors, password: [] });
+              }}
               placeholder="••••••••••••"
-              className="w-full rounded-xl border border-slate-200 p-2.5 outline-none focus:border-indigo-600 text-slate-900"
+              className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
+                fieldErrors.password?.length ? "border-red-500 bg-red-50/20" : "border-slate-200 focus:border-indigo-600"
+              }`}
             />
+            {fieldErrors.password?.map((err, i) => (
+              <span key={i} className="mt-1 block text-[11px] text-red-600 font-medium">
+                {err}
+              </span>
+            ))}
           </div>
 
           <button
@@ -112,7 +149,7 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full rounded-xl bg-indigo-600 py-3 font-bold text-white shadow-md hover:bg-indigo-700 transition disabled:opacity-50"
           >
-            {loading ? "Signing In..." : "Sign In to Dashboard →"}
+            {loading ? "Authenticating..." : "Sign In to Dashboard →"}
           </button>
         </form>
 

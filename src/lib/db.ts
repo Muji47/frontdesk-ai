@@ -11,8 +11,9 @@ if (!fs.existsSync(dataDir)) {
 const dbPath = path.join(dataDir, "frontdesk.sqlite");
 const db = new DatabaseSync(dbPath);
 
-// Initialize tables
+// Enforce foreign key constraints and Write-Ahead Logging
 db.exec(`
+  PRAGMA foreign_keys = ON;
   PRAGMA journal_mode = WAL;
 
   CREATE TABLE IF NOT EXISTS organizations (
@@ -35,6 +36,8 @@ db.exec(`
     FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
   );
 
+  CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
   CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -42,6 +45,8 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+
+  CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 
   CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
@@ -56,7 +61,23 @@ db.exec(`
   );
 `);
 
-// Password utilities
+/**
+ * Executes a function within an atomic SQLite transaction.
+ * Automatically rolls back on uncaught errors.
+ */
+export function withTransaction<T>(fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+// Password cryptographic helpers (scrypt key derivation)
 export function hashPassword(password: string): { hash: string; salt: string } {
   const salt = randomBytes(16).toString("hex");
   const hash = scryptSync(password, salt, 64).toString("hex");
@@ -64,33 +85,49 @@ export function hashPassword(password: string): { hash: string; salt: string } {
 }
 
 export function verifyPassword(password: string, hash: string, salt: string): boolean {
-  const hashedBuf = Buffer.from(scryptSync(password, salt, 64).toString("hex"), "hex");
-  const storedBuf = Buffer.from(hash, "hex");
-  return timingSafeEqual(hashedBuf, storedBuf);
+  try {
+    const hashedBuf = Buffer.from(scryptSync(password, salt, 64).toString("hex"), "hex");
+    const storedBuf = Buffer.from(hash, "hex");
+    if (hashedBuf.length !== storedBuf.length) return false;
+    return timingSafeEqual(hashedBuf, storedBuf);
+  } catch {
+    return false;
+  }
 }
 
-// Seed demo account if empty
+// Constant-time dummy check to prevent timing attacks if user does not exist
+const DUMMY_SALT = randomBytes(16).toString("hex");
+const DUMMY_HASH = scryptSync("dummy_password_timing_defense", DUMMY_SALT, 64).toString("hex");
+
+export function dummyPasswordCheck() {
+  scryptSync("dummy_password_timing_defense", DUMMY_SALT, 64);
+  return false;
+}
+
+// Seed default demo user if table is empty
 const countUser = db.prepare("SELECT COUNT(*) as cnt FROM users").get() as { cnt: number };
 if (countUser.cnt === 0) {
-  const orgId = "org_demo_101";
-  const userId = "usr_demo_101";
-  const agentId = "agt_demo_101";
+  withTransaction(() => {
+    const orgId = "org_demo_101";
+    const userId = "usr_demo_101";
+    const agentId = "agt_demo_101";
 
-  db.prepare(`
-    INSERT INTO organizations (id, name, industry, plan)
-    VALUES (?, ?, ?, ?)
-  `).run(orgId, "Healing Hands Physio", "clinic", "growth");
+    db.prepare(`
+      INSERT INTO organizations (id, name, industry, plan)
+      VALUES (?, ?, ?, ?)
+    `).run(orgId, "Healing Hands Physio", "clinic", "growth");
 
-  const { hash, salt } = hashPassword("password123");
-  db.prepare(`
-    INSERT INTO users (id, organization_id, email, name, password_hash, salt, role)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(userId, orgId, "demo@frontdesk.ai", "Dr. Sarah Lee", hash, salt, "owner");
+    const { hash, salt } = hashPassword("password123");
+    db.prepare(`
+      INSERT INTO users (id, organization_id, email, name, password_hash, salt, role)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(userId, orgId, "demo@frontdesk.ai", "Dr. Sarah Lee", hash, salt, "owner");
 
-  db.prepare(`
-    INSERT INTO agents (id, organization_id, name, greeting, color, position, tone)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(agentId, orgId, "Maya", "Hi! Welcome to Healing Hands Physio. How can I help you today?", "#0d9488", "right", "Friendly");
+    db.prepare(`
+      INSERT INTO agents (id, organization_id, name, greeting, color, position, tone)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(agentId, orgId, "Maya", "Hi! Welcome to Healing Hands Physio. How can I help you today?", "#0d9488", "right", "Friendly");
+  });
 }
 
 export { db };

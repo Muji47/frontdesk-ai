@@ -659,16 +659,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           <div className="flex items-center gap-3">
             <EchoLogo size={24} tile={true} tileSize="h-11 w-11" />
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold text-slate-900 capitalize">
-                  {navItems.find((n) => n.id === activeTab)?.label}
-                </h1>
-                {/* Live Socket Status Pill */}
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 shadow-xs">
-                  <span className={`h-2 w-2 rounded-full ${isSocketConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-400"}`}></span>
-                  <span>{isSocketConnected ? "Socket Live" : "Connecting..."}</span>
-                </span>
-              </div>
+              <h1 className="text-2xl font-bold text-slate-900 capitalize">
+                {navItems.find((n) => n.id === activeTab)?.label}
+              </h1>
               <p className="text-xs text-slate-500 mt-0.5">
                 Workspace: <b className="text-slate-700">{user.orgName}</b> · ID: <code className="font-mono text-indigo-600">{user.orgId}</code>
               </p>

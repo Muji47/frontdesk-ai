@@ -3,8 +3,8 @@ import { PageHero, CtaBand } from "@/components/SiteShell";
 import { securityPoints, securityDocs } from "@/content/site";
 
 export const metadata: Metadata = {
-  title: "Security & Privacy — FrontDesk AI",
-  description: "How FrontDesk AI protects customer and patient data: tenant isolation, Australian Privacy Act guidance, data minimization, and encryption.",
+  title: "Security & Privacy — Echo.ai",
+  description: "How Echo.ai protects customer and patient data: tenant isolation, Australian Privacy Act guidance, data minimization, and encryption.",
 };
 
 export default function SecurityPage() {
@@ -38,7 +38,7 @@ export default function SecurityPage() {
             </span>
             <h2 className="mt-3 text-2xl font-bold">Privacy Act & Health Information Standards</h2>
             <p className="mt-3 text-xs leading-relaxed text-indigo-100">
-              The Australian Privacy Act covers health service providers, and health information receives strict privacy protection. FrontDesk AI is architected following OAIC guidance on AI transparency, vendor due diligence, and human oversight. The AI operates as an administrative receptionist—it explicitly refuses clinical diagnoses and gathers only the minimum contact details required to confirm bookings.
+              The Australian Privacy Act covers health service providers, and health information receives strict privacy protection. Echo.ai is architected following OAIC guidance on AI transparency, vendor due diligence, and human oversight. The AI operates as an administrative receptionist—it explicitly refuses clinical diagnoses and gathers only the minimum contact details required to confirm bookings.
             </p>
           </div>
         </div>

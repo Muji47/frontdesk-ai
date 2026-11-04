@@ -17,7 +17,7 @@ export class CrawlerService {
       const res = await fetch(parsedUrl.toString(), {
         headers: {
           "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 FrontDeskAI/2.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 EchoAI/2.0 (Autonomous Front-Desk Ingestion; +https://echo.ai)",
         },
         signal: AbortSignal.timeout(10000),
       });

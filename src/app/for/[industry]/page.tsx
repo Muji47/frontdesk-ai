@@ -11,7 +11,7 @@ export async function generateMetadata({ params }: { params: Promise<{ industry:
   const { industry } = await params;
   const cfg = industries[industry];
   if (!cfg) return {};
-  return { title: `FrontDesk AI for ${cfg.label}`, description: cfg.sub };
+  return { title: `Echo.ai for ${cfg.label}`, description: cfg.sub };
 }
 
 export default async function IndustryPage({ params }: { params: Promise<{ industry: string }> }) {

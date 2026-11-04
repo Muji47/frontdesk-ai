@@ -3,8 +3,8 @@ import { PageHero, CtaBand } from "@/components/SiteShell";
 import { integrationGroups } from "@/content/site";
 
 export const metadata: Metadata = {
-  title: "Integrations — FrontDesk AI",
-  description: "Connect FrontDesk AI to Cliniko, Shopify, Google Calendar, WooCommerce, and website builders with zero complex coding.",
+  title: "Integrations — Echo.ai",
+  description: "Connect Echo.ai to Cliniko, Shopify, Google Calendar, WooCommerce, and website builders with zero complex coding.",
 };
 
 export default function IntegrationsPage() {
@@ -13,7 +13,7 @@ export default function IntegrationsPage() {
       <PageHero
         eyebrow="Ecosystem & Connectivity"
         title="Connects with the software you already use."
-        sub="You don't need to replace your booking system or e-commerce store. FrontDesk AI plugs straight into your tech stack via secure APIs."
+        sub="You don't need to replace your booking system or e-commerce store. Echo.ai plugs straight into your tech stack via secure APIs."
       />
 
       <section className="mx-auto max-w-6xl px-5 py-12 space-y-12">

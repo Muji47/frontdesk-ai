@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { EchoLogo } from "@/components/EchoLogo";
 
 interface ApiErrorResponse {
   success: boolean;
@@ -53,7 +54,7 @@ export default function LoginPage() {
   }
 
   function fillDemo() {
-    setEmail("demo@frontdesk.ai");
+    setEmail("demo@echo.ai");
     setPassword("password123");
     setGeneralError("");
     setFieldErrors({});
@@ -63,9 +64,8 @@ export default function LoginPage() {
     <div className="flex min-h-[80vh] items-center justify-center bg-slate-50 px-5 py-12">
       <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-xl">
         <div className="text-center">
-          <Link href="/" className="inline-flex items-center gap-2 font-bold text-slate-900">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white font-bold">F</span>
-            FrontDesk AI
+          <Link href="/" className="inline-block group">
+            <EchoLogo size={34} showWordmark={true} wordmarkClassName="text-xl font-extrabold text-slate-900 tracking-tight" />
           </Link>
           <h1 className="mt-4 text-2xl font-bold text-slate-900">Sign In to Dashboard</h1>
           <p className="mt-1 text-xs text-slate-500">Manage your virtual receptionist, live bookings, and chat inbox.</p>
@@ -84,7 +84,7 @@ export default function LoginPage() {
             </button>
           </div>
           <div className="mt-1 text-[11px] text-indigo-700">
-            <code>demo@frontdesk.ai</code> · <code>password123</code>
+            <code>demo@echo.ai</code> · <code>password123</code>
           </div>
         </div>
 

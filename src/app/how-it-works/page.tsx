@@ -3,8 +3,8 @@ import { PageHero, CtaBand } from "@/components/SiteShell";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "How It Works — FrontDesk AI",
-  description: "Learn how FrontDesk AI connects to your website, indexes your business knowledge, hooks into your calendar/PMS, and goes live in 3 steps.",
+  title: "How It Works — Echo.ai",
+  description: "Learn how Echo.ai connects to your website, indexes your business knowledge, hooks into your calendar/PMS, and goes live in 3 steps.",
 };
 
 const steps = [
@@ -33,7 +33,7 @@ const steps = [
     step: "04",
     title: "Paste One Script Tag on Your Website",
     desc: "Drop our lightweight, asynchronous embed script right before the closing </body> tag. It runs inside an isolated Shadow DOM container to prevent any CSS clashes with your website.",
-    code: '<script src="https://cdn.frontdesk.ai/widget.js" data-agent-id="agt_8f2k1" async></script>',
+    code: '<script src="https://cdn.echo.ai/widget.js" data-agent-id="agt_8f2k1" async></script>',
     details: ["< 25 KB bundle size", "Mobile responsive & fast loading", "Compatible with WordPress, Shopify, Webflow, Wix"],
   },
 ];

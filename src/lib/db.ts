@@ -419,7 +419,7 @@ if (countUser.cnt === 0) {
     db.prepare(`
       INSERT INTO users (id, organization_id, email, name, password_hash, salt, role)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(userId, orgId, "demo@frontdesk.ai", "Dr. Sarah Lee", hash, salt, "owner");
+    `).run(userId, orgId, "demo@echo.ai", "Dr. Sarah Lee", hash, salt, "owner");
 
     db.prepare(`
       INSERT INTO agents (id, organization_id, name, greeting, color, position, tone)

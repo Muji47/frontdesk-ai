@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { footerCols, nav } from "@/content/site";
+import { EchoLogo } from "@/components/EchoLogo";
 
 export function SiteHeader() {
   const pathname = usePathname();
@@ -28,9 +29,8 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
-        <Link href="/" className="flex items-center gap-2 font-bold">
-          <span className="accent-bg flex h-7 w-7 items-center justify-center rounded-lg text-white">F</span>
-          FrontDesk AI
+        <Link href="/" className="flex items-center gap-2 font-bold group">
+          <EchoLogo size={30} showWordmark={true} />
         </Link>
         <nav className="hidden gap-5 text-sm text-slate-600 lg:flex">
           {nav.map((n) => (
@@ -74,10 +74,10 @@ export function SiteFooter() {
     <footer className="border-t border-slate-200 bg-slate-50">
       <div className="mx-auto grid max-w-6xl gap-8 px-5 py-10 sm:grid-cols-2 md:grid-cols-5">
         <div className="md:col-span-1">
-          <div className="flex items-center gap-2 font-bold">
-            <span className="accent-bg flex h-7 w-7 items-center justify-center rounded-lg text-white">F</span>FrontDesk AI
-          </div>
-          <p className="mt-3 text-sm text-slate-500">The AI front desk for service and retail businesses. Working name.</p>
+          <Link href="/" className="inline-block">
+            <EchoLogo size={28} showWordmark={true} />
+          </Link>
+          <p className="mt-3 text-sm text-slate-500">Autonomous AI reception and front-office intelligence for clinics, commerce, and enterprise.</p>
         </div>
         {footerCols.map((c) => (
           <div key={c.title}>
@@ -91,7 +91,7 @@ export function SiteFooter() {
         ))}
       </div>
       <div className="border-t border-slate-200 py-4 text-center text-xs text-slate-500">
-        © FrontDesk AI (working name) · Prices and integrations shown are launch plans and may change.
+        © Echo.ai · Autonomous Front-Office Intelligence · All rights reserved.
       </div>
     </footer>
   );

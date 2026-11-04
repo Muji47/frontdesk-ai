@@ -3,8 +3,8 @@ import "./globals.css";
 import { SiteFooter, SiteHeader } from "@/components/SiteShell";
 
 export const metadata: Metadata = {
-  title: "FrontDesk AI — The AI front desk for any business",
-  description: "An AI assistant that answers questions, books appointments, tracks orders and hands over to your team — 24/7. Installs with one script.",
+  title: "Echo.ai — Autonomous AI Front Desk & High-Touch Reception",
+  description: "Echo.ai answers customer inquiries, schedules clinic appointments, tracks e-commerce orders, and smoothly hands over to human staff — 24/7 with zero hallucinations.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

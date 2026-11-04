@@ -4,7 +4,7 @@ import { PageHero, CtaBand } from "@/components/SiteShell";
 import { industryList } from "@/content/industries";
 
 export const metadata: Metadata = {
-  title: "Supported Industries — FrontDesk AI",
+  title: "Supported Industries — Echo.ai",
   description: "Explore tailored AI receptionist solutions for healthcare clinics, direct-to-consumer e-commerce, real estate agencies, and beauty salons.",
 };
 

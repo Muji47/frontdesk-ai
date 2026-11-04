@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { EchoLogo } from "@/components/EchoLogo";
 import type { UserSession } from "@/lib/auth";
 import type {
   DashboardData,
@@ -380,11 +381,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         <div>
           {/* Logo & Org Header */}
           <div className="p-4 border-b border-slate-100">
-            <Link href="/" className="flex items-center gap-2 font-bold text-sm text-slate-900">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white font-bold text-xs">
-                F
-              </span>
-              FrontDesk AI
+            <Link href="/" className="flex items-center gap-2.5 font-bold text-sm text-slate-900 group">
+              <EchoLogo size={28} showWordmark={true} wordmarkClassName="text-base font-extrabold text-slate-900 tracking-tight" />
             </Link>
             <div className="mt-3 rounded-xl bg-slate-50 p-2.5 border border-slate-100">
               <div className="text-xs font-bold text-slate-900 truncate">{user.orgName}</div>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { EchoLogo } from "@/components/EchoLogo";
 
 interface ApiErrorResponse {
   success: boolean;
@@ -72,9 +73,8 @@ export default function SignupPage() {
     <div className="flex min-h-[85vh] items-center justify-center bg-slate-50 px-5 py-12">
       <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-8 shadow-xl">
         <div className="text-center">
-          <Link href="/" className="inline-flex items-center gap-2 font-bold text-slate-900">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white font-bold">F</span>
-            FrontDesk AI
+          <Link href="/" className="inline-block group">
+            <EchoLogo size={34} showWordmark={true} wordmarkClassName="text-xl font-extrabold text-slate-900 tracking-tight" />
           </Link>
           <h1 className="mt-4 text-2xl font-bold text-slate-900">Start Your 14-Day Free Trial</h1>
           <p className="mt-1 text-xs text-slate-500">
@@ -268,7 +268,7 @@ export default function SignupPage() {
               }}
               className="block w-full rounded-xl bg-indigo-600 py-3 font-bold text-white shadow-md hover:bg-indigo-700 transition"
             >
-              Enter FrontDesk AI Dashboard →
+              Enter Echo.ai Dashboard →
             </button>
           </div>
         )}

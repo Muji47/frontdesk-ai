@@ -4,8 +4,8 @@ import { compareRows } from "@/content/site";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Compare Solutions — FrontDesk AI",
-  description: "See how FrontDesk AI compares to basic FAQ chatbots and traditional human receptionists for booking and lead conversion.",
+  title: "Compare Solutions — Echo.ai",
+  description: "See how Echo.ai compares to basic FAQ chatbots and traditional human receptionists for booking and lead conversion.",
 };
 
 export default function ComparePage() {
@@ -14,7 +14,7 @@ export default function ComparePage() {
       <PageHero
         eyebrow="Market Comparison"
         title="We aren't another generic chat widget."
-        sub="Basic chatbots only regurgitate text. Human receptionists don't work at midnight. FrontDesk AI unites autonomous execution with reliable human control."
+        sub="Basic chatbots only regurgitate text. Human receptionists don't work at midnight. Echo.ai unites autonomous execution with reliable human control."
       />
 
       <section className="mx-auto max-w-5xl px-5 py-12">
@@ -26,7 +26,7 @@ export default function ComparePage() {
                   <th className="p-4 font-semibold">Capability</th>
                   <th className="p-4 font-semibold">Basic FAQ Chatbot</th>
                   <th className="p-4 font-semibold">Human Receptionist</th>
-                  <th className="p-4 font-bold text-indigo-600 bg-indigo-50/50">FrontDesk AI</th>
+                  <th className="p-4 font-bold text-indigo-600 bg-indigo-50/50">Echo.ai</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -47,13 +47,13 @@ export default function ComparePage() {
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="font-bold text-sm text-slate-900">Why Not a Basic Chatbot?</h3>
             <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-              Standard AI widgets hallucinate, can&apos;t check live calendar slots, and frustrate visitors. FrontDesk AI is integrated into your backend practice management software so it takes verified actions.
+              Standard AI widgets hallucinate, can&apos;t check live calendar slots, and frustrate visitors. Echo.ai is integrated into your backend practice management software so it takes verified actions.
             </p>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="font-bold text-sm text-slate-900">Why Not Staff Only?</h3>
             <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-              Receptionists handle phone calls, in-person check-ins, and paperwork. Answering repetitive website questions at 11 PM isn&apos;t viable. FrontDesk AI protects staff from burnout.
+              Receptionists handle phone calls, in-person check-ins, and paperwork. Answering repetitive website questions at 11 PM isn&apos;t viable. Echo.ai protects staff from burnout.
             </p>
           </div>
           <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-6 shadow-sm">

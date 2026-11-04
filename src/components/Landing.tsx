@@ -93,8 +93,8 @@ export function Landing({ initial, switchable }: { initial: string; switchable: 
             </div>
           ))}
         </div>
-        <pre className="mt-6 overflow-x-auto rounded-xl bg-slate-900 p-4 text-xs text-slate-100">
-{`<script src="https://cdn.frontdesk.ai/widget.js" data-agent-id="AGENT_ID" async></script>`}
+        <pre className="mt-6 overflow-x-auto rounded-xl bg-slate-900 p-4 text-xs text-slate-100 font-mono">
+{`<script src="https://cdn.echo.ai/widget.js" data-agent-id="AGENT_ID" async></script>`}
         </pre>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-sm text-slate-500">
           <span className="font-semibold text-slate-700">Works with:</span>

@@ -3,8 +3,8 @@ import { PageHero, CtaBand } from "@/components/SiteShell";
 import { RoiCalculator } from "@/components/RoiCalculator";
 
 export const metadata: Metadata = {
-  title: "ROI Calculator — FrontDesk AI",
-  description: "Calculate how much missed revenue and reception administrative hours FrontDesk AI can recover for your business.",
+  title: "ROI Calculator — Echo.ai",
+  description: "Calculate how much missed revenue and reception administrative hours Echo.ai can recover for your business.",
 };
 
 export default function RoiPage() {

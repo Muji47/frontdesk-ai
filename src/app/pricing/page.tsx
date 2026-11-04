@@ -4,7 +4,7 @@ import { PricingTable } from "@/components/PricingTable";
 import { RoiCalculator } from "@/components/RoiCalculator";
 
 export const metadata: Metadata = {
-  title: "Pricing & Plans — FrontDesk AI",
+  title: "Pricing & Plans — Echo.ai",
   description: "Transparent, predictable monthly pricing for businesses. Unlimited FAQ answers, live appointment booking, and human handover.",
 };
 

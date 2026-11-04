@@ -13,7 +13,7 @@ export default function DemoPage() {
     <div className="bg-slate-50">
       <PageHero
         eyebrow="Interactive Experience"
-        title="Experience FrontDesk AI before you install it."
+        title="Experience Echo.ai before you install it."
         sub="Try real customer scenarios: book appointment slots, look up order tracking, ask about pricing, or ask an unknown question to see our safe human handover in action."
       />
 
@@ -72,7 +72,7 @@ export default function DemoPage() {
                 <span>🛡️</span> Zero Hallucination Guarantee
               </h3>
               <p className="mt-2 text-indigo-800 leading-relaxed">
-                When FrontDesk AI doesn&apos;t find verified information in your uploaded documents or booking system, it never invents an answer. It informs the customer, logs the query in your dashboard&apos;s <b>Unanswered Questions</b> queue, and escalates to your team.
+                When Echo.ai doesn&apos;t find verified information in your uploaded documents or booking system, it never invents an answer. It informs the customer, logs the query in your dashboard&apos;s <b>Unanswered Questions</b> queue, and escalates to your team.
               </p>
             </div>
           </div>

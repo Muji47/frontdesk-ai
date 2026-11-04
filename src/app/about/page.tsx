@@ -3,7 +3,7 @@ import { PageHero, CtaBand } from "@/components/SiteShell";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "About Us — FrontDesk AI",
+  title: "About Us — Echo.ai",
   description: "Our mission: empower independent service practices and growing businesses with enterprise-grade autonomous front-desk technology.",
 };
 
@@ -13,7 +13,7 @@ export default function AboutPage() {
       <PageHero
         eyebrow="Our Mission & Philosophy"
         title="We build technology that helps human teams thrive."
-        sub="FrontDesk AI was created to solve a universal headache: busy front-desk staff overwhelmed by repetitive inquiries, while high-intent prospective customers leave without getting answers."
+        sub="Echo.ai was created to solve a universal headache: busy front-desk staff overwhelmed by repetitive inquiries, while high-intent prospective customers leave without getting answers."
       />
 
       <section className="mx-auto max-w-4xl px-5 py-12 space-y-10">

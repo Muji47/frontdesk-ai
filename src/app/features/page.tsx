@@ -4,8 +4,8 @@ import { featureGroups } from "@/content/site";
 import { TourTabs } from "@/components/TourTabs";
 
 export const metadata: Metadata = {
-  title: "Features — FrontDesk AI",
-  description: "Explore the complete feature set of FrontDesk AI: knowledge ingestion, live booking, order management, human handover, and analytics.",
+  title: "Features — Echo.ai",
+  description: "Explore the complete feature set of Echo.ai: knowledge ingestion, live booking, order management, human handover, and analytics.",
 };
 
 export default function FeaturesPage() {
@@ -14,7 +14,7 @@ export default function FeaturesPage() {
       <PageHero
         eyebrow="Capabilities & Architecture"
         title="Everything your front desk handles. Automated."
-        sub="FrontDesk AI turns website inquiries into confirmed appointments and satisfied customers without expanding administrative headcount."
+        sub="Echo.ai turns website inquiries into confirmed appointments and satisfied customers without expanding administrative headcount."
       />
 
       {/* Interactive Tour Section */}

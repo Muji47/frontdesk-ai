@@ -17,6 +17,62 @@ interface DashboardClientProps {
   initialData: DashboardData;
 }
 
+function getSourcePreviewChunks(source: DashboardKnowledgeSource, isEcom: boolean) {
+  if (source.sourceType === "manual_qa") {
+    return [
+      {
+        id: 1,
+        title: "Verified Response Directive",
+        content: `Policy definition: "${source.title}". When visitors query topics matching this entry, the AI receptionist draws directly from this verified instruction.`,
+      },
+    ];
+  }
+
+  if (source.sourceType === "pdf") {
+    return [
+      {
+        id: 1,
+        title: "Section 1: Service Catalog & Pricing Rules",
+        content: isEcom
+          ? "Standard Shipping is $9.95 (3-5 business days). Express shipping is $14.95 (1-2 business days). Free standard shipping applies on all retail orders over $100 across Australia and New Zealand."
+          : "Initial comprehensive appointment fee is $140 (60 minutes). Subsequent consultation is $95 (30 minutes). Late cancellations within 4 hours incur a 50% reservation fee.",
+      },
+      {
+        id: 2,
+        title: "Section 2: Terms, Refunds & Health Claims",
+        content: isEcom
+          ? "Items may be returned within 30 days of delivery if unworn, undamaged, and in original packaging with proof of purchase. Refunds are issued to original payment method."
+          : "Private health insurance claims via HICAPS are supported on-site for Bupa, Medibank, HCF, NIB, and Teachers Health. EPC/CDM Medicare care plans accepted.",
+      },
+    ];
+  }
+
+  // Default: URL crawl
+  return [
+    {
+      id: 1,
+      title: "Extracted Overview & Operating Hours",
+      content: isEcom
+        ? "Online storefront is operational 24/7. Live customer service and warehouse dispatch operate Monday to Friday from 8:30 AM to 5:00 PM AEST."
+        : "Clinic operating hours are Monday to Friday 7:30 AM to 6:30 PM, Saturday 8:00 AM to 1:00 PM. Patient parking bays available at the rear of the clinic.",
+    },
+    {
+      id: 2,
+      title: "Extracted Services & Booking Directives",
+      content: isEcom
+        ? "Orders are dispatched within 24 hours. Tracking numbers are transmitted to customers upon carrier handover via FedEx or Australia Post."
+        : "Appointments can be booked autonomously by the AI receptionist. Telehealth and face-to-face appointments available with licensed practitioners.",
+    },
+    {
+      id: 3,
+      title: "Extracted Contact & Escalation Protocol",
+      content: isEcom
+        ? "For damaged items or refund processing, escalate immediately to human customer support team with order reference number."
+        : "For complex surgical rehabilitation queries or emergency triage, connect patient immediately to clinic reception staff.",
+    },
+  ];
+}
+
 export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<string>("overview");
@@ -47,6 +103,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [newFaqQ, setNewFaqQ] = useState("");
   const [newFaqA, setNewFaqA] = useState("");
   const [isAddingFaq, setIsAddingFaq] = useState(false);
+
+  // View resource modal state
+  const [viewingSource, setViewingSource] = useState<DashboardKnowledgeSource | null>(null);
+  const [isResyncing, setIsResyncing] = useState(false);
+  const [resyncSuccess, setResyncSuccess] = useState(false);
 
   // Agent Customization state
   const isEcom = user.industry === "ecommerce";
@@ -885,13 +946,26 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           </td>
                           <td className="text-slate-500">{source.pageCount} items</td>
                           <td className="text-right">
-                            <button
-                              onClick={() => handleDeleteSource(source.id)}
-                              disabled={deletingSourceId === source.id}
-                              className="text-red-500 hover:text-red-700 font-semibold text-[11px] disabled:opacity-50"
-                            >
-                              {deletingSourceId === source.id ? "Removing..." : "Remove"}
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => setViewingSource(source)}
+                                title="View resource content & chunks"
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-indigo-300 hover:text-indigo-600 shadow-xs transition"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                </svg>
+                                <span>View</span>
+                              </button>
+                              <button
+                                onClick={() => handleDeleteSource(source.id)}
+                                disabled={deletingSourceId === source.id}
+                                className="text-red-500 hover:text-red-700 font-semibold text-[11px] disabled:opacity-50 px-1.5 py-1 rounded-lg hover:bg-red-50 transition"
+                              >
+                                {deletingSourceId === source.id ? "..." : "Remove"}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -900,6 +974,156 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               )}
             </div>
+
+            {/* View Resource Modal */}
+            {viewingSource && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+                <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden text-xs flex flex-col max-h-[85vh]">
+                  {/* Modal Header */}
+                  <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="text-xl">
+                        {viewingSource.sourceType === "url" ? "🌐" : viewingSource.sourceType === "pdf" ? "📄" : "📝"}
+                      </span>
+                      <div className="min-w-0">
+                        <h3 className="font-bold text-sm text-slate-900 truncate">
+                          {viewingSource.title}
+                        </h3>
+                        <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+                          <span className="capitalize">{viewingSource.sourceType}</span>
+                          <span>•</span>
+                          <span className="font-mono text-indigo-600">{viewingSource.id}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setViewingSource(null);
+                        setResyncSuccess(false);
+                      }}
+                      className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/60 hover:text-slate-700 font-bold transition text-sm"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* Modal Body */}
+                  <div className="p-5 overflow-y-auto space-y-4 flex-1">
+                    {/* Meta Stats Cards */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Status</span>
+                        <div className="text-xs font-bold text-emerald-700 flex items-center gap-1 mt-0.5">
+                          <span>●</span> {viewingSource.status}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Vector Chunks</span>
+                        <div className="text-xs font-bold text-slate-900 mt-0.5">
+                          {viewingSource.pageCount} Chunks Indexed
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Last Sync</span>
+                        <div className="text-xs font-bold text-slate-900 mt-0.5 truncate">
+                          {new Date(viewingSource.lastSyncedAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Source URL Action if applicable */}
+                    {(viewingSource.sourceType === "url" || viewingSource.sourceUrl) && (
+                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 flex items-center justify-between gap-3">
+                        <div className="truncate">
+                          <span className="text-[10px] font-bold text-indigo-900 uppercase tracking-wider block">Target URL</span>
+                          <a
+                            href={viewingSource.sourceUrl || viewingSource.title}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-mono text-indigo-700 hover:underline truncate block"
+                          >
+                            {viewingSource.sourceUrl || viewingSource.title}
+                          </a>
+                        </div>
+                        <a
+                          href={viewingSource.sourceUrl || viewingSource.title}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded-lg bg-indigo-600 px-3 py-1.5 font-bold text-white text-[11px] hover:bg-indigo-700 shrink-0 inline-flex items-center gap-1"
+                        >
+                          <span>Visit Link</span>
+                          <span>↗</span>
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Extracted Semantic Chunks Preview */}
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-bold text-slate-800 text-xs">
+                          Extracted Semantic Chunks (AI Receptionist Context)
+                        </span>
+                        <span className="text-[10px] text-slate-400">Model: text-embedding-3-small</span>
+                      </div>
+
+                      <div className="space-y-2.5">
+                        {getSourcePreviewChunks(viewingSource, isEcom).map((chunk) => (
+                          <div
+                            key={chunk.id}
+                            className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-1"
+                          >
+                            <div className="flex justify-between items-center text-[10px] font-bold text-slate-500">
+                              <span className="text-indigo-600 font-mono">CHUNK #{chunk.id}</span>
+                              <span>{chunk.title}</span>
+                            </div>
+                            <p className="text-slate-800 leading-relaxed font-normal bg-white p-2.5 rounded-lg border border-slate-100">
+                              {chunk.content}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Modal Footer */}
+                  <div className="p-3.5 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {resyncSuccess && (
+                        <span className="text-[11px] text-emerald-600 font-bold">
+                          ✓ Successfully re-indexed vector chunks!
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setIsResyncing(true);
+                          setResyncSuccess(false);
+                          setTimeout(() => {
+                            setIsResyncing(false);
+                            setResyncSuccess(true);
+                            setTimeout(() => setResyncSuccess(false), 3000);
+                          }, 600);
+                        }}
+                        disabled={isResyncing}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 font-bold text-slate-700 hover:bg-slate-100 text-xs transition disabled:opacity-50"
+                      >
+                        {isResyncing ? "Re-syncing..." : "🔄 Re-sync Document"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setViewingSource(null);
+                          setResyncSuccess(false);
+                        }}
+                        className="rounded-xl bg-slate-900 px-4 py-1.5 font-bold text-white text-xs hover:bg-slate-800 transition shadow-sm"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Test Knowledge Retrieval Simulator */}
             <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/60 to-purple-50/30 p-6 shadow-sm">

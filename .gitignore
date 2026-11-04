@@ -13,3 +13,5 @@ data/
 PRD.md
 *.memory.md
 memory/
+strategy/
+*.strategy.md

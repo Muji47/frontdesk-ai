@@ -217,6 +217,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_integrations_org ON integrations(organization_id, provider);
 `);
 
+// Idempotent column migrations for Sprint 2.1 (AI Handover & Escalation tracking)
+try {
+  const convColumns = db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
+  const colNames = new Set(convColumns.map((c) => c.name));
+
+  if (!colNames.has("is_ai_muted")) {
+    db.exec("ALTER TABLE conversations ADD COLUMN is_ai_muted INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!colNames.has("escalation_reason")) {
+    db.exec("ALTER TABLE conversations ADD COLUMN escalation_reason TEXT");
+  }
+  if (!colNames.has("escalation_summary")) {
+    db.exec("ALTER TABLE conversations ADD COLUMN escalation_summary TEXT");
+  }
+} catch (err) {
+  console.error("Migration warning on conversations:", err);
+}
+
 /**
  * Executes a function within an atomic SQLite transaction.
  * Automatically rolls back on uncaught errors.

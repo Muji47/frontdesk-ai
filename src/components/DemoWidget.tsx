@@ -13,13 +13,14 @@ export function DemoWidget({ cfg }: { cfg: Industry }) {
   const [msgs, setMsgs] = useState<Msg[]>([{ from: "bot", text: d.greeting, chips: d.chips }]);
   const [typing, setTyping] = useState(false);
   const [input, setInput] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     box.current?.scrollTo({ top: box.current.scrollHeight, behavior: "smooth" });
   }, [msgs, typing]);
 
-  function reply(q: string): Msg {
+  function localReply(q: string): Msg {
     const t = q.toLowerCase();
     if (/(human|person|agent|staff|someone|team member)/.test(t) && !d.replies.some((r) => r.match.some((m) => t.includes(m)))) {
       return { from: "bot", text: d.handover };
@@ -30,17 +31,49 @@ export function DemoWidget({ cfg }: { cfg: Industry }) {
     return { from: "bot", text: d.fallback, chips: ["Talk to a person"] };
   }
 
-  function send(q: string) {
+  async function send(q: string) {
     q = q.trim();
     if (!q || typing) return;
     setInput("");
     // remove chips from earlier messages so only the latest are tappable
     setMsgs((m) => [...m.map((x) => (x.from === "bot" ? { ...x, chips: undefined } : x)), { from: "user", text: q }]);
     setTyping(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: q,
+          conversationId,
+          orgId: cfg.slug === "ecommerce" ? "org_demo_ecom" : "org_demo_101",
+          visitorName: "Visitor (" + cfg.label + ")",
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.conversationId) setConversationId(data.conversationId);
+        setTyping(false);
+        setMsgs((m) => [
+          ...m,
+          {
+            from: "bot",
+            text: data.replyText,
+            chips: data.chips,
+          },
+        ]);
+        return;
+      }
+    } catch {
+      // Fallback to local response on network or offline condition
+    }
+
+    // Fallback
     setTimeout(() => {
       setTyping(false);
-      setMsgs((m) => [...m, reply(q)]);
-    }, 800);
+      setMsgs((m) => [...m, localReply(q)]);
+    }, 600);
   }
 
   return (

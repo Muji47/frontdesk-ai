@@ -35,6 +35,45 @@ export async function POST(req: NextRequest) {
       status: "ACTIVE" as const,
     },
     {
+      type: "new_conversation",
+      title: "Health Fund & Pricing Query",
+      icon: "💳",
+      targetTab: "inbox" as const,
+      visitorName: isEcom ? "Alexandre Dumas" : "David Miller",
+      visitorContact: isEcom ? "alex.d@fashion.fr" : "+61 405 119 443",
+      question: isEcom
+        ? "Is there a wholesale discount for orders over 50 bags?"
+        : "Do you accept Bupa private health insurance and do on-the-spot HICAPS electronic claims?",
+      badge: "AI Active",
+      status: "ACTIVE" as const,
+    },
+    {
+      type: "new_conversation",
+      title: "Evening Appointment Request",
+      icon: "⏰",
+      targetTab: "inbox" as const,
+      visitorName: isEcom ? "Samantha Wu" : "Emma Watson",
+      visitorContact: isEcom ? "samantha.w@sydney.com" : "+61 418 332 990",
+      question: isEcom
+        ? "Can I change my delivery address to my office before the courier picks it up?"
+        : "I work until 5 PM in the city. Do you have any late evening consultation slots this Thursday?",
+      badge: "AI Active",
+      status: "ACTIVE" as const,
+    },
+    {
+      type: "new_conversation",
+      title: "Medicare Care Plan Inquiry",
+      icon: "📋",
+      targetTab: "inbox" as const,
+      visitorName: isEcom ? "Michael Vance" : "Liam Patel",
+      visitorContact: isEcom ? "mvance@logistics.com" : "+61 422 778 301",
+      question: isEcom
+        ? "Do your rice bags come in 25kg bulk food-service sacks?"
+        : "My GP gave me an EPC Medicare care plan for chronic back pain. Can I book with Dr. Sarah Lee under that?",
+      badge: "AI Active",
+      status: "ACTIVE" as const,
+    },
+    {
       type: "handover_alert",
       title: "🚨 Staff Handover Requested",
       icon: "🙋",
@@ -46,6 +85,7 @@ export async function POST(req: NextRequest) {
         : "I have complex post-surgical rehabilitation guidelines from my orthopedic surgeon. Can clinic staff review?",
       badge: "Human needed",
       status: "WAITING_FOR_HUMAN" as const,
+      escalationReason: "Post-surgical medical rehabilitation review requested",
     },
     {
       type: "new_appointment",
@@ -62,9 +102,10 @@ export async function POST(req: NextRequest) {
     },
   ];
 
-  const choice = body.eventType
-    ? scenarios.find((s) => s.type === body.eventType) || scenarios[0]
-    : scenarios[Math.floor(Math.random() * scenarios.length)];
+  const matching = body.eventType
+    ? scenarios.filter((s) => s.type === body.eventType)
+    : scenarios;
+  const choice = (matching.length > 0 ? matching[Math.floor(Math.random() * matching.length)] : scenarios[0]) || scenarios[0];
 
   const convId = "conv_" + randomBytes(6).toString("hex");
   const msgId = "msg_" + randomBytes(6).toString("hex");

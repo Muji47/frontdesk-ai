@@ -6,7 +6,7 @@ export interface RealtimeDashboardEvent {
   timestamp: string;
   title: string;
   message: string;
-  targetTab: "inbox" | "overview" | "appointments" | "leads" | "knowledge";
+  targetTab: "inbox" | "overview" | "appointments" | "leads" | "knowledge" | "conversations" | "analytics" | "billing";
   targetId?: string; // conversation ID, appointment ID, etc.
   icon?: string;
   data?: any;

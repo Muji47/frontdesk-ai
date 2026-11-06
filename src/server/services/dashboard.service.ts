@@ -32,6 +32,9 @@ export interface DashboardConversation {
   externalRef: string | null;
   timeAgo: string;
   messages: ConversationMessage[];
+  isAiMuted?: boolean;
+  escalationReason?: string | null;
+  escalationSummary?: string | null;
 }
 
 export interface DashboardUnansweredQuestion {
@@ -169,7 +172,8 @@ export class DashboardService {
     // 2. Fetch Conversations with their respective messages
     const convRows = db.prepare(`
       SELECT 
-        id, visitor_name, visitor_contact, channel, status, resolution_badge, last_message, external_ref, last_activity_at, created_at
+        id, visitor_name, visitor_contact, channel, status, resolution_badge, last_message, external_ref,
+        is_ai_muted, escalation_reason, escalation_summary, last_activity_at, created_at
       FROM conversations
       WHERE organization_id = ?
       ORDER BY last_activity_at DESC
@@ -202,6 +206,9 @@ export class DashboardService {
         externalRef: row.external_ref ? String(row.external_ref) : null,
         timeAgo: formatRelativeTime(row.last_activity_at || row.created_at),
         messages,
+        isAiMuted: row.is_ai_muted === 1,
+        escalationReason: row.escalation_reason ? String(row.escalation_reason) : null,
+        escalationSummary: row.escalation_summary ? String(row.escalation_summary) : null,
       };
     });
 
@@ -649,6 +656,239 @@ export class DashboardService {
         "This question crosses beyond our verified company parameters. To ensure 100% accuracy with zero hallucination, our AI receptionist is strictly trained not to guess or invent unverified policies. This inquiry has been logged into your Unanswered Questions queue for staff review.",
       sources: [],
       confidence: 0.2,
+    };
+  }
+
+  /**
+   * Toggles AI mute status on an active conversation thread (Sprint 2.1 Handover Control).
+   */
+  public static toggleConversationAiMute(
+    conversationId: string,
+    orgId: string,
+    mute: boolean
+  ): { isAiMuted: boolean; status: string; badge: string } {
+    const conv = db.prepare(`
+      SELECT id, status FROM conversations WHERE id = ? AND organization_id = ?
+    `).get(conversationId, orgId) as any;
+
+    if (!conv) {
+      throw new NotFoundError("Conversation not found.");
+    }
+
+    const newStatus = mute ? "WAITING_FOR_HUMAN" : "ACTIVE";
+    const newBadge = mute ? "Human needed" : "AI Active";
+
+    db.prepare(`
+      UPDATE conversations
+      SET is_ai_muted = ?, status = ?, resolution_badge = ?, last_activity_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(mute ? 1 : 0, newStatus, newBadge, conversationId);
+
+    dashboardEventBus.emitToOrg(orgId, {
+      type: "handover_alert",
+      title: mute ? "👤 Staff Handover Activated" : "🤖 AI Autopilot Resumed",
+      message: mute ? "AI is now muted on this thread." : "AI receptionist is back active.",
+      icon: mute ? "👤" : "🤖",
+      targetTab: "conversations",
+      targetId: conversationId,
+      data: {
+        conversationId,
+        isAiMuted: mute,
+        status: newStatus,
+        badge: newBadge,
+      },
+    });
+
+    return { isAiMuted: mute, status: newStatus, badge: newBadge };
+  }
+
+  /**
+   * Simulates a realistic customer response in a conversation thread for verification & demo testing.
+   */
+  public static simulateCustomerReply(conversationId: string, orgId: string): ConversationMessage {
+    const conv = db.prepare(`
+      SELECT id, visitor_name, visitor_contact FROM conversations WHERE id = ? AND organization_id = ?
+    `).get(conversationId, orgId) as any;
+
+    if (!conv) {
+      throw new NotFoundError("Conversation not found.");
+    }
+
+    const followUps = [
+      "That works great! Please book me in for that time.",
+      "Thank you for the quick reply. Do I need to bring my doctor's referral letter?",
+      "Perfect, I appreciate your help. Will I receive an SMS confirmation before the visit?",
+      "That sounds good. How early should I arrive to fill in the intake paperwork?",
+      "Understood! Thank you so much for arranging this with Dr. Sarah Lee.",
+    ];
+
+    const replyContent = followUps[Math.floor(Math.random() * followUps.length)];
+    const msgId = "msg_" + randomBytes(6).toString("hex");
+    const nowIso = new Date().toISOString();
+
+    withTransaction(() => {
+      db.prepare(`
+        INSERT INTO messages (id, conversation_id, sender, content, created_at)
+        VALUES (?, ?, 'client', ?, ?)
+      `).run(msgId, conversationId, replyContent, nowIso);
+
+      db.prepare(`
+        UPDATE conversations
+        SET last_message = ?, status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', last_activity_at = ?
+        WHERE id = ?
+      `).run(replyContent, nowIso, conversationId);
+    });
+
+    const newMsg: ConversationMessage = {
+      id: msgId,
+      sender: "client",
+      content: replyContent,
+      createdAt: nowIso,
+    };
+
+    dashboardEventBus.emitToOrg(orgId, {
+      type: "new_message",
+      title: `Reply from ${conv.visitor_name}`,
+      message: replyContent,
+      icon: "💬",
+      targetTab: "conversations",
+      targetId: conversationId,
+      data: {
+        conversationId,
+        message: newMsg,
+      },
+    });
+
+    return newMsg;
+  }
+
+  /**
+   * Handles visitor chat messages from the public website widget with real RAG retrieval,
+   * persistence, and real-time dashboard notification.
+   */
+  public static handleVisitorChat(params: {
+    orgId?: string;
+    conversationId?: string;
+    message: string;
+    visitorName?: string;
+    visitorContact?: string;
+  }): { conversationId: string; replyText: string; chips?: string[]; isEscalated: boolean } {
+    const orgId = params.orgId || "org_demo_101";
+    const text = params.message.trim();
+    if (!text) {
+      throw new ValidationError("Message cannot be empty.");
+    }
+
+    let convId = params.conversationId;
+    const nowIso = new Date().toISOString();
+
+    // 1. Create conversation if new
+    if (!convId) {
+      convId = "conv_" + randomBytes(6).toString("hex");
+      const visitorName = params.visitorName || "Website Visitor";
+      const visitorContact = params.visitorContact || "+61 400 " + Math.floor(100000 + Math.random() * 900000);
+
+      db.prepare(`
+        INSERT INTO conversations (
+          id, organization_id, visitor_name, visitor_contact, channel, status, resolution_badge, last_message, created_at, last_activity_at
+        ) VALUES (?, ?, ?, ?, 'web', 'ACTIVE', 'AI Active', ?, ?, ?)
+      `).run(convId, orgId, visitorName, visitorContact, text, nowIso, nowIso);
+
+      dashboardEventBus.emitToOrg(orgId, {
+        type: "new_conversation",
+        title: "New Website Chat Started",
+        message: text,
+        icon: "💬",
+        targetTab: "conversations",
+        targetId: convId,
+        data: {
+          id: convId,
+          visitorName,
+          visitorContact,
+          channel: "web",
+          status: "ACTIVE",
+          badge: "AI Active",
+          lastMessage: text,
+          timeAgo: "just now",
+          messages: [{ id: "msg_v_" + Date.now(), sender: "client", content: text, createdAt: nowIso }],
+        },
+      });
+    }
+
+    // 2. Save Visitor Message
+    const clientMsgId = "msg_" + randomBytes(6).toString("hex");
+    db.prepare(`
+      INSERT INTO messages (id, conversation_id, sender, content, created_at)
+      VALUES (?, ?, 'client', ?, ?)
+    `).run(clientMsgId, convId, text, nowIso);
+
+    // 3. Check if staff has muted AI on this conversation
+    const convRow = db.prepare(`SELECT is_ai_muted, visitor_name FROM conversations WHERE id = ?`).get(convId) as any;
+    const isMuted = convRow?.is_ai_muted === 1;
+
+    let aiReplyText = "";
+    let isEscalated = false;
+    const chips: string[] = ["Book Appointment", "Opening Hours", "Pricing & Health Funds"];
+
+    if (isMuted) {
+      aiReplyText = "Thank you! Our front desk staff is reviewing your message and will reply shortly.";
+      isEscalated = true;
+    } else {
+      // Query knowledge base
+      const testResult = this.testKnowledgeQuery(orgId, text);
+      aiReplyText = testResult.answer;
+
+      // Check if user is asking for human
+      const lower = text.toLowerCase();
+      if (/(human|person|agent|staff|someone|doctor|physio)/.test(lower)) {
+        isEscalated = true;
+        aiReplyText = "I've flagged this thread for our clinic front desk team. A staff member has been alerted and will assist you directly.";
+        db.prepare(`
+          UPDATE conversations
+          SET status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', escalation_reason = 'Visitor requested human staff'
+          WHERE id = ?
+        `).run(convId);
+      }
+    }
+
+    // 4. Save AI Response Message
+    const aiMsgId = "msg_" + randomBytes(6).toString("hex");
+    const aiNowIso = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO messages (id, conversation_id, sender, content, created_at)
+      VALUES (?, ?, 'ai', ?, ?)
+    `).run(aiMsgId, convId, aiReplyText, aiNowIso);
+
+    db.prepare(`
+      UPDATE conversations
+      SET last_message = ?, last_activity_at = ?
+      WHERE id = ?
+    `).run(aiReplyText, aiNowIso, convId);
+
+    // Broadcast AI response to dashboard
+    dashboardEventBus.emitToOrg(orgId, {
+      type: "new_message",
+      title: "AI Receptionist Replied",
+      message: aiReplyText,
+      icon: "🤖",
+      targetTab: "conversations",
+      targetId: convId,
+      data: {
+        conversationId: convId,
+        message: {
+          id: aiMsgId,
+          sender: "ai",
+          content: aiReplyText,
+          createdAt: aiNowIso,
+        },
+      },
+    });
+
+    return {
+      conversationId: convId,
+      replyText: aiReplyText,
+      chips,
+      isEscalated,
     };
   }
 }

@@ -112,7 +112,7 @@ function playNotificationChime() {
 export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<string>("overview");
-  const [selectedConvIndex, setSelectedConvIndex] = useState<number>(0);
+  const [selectedConvId, setSelectedConvId] = useState<string>(initialData.conversations[0]?.id || "");
 
   // Dynamic state from server DB
   const [metrics, setMetrics] = useState(initialData.metrics);
@@ -154,12 +154,19 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [isSavingAgent, setIsSavingAgent] = useState(false);
   const [agentSaveSuccess, setAgentSaveSuccess] = useState(false);
 
-  // Staff live reply state
+  // Staff live reply & simulation state
   const [replyText, setReplyText] = useState("");
   const [isSendingReply, setIsSendingReply] = useState(false);
+  const [isSimulatingReply, setIsSimulatingReply] = useState(false);
+  const [isTogglingAi, setIsTogglingAi] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const currentConv = conversations[selectedConvIndex] || conversations[0];
+  const currentConv = conversations.find((c) => c.id === selectedConvId) || conversations[0];
   const pendingQuestionsCount = unanswered.filter((u) => u.status === "pending").length;
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [currentConv?.messages]);
 
   // Real-time Socket & Toast Notification State
   const [toasts, setToasts] = useState<RealtimeToast[]>([]);
@@ -190,26 +197,30 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             return;
           }
 
-          // Trigger audio chime
-          playNotificationChime();
+          const isOwnStaffMessage = payload.type === "new_message" && payload.data?.message?.sender === "staff";
 
-          const toastId = "tst_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
-          const newToast: RealtimeToast = {
-            id: toastId,
-            title: payload.title || "Live Customer Activity",
-            message: payload.message || "New incoming request",
-            icon: payload.icon || "💬",
-            targetTab: payload.targetTab === "inbox" ? "conversations" : payload.targetTab || "conversations",
-            targetId: payload.targetId,
-            timestamp: Date.now(),
-          };
+          if (!isOwnStaffMessage) {
+            // Trigger audio chime
+            playNotificationChime();
 
-          setToasts((prev) => [newToast, ...prev.slice(0, 3)]);
+            const toastId = "tst_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+            const newToast: RealtimeToast = {
+              id: toastId,
+              title: payload.title || "Live Customer Activity",
+              message: payload.message || "New incoming request",
+              icon: payload.icon || "💬",
+              targetTab: payload.targetTab === "inbox" ? "conversations" : payload.targetTab || "conversations",
+              targetId: payload.targetId,
+              timestamp: Date.now(),
+            };
 
-          // Auto dismiss after 6 seconds
-          setTimeout(() => {
-            setToasts((prev) => prev.filter((t) => t.id !== toastId));
-          }, 6000);
+            setToasts((prev) => [newToast, ...prev.slice(0, 3)]);
+
+            // Auto dismiss after 6 seconds
+            setTimeout(() => {
+              setToasts((prev) => prev.filter((t) => t.id !== toastId));
+            }, 6000);
+          }
 
           // Update local state dynamically
           if ((payload.type === "new_conversation" || payload.type === "handover_alert") && payload.data) {
@@ -232,6 +243,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               if (prev.some((c) => c.id === newConv.id)) return prev;
               return [newConv, ...prev];
             });
+            setSelectedConvId(convId);
             setMetrics((m) => ({
               ...m,
               totalConversations: m.totalConversations + 1,
@@ -242,12 +254,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               prev.map((c) => {
                 if (c.id === conversationId) {
                   const exists = c.messages.some((m) => m.id === message.id);
-                  const updatedMsgs = exists ? c.messages : [...c.messages, message];
+                  if (exists) return c;
                   return {
                     ...c,
                     lastMessage: message.content,
                     timeAgo: "just now",
-                    messages: updatedMsgs,
+                    messages: [...c.messages, message],
                   };
                 }
                 return c;
@@ -281,10 +293,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     setActiveTab(tab);
 
     if (toast.targetId && tab === "conversations") {
-      const idx = conversations.findIndex((c) => c.id === toast.targetId);
-      if (idx !== -1) {
-        setSelectedConvIndex(idx);
-      }
+      setSelectedConvId(toast.targetId);
     }
 
     setToasts((prev) => prev.filter((t) => t.id !== toast.id));
@@ -385,25 +394,87 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
       const newMsg: ConversationMessage = data.message;
 
-      // Update state locally
+      // Update state locally (with strict duplicate prevention)
       setConversations((prev) =>
-        prev.map((c) =>
-          c.id === currentConv.id
-            ? {
-                ...c,
-                status: "RESOLVED",
-                badge: "Human Resolved",
-                lastMessage: newMsg.content,
-                messages: [...c.messages, newMsg],
-              }
-            : c
-        )
+        prev.map((c) => {
+          if (c.id !== currentConv.id) return c;
+          const exists = c.messages.some((m) => m.id === newMsg.id);
+          return {
+            ...c,
+            status: "RESOLVED",
+            badge: "Human Resolved",
+            lastMessage: newMsg.content,
+            messages: exists ? c.messages : [...c.messages, newMsg],
+          };
+        })
       );
       setReplyText("");
     } catch (err: any) {
       alert(err.message || "Failed to send staff reply");
     } finally {
       setIsSendingReply(false);
+    }
+  }
+
+  async function handleToggleAiMute(mute: boolean) {
+    if (!currentConv || isTogglingAi) return;
+    setIsTogglingAi(true);
+    try {
+      const res = await fetch("/api/dashboard/conversations/takeover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: currentConv.id, mute }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to toggle AI handover");
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === currentConv.id
+            ? {
+                ...c,
+                isAiMuted: data.isAiMuted,
+                status: data.status,
+                badge: data.badge,
+              }
+            : c
+        )
+      );
+    } catch (err: any) {
+      alert(err.message || "Failed to toggle AI handover");
+    } finally {
+      setIsTogglingAi(false);
+    }
+  }
+
+  async function handleSimulateCustomerReply() {
+    if (!currentConv || isSimulatingReply) return;
+    setIsSimulatingReply(true);
+    try {
+      const res = await fetch("/api/dashboard/conversations/simulate-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: currentConv.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to simulate customer reply");
+      const newMsg: ConversationMessage = data.message;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === currentConv.id
+            ? {
+                ...c,
+                status: "WAITING_FOR_HUMAN",
+                badge: "Human needed",
+                lastMessage: newMsg.content,
+                messages: c.messages.some((m) => m.id === newMsg.id) ? c.messages : [...c.messages, newMsg],
+              }
+            : c
+        )
+      );
+    } catch (err: any) {
+      alert(err.message || "Failed to simulate customer reply");
+    } finally {
+      setIsSimulatingReply(false);
     }
   }
 
@@ -863,7 +934,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     <div
                       key={c.id ? `${c.id}-${i}` : `ov-${i}`}
                       onClick={() => {
-                        setSelectedConvIndex(i);
+                        setSelectedConvId(c.id);
                         setActiveTab("conversations");
                       }}
                       className="py-3 flex items-center justify-between cursor-pointer hover:bg-slate-50/70 rounded-lg px-2 transition"
@@ -1543,106 +1614,273 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
         {/* ===================== TAB: CONVERSATIONS (INBOX) ===================== */}
         {activeTab === "conversations" && (
-          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden grid lg:grid-cols-12 min-h-[520px]">
-            {/* List */}
-            <div className="lg:col-span-4 border-r border-slate-200 divide-y divide-slate-100">
-              <div className="p-3 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-600 flex justify-between">
-                <span>Active Conversations</span>
-                <span>{conversations.length} total</span>
-              </div>
-              {conversations.map((c, i) => (
-                <div
-                  key={c.id ? `${c.id}-${i}` : `conv-${i}`}
-                  onClick={() => setSelectedConvIndex(i)}
-                  className={`p-3.5 cursor-pointer transition text-xs ${
-                    selectedConvIndex === i ? "bg-indigo-50/70" : "hover:bg-slate-50"
-                  }`}
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden grid lg:grid-cols-12 min-h-[580px]">
+            {/* Left Thread List */}
+            <div className="lg:col-span-4 border-r border-slate-200 flex flex-col bg-slate-50/40">
+              <div className="p-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900">Customer Inbox</h3>
+                  <span className="text-[11px] text-slate-500">{conversations.length} total threads</span>
+                </div>
+                <button
+                  onClick={() => handleSimulateIncoming("new_conversation")}
+                  disabled={isSimulating}
+                  className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold transition flex items-center gap-1 border border-indigo-200"
+                  title="Simulate a new incoming patient inquiry"
                 >
-                  <div className="flex justify-between items-center">
-                    <b className="text-slate-900">{c.visitorName}</b>
-                    <span className="text-[10px] text-slate-400">{c.timeAgo}</span>
-                  </div>
-                  <p className="text-slate-500 truncate mt-1">{c.lastMessage}</p>
-                  <div className="mt-2">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                        c.status === "WAITING_FOR_HUMAN"
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-emerald-100 text-emerald-700"
+                  <span>+ Test Inquiry</span>
+                </button>
+              </div>
+
+              <div className="divide-y divide-slate-100 overflow-y-auto max-h-[640px] flex-1 bg-white">
+                {conversations.map((c, i) => {
+                  const isSelected = selectedConvId === c.id || (!selectedConvId && i === 0);
+                  const initials = c.visitorName
+                    ? c.visitorName
+                        .split(" ")
+                        .map((n) => n[0])
+                        .join("")
+                        .toUpperCase()
+                        .slice(0, 2)
+                    : "CU";
+
+                  return (
+                    <div
+                      key={c.id ? `${c.id}-${i}` : `conv-${i}`}
+                      onClick={() => setSelectedConvId(c.id)}
+                      className={`p-3.5 cursor-pointer transition text-xs flex gap-3 items-start ${
+                        isSelected
+                          ? "bg-indigo-50/80 border-l-4 border-indigo-600 pl-2.5 shadow-xs"
+                          : "hover:bg-slate-50"
                       }`}
                     >
-                      {c.badge}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Chat Body */}
-            {currentConv ? (
-              <div className="lg:col-span-8 flex flex-col justify-between">
-                <div className="p-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
-                  <div>
-                    <b className="text-slate-900">{currentConv.visitorName}</b>
-                    <span className="text-slate-500 ml-2">({currentConv.visitorContact})</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="rounded-lg bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700">
-                      Ref: {currentConv.externalRef || "General Inquiry"}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Message history */}
-                <div className="p-4 space-y-3 overflow-y-auto flex-1 text-xs min-h-[300px]">
-                  {currentConv.messages.map((m, mIdx) => (
-                    <div
-                      key={m.id ? `${m.id}-${mIdx}` : `msg-${mIdx}`}
-                      className={`flex ${m.sender === "client" ? "justify-start" : "justify-end"}`}
-                    >
+                      {/* Avatar */}
                       <div
-                        className={`max-w-[75%] rounded-2xl p-3 leading-relaxed ${
-                          m.sender === "client"
-                            ? "bg-slate-100 text-slate-800 rounded-bl-sm"
-                            : m.sender === "staff"
-                            ? "bg-emerald-600 text-white rounded-br-sm"
-                            : "bg-indigo-600 text-white rounded-br-sm"
+                        className={`h-9 w-9 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 text-white ${
+                          c.status === "WAITING_FOR_HUMAN"
+                            ? "bg-amber-500"
+                            : c.status === "RESOLVED"
+                            ? "bg-emerald-600"
+                            : "bg-indigo-600"
                         }`}
                       >
-                        <div className="text-[10px] opacity-75 mb-0.5 font-bold uppercase">
-                          {m.sender === "client"
-                            ? currentConv.visitorName
-                            : m.sender === "staff"
-                            ? "Staff Member"
-                            : initialData.agent.name}
+                        {initials}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-center">
+                          <b className="text-slate-900 font-semibold truncate">{c.visitorName}</b>
+                          <span className="text-[10px] text-slate-400 shrink-0 ml-1">{c.timeAgo}</span>
                         </div>
-                        {m.content}
+                        <p className="text-slate-500 truncate mt-0.5 text-[11px]">{c.lastMessage}</p>
+                        <div className="mt-1.5 flex items-center gap-1.5">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                              c.isAiMuted
+                                ? "bg-slate-900 text-white"
+                                : c.status === "WAITING_FOR_HUMAN"
+                                ? "bg-amber-100 text-amber-800"
+                                : c.status === "RESOLVED"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-indigo-100 text-indigo-700"
+                            }`}
+                          >
+                            {c.isAiMuted ? "AI Muted" : c.badge}
+                          </span>
+                          <span className="text-[10px] text-slate-400 uppercase font-medium">{c.channel}</span>
+                        </div>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Right Chat Message Pane */}
+            {currentConv ? (
+              <div className="lg:col-span-8 flex flex-col justify-between h-[640px] bg-slate-50/30">
+                {/* Chat Top Header */}
+                <div className="p-3.5 border-b border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3 text-xs shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-full bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center font-bold text-xs">
+                      {currentConv.visitorName
+                        ? currentConv.visitorName
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")
+                            .toUpperCase()
+                            .slice(0, 2)
+                        : "CU"}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <b className="text-sm font-bold text-slate-900">{currentConv.visitorName}</b>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                            currentConv.isAiMuted
+                              ? "bg-slate-900 text-white"
+                              : currentConv.status === "WAITING_FOR_HUMAN"
+                              ? "bg-amber-100 text-amber-800 border border-amber-300"
+                              : currentConv.status === "RESOLVED"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-indigo-100 text-indigo-700"
+                          }`}
+                        >
+                          {currentConv.isAiMuted
+                            ? "👤 Staff Handover Active"
+                            : currentConv.status === "WAITING_FOR_HUMAN"
+                            ? "⚠️ Needs Staff Reply"
+                            : currentConv.status === "RESOLVED"
+                            ? "✓ Human Resolved"
+                            : `🤖 AI Active (${initialData.agent.name})`}
+                        </span>
+                      </div>
+                      <span className="text-slate-500 text-[11px] block mt-0.5">
+                        {currentConv.visitorContact} • {currentConv.channel.toUpperCase()} Channel
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Header Actions */}
+                  <div className="flex items-center gap-2">
+                    {/* Toggle AI Handover */}
+                    {currentConv.isAiMuted ? (
+                      <button
+                        onClick={() => handleToggleAiMute(false)}
+                        disabled={isTogglingAi}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-semibold transition flex items-center gap-1 shadow-xs"
+                        title="Allow the AI receptionist to resume automated replies"
+                      >
+                        🤖 Resume AI Autopilot
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleToggleAiMute(true)}
+                        disabled={isTogglingAi}
+                        className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-semibold transition flex items-center gap-1 shadow-xs"
+                        title="Silence AI on this thread so staff can reply directly"
+                      >
+                        👤 Take Over (Mute AI)
+                      </button>
+                    )}
+
+                    {/* Simulate Customer Reply */}
+                    <button
+                      onClick={handleSimulateCustomerReply}
+                      disabled={isSimulatingReply}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold transition flex items-center gap-1 shadow-xs"
+                      title="Simulate the customer replying back to test two-way dialogue"
+                    >
+                      {isSimulatingReply ? "Simulating..." : "💬 Customer Replies"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Escalation Diagnostic Brief Banner */}
+                {(currentConv.status === "WAITING_FOR_HUMAN" || currentConv.escalationReason) && (
+                  <div className="p-3 bg-amber-50/90 border-b border-amber-200 text-xs text-amber-950 flex items-center justify-between gap-3 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base">🚨</span>
+                      <div>
+                        <b className="font-bold">Staff Handover Alert: </b>
+                        <span>
+                          {currentConv.escalationReason ||
+                            "Customer requested complex clinical review or staff consultation. AI is waiting for human response."}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="shrink-0 text-[10px] font-bold bg-amber-200/80 px-2 py-0.5 rounded text-amber-900">
+                      Handover Active
+                    </span>
+                  </div>
+                )}
+
+                {/* Message History Container with Auto-scroll */}
+                <div className="p-4 space-y-3 overflow-y-auto flex-1 text-xs">
+                  {Array.from(new Map(currentConv.messages.map((m) => [m.id, m])).values()).map((m, mIdx) => {
+                    const isClient = m.sender === "client";
+                    const isStaff = m.sender === "staff";
+
+                    return (
+                      <div
+                        key={m.id ? `${m.id}-${mIdx}` : `msg-${mIdx}`}
+                        className={`flex ${isClient ? "justify-start" : "justify-end"}`}
+                      >
+                        <div
+                          className={`max-w-[78%] rounded-2xl p-3 leading-relaxed shadow-xs ${
+                            isClient
+                              ? "bg-white border border-slate-200 text-slate-900 rounded-bl-sm"
+                              : isStaff
+                              ? "bg-emerald-600 text-white rounded-br-sm"
+                              : "bg-indigo-600 text-white rounded-br-sm"
+                          }`}
+                        >
+                          <div className="text-[10px] opacity-80 mb-1 font-bold uppercase tracking-wider flex items-center gap-1">
+                            {isClient ? (
+                              <span>👤 {currentConv.visitorName}</span>
+                            ) : isStaff ? (
+                              <span>👤 Staff Member (You)</span>
+                            ) : (
+                              <span>🤖 {initialData.agent.name} (AI Receptionist)</span>
+                            )}
+                          </div>
+                          <p className="whitespace-pre-wrap">{m.content}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Suggested Quick Response Chips */}
+                <div className="px-3 py-2 bg-white border-t border-slate-200/80 flex items-center gap-1.5 overflow-x-auto text-[11px] shrink-0">
+                  <span className="text-slate-400 font-bold shrink-0 text-[10px] uppercase tracking-wider">AI Quick Fill:</span>
+                  {(isEcom
+                    ? [
+                        "Your order is in transit with Australia Post and will arrive in 1-2 business days.",
+                        "Items may be returned within 30 days for a full refund.",
+                        "Wholesale bulk pricing is available for quantities of 20+ bags.",
+                      ]
+                    : [
+                        "Dr. Sarah Lee has an opening tomorrow at 2:30 PM. Shall I reserve this for you?",
+                        "We process on-the-spot HICAPS electronic claims for Bupa, Medibank, etc.",
+                        "Please bring your doctor's referral letter and any previous imaging to your consultation.",
+                      ]
+                  ).map((chip, cIdx) => (
+                    <button
+                      key={cIdx}
+                      onClick={() => setReplyText(chip)}
+                      className="shrink-0 px-2.5 py-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-600 transition truncate max-w-[260px] border border-slate-200/60"
+                      title={chip}
+                    >
+                      {chip}
+                    </button>
                   ))}
                 </div>
 
-                {/* Reply Bar */}
-                <div className="p-3 border-t border-slate-200 bg-white flex gap-2">
+                {/* Reply Input Bar */}
+                <div className="p-3 border-t border-slate-200 bg-white flex gap-2 shrink-0">
                   <input
                     value={replyText}
                     onChange={(e) => setReplyText(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSendReply()}
-                    placeholder="Type a staff reply to customer..."
-                    className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-600"
+                    placeholder={`Type a staff reply to ${currentConv.visitorName}... (Press Enter to send)`}
+                    className="flex-1 rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                   />
                   <button
                     onClick={handleSendReply}
                     disabled={isSendingReply || !replyText.trim()}
-                    className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white text-xs shadow-sm disabled:opacity-50"
+                    className="rounded-xl bg-indigo-600 px-5 py-2.5 font-bold text-white text-xs shadow-sm hover:bg-indigo-700 disabled:opacity-50 transition shrink-0"
                   >
-                    {isSendingReply ? "Sending..." : "Send Reply"}
+                    {isSendingReply ? "Sending..." : "Send Staff Reply"}
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="lg:col-span-8 p-12 text-center text-xs text-slate-400">
-                No conversation selected.
+              <div className="lg:col-span-8 p-12 text-center text-xs text-slate-400 flex flex-col items-center justify-center">
+                <span className="text-3xl mb-2">💬</span>
+                <b className="text-slate-700">No conversation selected</b>
+                <p className="mt-1">Select an active customer conversation from the list to view the thread.</p>
               </div>
             )}
           </div>

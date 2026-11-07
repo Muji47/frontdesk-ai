@@ -256,7 +256,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           totalConversations: m.totalConversations + 1,
         }));
       } else if (payload.type === "new_message" && payload.data) {
-        const { conversationId, message, status: nextStatus, badge: nextBadge } = payload.data;
+        const { conversationId, message, status: nextStatus, badge: nextBadge, isAiMuted: nextMuted } = payload.data;
         setConversations((prev) =>
           prev.map((c) => {
             if (c.id === conversationId) {
@@ -265,6 +265,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 ...c,
                 status: nextStatus || c.status,
                 badge: nextBadge || c.badge,
+                isAiMuted: typeof nextMuted === "boolean" ? nextMuted : c.isAiMuted,
                 lastMessage: message.content,
                 timeAgo: "just now",
                 messages: exists ? c.messages : [...c.messages, message],
@@ -275,6 +276,34 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         );
       } else if (payload.type === "new_appointment") {
         router.refresh();
+      }
+    }
+
+    let isReconciling = false;
+    async function reconcileConversations() {
+      if (isReconciling) return;
+      isReconciling = true;
+      try {
+        const res = await fetch("/api/dashboard/conversations", { cache: "no-store" });
+        if (res.ok) {
+          const fresh = await res.json();
+          if (Array.isArray(fresh.conversations)) {
+            setConversations(fresh.conversations);
+          }
+          if (fresh.metrics) {
+            setMetrics(fresh.metrics);
+          }
+          if (Array.isArray(fresh.unansweredQuestions)) {
+            setUnanswered(fresh.unansweredQuestions);
+          }
+          if (Array.isArray(fresh.knowledgeSources)) {
+            setKnowledgeSources(fresh.knowledgeSources);
+          }
+        }
+      } catch {
+        // ignore transient network error
+      } finally {
+        isReconciling = false;
       }
     }
 
@@ -293,11 +322,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
 
     function connect() {
-      if (document.hidden || es) return;
+      if (es) return;
       es = new EventSource("/api/dashboard/events");
 
       es.onopen = () => {
         setIsSocketConnected(true);
+        reconcileConversations();
       };
 
       es.onmessage = (event) => {
@@ -312,16 +342,18 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       es.onerror = () => {
         disconnect();
         if (!document.hidden) {
-          reconnectTimer = setTimeout(connect, 5000);
+          reconnectTimer = setTimeout(connect, 3000);
         }
       };
     }
 
     function handleVisibilityChange() {
-      if (document.hidden) {
-        disconnect();
-      } else {
-        connect();
+      if (!document.hidden) {
+        if (!es) {
+          connect();
+        } else {
+          reconcileConversations();
+        }
       }
     }
 

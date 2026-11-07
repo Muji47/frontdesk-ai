@@ -935,11 +935,31 @@ export class DashboardService {
         },
       });
     } else {
-      // 2. Save Visitor Message to existing conversation and broadcast to Dashboard
+      // 2. Check if staff has muted AI or already taken over this conversation
+      const hasStaffReplied = db
+        .prepare(`SELECT COUNT(*) as cnt FROM messages WHERE conversation_id = ? AND sender = 'staff'`)
+        .get(convId) as { cnt: number };
+      const isAlreadyMuted = existingConv.is_ai_muted === 1 || (hasStaffReplied && hasStaffReplied.cnt > 0);
+
+      // Save Visitor Message to existing conversation
       db.prepare(`
         INSERT INTO messages (id, conversation_id, sender, content, created_at)
         VALUES (?, ?, 'client', ?, ?)
       `).run(clientMsgId, convId, text, nowIso);
+
+      if (isAlreadyMuted) {
+        db.prepare(`
+          UPDATE conversations
+          SET last_message = ?, status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', is_ai_muted = 1, last_activity_at = ?
+          WHERE id = ?
+        `).run(text, nowIso, convId);
+      } else {
+        db.prepare(`
+          UPDATE conversations
+          SET last_message = ?, last_activity_at = ?
+          WHERE id = ?
+        `).run(text, nowIso, convId);
+      }
 
       dashboardEventBus.emitToOrg(orgId, {
         type: "new_message",
@@ -950,6 +970,9 @@ export class DashboardService {
         targetId: convId,
         data: {
           conversationId: convId,
+          status: isAlreadyMuted ? "WAITING_FOR_HUMAN" : undefined,
+          badge: isAlreadyMuted ? "Human needed" : undefined,
+          isAiMuted: isAlreadyMuted ? true : undefined,
           message: {
             id: clientMsgId,
             sender: "client",
@@ -958,30 +981,17 @@ export class DashboardService {
           },
         },
       });
-    }
 
-    // 3. Check if staff has muted AI or already taken over this conversation
-    const convRow = db.prepare(`SELECT is_ai_muted, visitor_name FROM conversations WHERE id = ?`).get(convId) as any;
-    const hasStaffReplied = db
-      .prepare(`SELECT COUNT(*) as cnt FROM messages WHERE conversation_id = ? AND sender = 'staff'`)
-      .get(convId) as { cnt: number };
-    const isMuted = convRow?.is_ai_muted === 1 || (hasStaffReplied && hasStaffReplied.cnt > 0);
-
-    if (isMuted) {
-      db.prepare(`
-        UPDATE conversations
-        SET last_message = ?, status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', is_ai_muted = 1, last_activity_at = ?
-        WHERE id = ?
-      `).run(text, nowIso, convId);
-
-      return {
-        conversationId: convId,
-        clientMsgId,
-        aiMsgId: "",
-        replyText: "",
-        chips: [],
-        isEscalated: true,
-      };
+      if (isAlreadyMuted) {
+        return {
+          conversationId: convId,
+          clientMsgId,
+          aiMsgId: "",
+          replyText: "",
+          chips: [],
+          isEscalated: true,
+        };
+      }
     }
 
     let aiReplyText = "";

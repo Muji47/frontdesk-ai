@@ -340,7 +340,7 @@ export class DashboardService {
     const aiResolved = conversations.filter((c) => c.status === "RESOLVED").length;
     const escalated = conversations.filter((c) => c.status === "WAITING_FOR_HUMAN").length;
     const resolutionRate =
-      totalConversations > 0 ? `${Math.round((aiResolved / totalConversations) * 100)}%` : "100%";
+      totalConversations > 0 ? `${Math.round((aiResolved / totalConversations) * 100)}%` : "0%";
 
     const totalOrderRevenue = orders.reduce((acc, curr) => acc + curr.totalAmount, 0);
 

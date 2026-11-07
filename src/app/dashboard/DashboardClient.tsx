@@ -603,7 +603,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const deflectionRate =
     totalConvs > 0
       ? Math.round(((aiResolvedCount || (totalConvs - humanEscalatedCount)) / totalConvs) * 100)
-      : 100;
+      : 0;
   const hoursSaved = ((totalConvs * 4.5) / 60).toFixed(1);
   const costSavings = Math.round(Number(hoursSaved) * 34.5);
 
@@ -619,8 +619,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       : 1;
   const trendBars = daysOfWeek.map((day, idx) => {
     const weights = [0.12, 0.18, 0.24, 0.20, 0.14, 0.06, 0.06];
-    const rawTotal = Math.max(1, Math.round(totalConvs * weights[idx] * trendMultiplier));
-    const escRatio = humanEscalatedCount / Math.max(1, totalConvs);
+    const rawTotal = totalConvs > 0 ? Math.max(1, Math.round(totalConvs * weights[idx] * trendMultiplier)) : 0;
+    const escRatio = totalConvs > 0 ? humanEscalatedCount / totalConvs : 0;
     const dayEscalated = Math.round(rawTotal * escRatio);
     const dayAi = Math.max(0, rawTotal - dayEscalated);
     return { day, total: rawTotal, ai: dayAi, escalated: dayEscalated };
@@ -629,26 +629,26 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   // Omnichannel breakdown
   const channelBreakdown = [
-    { name: "Web Chat Widget", pct: 76, count: Math.round(totalConvs * 0.76) || 5, color: "bg-indigo-600" },
-    { name: "Direct Booking Link / Portal", pct: 16, count: Math.round(totalConvs * 0.16) || 1, color: "bg-sky-500" },
-    { name: "Inbound SMS / WhatsApp", pct: 8, count: Math.round(totalConvs * 0.08) || 1, color: "bg-emerald-500" },
+    { name: "Web Chat Widget", pct: totalConvs > 0 ? 76 : 0, count: Math.round(totalConvs * 0.76), color: "bg-indigo-600" },
+    { name: "Direct Booking Link / Portal", pct: totalConvs > 0 ? 16 : 0, count: Math.round(totalConvs * 0.16), color: "bg-sky-500" },
+    { name: "Inbound SMS / WhatsApp", pct: totalConvs > 0 ? 8 : 0, count: Math.round(totalConvs * 0.08), color: "bg-emerald-500" },
   ];
 
   // Intent breakdown tailored to industry
   const intentBreakdown = isEcom
     ? [
-        { label: "Order Tracking & Delivery Status", pct: 40, count: Math.round(totalConvs * 0.4) || 3, color: "bg-indigo-600" },
-        { label: "Returns, Refunds & Exchange Policy", pct: 24, count: Math.round(totalConvs * 0.24) || 2, color: "bg-sky-500" },
-        { label: "Product Specifications & Sizing", pct: 18, count: Math.round(totalConvs * 0.18) || 1, color: "bg-emerald-500" },
-        { label: "Bulk Purchasing & Wholesale Pricing", pct: 12, count: Math.round(totalConvs * 0.12) || 1, color: "bg-purple-500" },
-        { label: "Payment & Checkout Escalations", pct: 6, count: Math.round(totalConvs * 0.06) || 1, color: "bg-amber-500" },
+        { label: "Order Tracking & Delivery Status", pct: totalConvs > 0 ? 40 : 0, count: Math.round(totalConvs * 0.4), color: "bg-indigo-600" },
+        { label: "Returns, Refunds & Exchange Policy", pct: totalConvs > 0 ? 24 : 0, count: Math.round(totalConvs * 0.24), color: "bg-sky-500" },
+        { label: "Product Specifications & Sizing", pct: totalConvs > 0 ? 18 : 0, count: Math.round(totalConvs * 0.18), color: "bg-emerald-500" },
+        { label: "Bulk Purchasing & Wholesale Pricing", pct: totalConvs > 0 ? 12 : 0, count: Math.round(totalConvs * 0.12), color: "bg-purple-500" },
+        { label: "Payment & Checkout Escalations", pct: totalConvs > 0 ? 6 : 0, count: Math.round(totalConvs * 0.06), color: "bg-amber-500" },
       ]
     : [
-        { label: "New Patient Consultation & Booking", pct: 44, count: Math.round(totalConvs * 0.44) || 3, color: "bg-indigo-600" },
-        { label: "Treatment Pricing & HICAPS Health Funds", pct: 22, count: Math.round(totalConvs * 0.22) || 2, color: "bg-sky-500" },
-        { label: "Practitioner Availability & Schedules", pct: 16, count: Math.round(totalConvs * 0.16) || 1, color: "bg-emerald-500" },
-        { label: "Clinic Location, Parking & Access", pct: 12, count: Math.round(totalConvs * 0.12) || 1, color: "bg-purple-500" },
-        { label: "Urgent Care & Clinical Escalations", pct: 6, count: Math.round(totalConvs * 0.06) || 1, color: "bg-amber-500" },
+        { label: "New Patient Consultation & Booking", pct: totalConvs > 0 ? 44 : 0, count: Math.round(totalConvs * 0.44), color: "bg-indigo-600" },
+        { label: "Treatment Pricing & HICAPS Health Funds", pct: totalConvs > 0 ? 22 : 0, count: Math.round(totalConvs * 0.22), color: "bg-sky-500" },
+        { label: "Practitioner Availability & Schedules", pct: totalConvs > 0 ? 16 : 0, count: Math.round(totalConvs * 0.16), color: "bg-emerald-500" },
+        { label: "Clinic Location, Parking & Access", pct: totalConvs > 0 ? 12 : 0, count: Math.round(totalConvs * 0.12), color: "bg-purple-500" },
+        { label: "Urgent Care & Clinical Escalations", pct: totalConvs > 0 ? 6 : 0, count: Math.round(totalConvs * 0.06), color: "bg-amber-500" },
       ];
 
   const handleExportCsv = () => {
@@ -2246,7 +2246,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   <span className="text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded text-[10px]">Instant</span>
                 </div>
                 <div className="text-2xl font-extrabold text-slate-900 mt-2">
-                  1.2s
+                  {totalConvs > 0 ? "1.2s" : "0s"}
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1">
                   vs 18m industry phone queue benchmark
@@ -2279,9 +2279,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 <div className="pt-4 pb-2">
                   <div className="flex items-end justify-between gap-2 h-40 border-b border-slate-100 px-2 pb-1">
                     {trendBars.map((bar) => {
-                      const barPixelHeight = Math.max(20, Math.round((bar.total / maxTrendTotal) * 135));
-                      const aiHeightPct = bar.total > 0 ? Math.round((bar.ai / bar.total) * 100) : 100;
-                      const escHeightPct = 100 - aiHeightPct;
+                      const barPixelHeight = bar.total > 0 ? Math.max(20, Math.round((bar.total / maxTrendTotal) * 135)) : 4;
+                      const aiHeightPct = bar.total > 0 ? Math.round((bar.ai / bar.total) * 100) : 0;
+                      const escHeightPct = bar.total > 0 ? 100 - aiHeightPct : 0;
 
                       return (
                         <div key={bar.day} className="flex-1 h-full flex items-end justify-center group relative">
@@ -2370,12 +2370,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 <div className="grid grid-cols-2 gap-4 my-4">
                   <div className="p-4 rounded-xl border border-slate-100 bg-slate-50/50">
                     <span className="text-xs font-semibold text-slate-500">Business Hours (9 AM – 5 PM)</span>
-                    <div className="text-xl font-bold text-slate-900 mt-1">58%</div>
+                    <div className="text-xl font-bold text-slate-900 mt-1">{totalConvs > 0 ? "58%" : "0%"}</div>
                     <span className="text-[11px] text-slate-500">Co-pilot mode with front desk</span>
                   </div>
                   <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/40">
                     <span className="text-xs font-semibold text-indigo-900">After Hours (Nights & Weekends)</span>
-                    <div className="text-xl font-bold text-indigo-700 mt-1">42%</div>
+                    <div className="text-xl font-bold text-indigo-700 mt-1">{totalConvs > 0 ? "42%" : "0%"}</div>
                     <span className="text-[11px] text-indigo-600 font-medium">100% autonomous capture</span>
                   </div>
                 </div>

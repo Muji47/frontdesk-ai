@@ -3,16 +3,35 @@ import { scryptSync, randomBytes, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
-const dataDir = path.join(process.cwd(), "data");
+const runtimeRoot = process.env.INIT_CWD || [process.cwd()].join("");
+const legacyDataDir = [runtimeRoot, "data"].join(path.sep);
+// Store active SQLite DB inside node_modules/.cache so Next.js 16 Turbopack watcher never triggers HMR reload loops on SQLite WAL writes
+const dataDir = [runtimeRoot, "node_modules", ".cache", "frontdesk-sqlite"].join(path.sep);
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const dbPath = path.join(dataDir, "frontdesk.sqlite");
-const db = new DatabaseSync(dbPath);
+const dbPath = [dataDir, "frontdesk.sqlite"].join(path.sep);
+const legacyDbPath = [legacyDataDir, "frontdesk.sqlite"].join(path.sep);
+if (!fs.existsSync(dbPath) && fs.existsSync(legacyDbPath)) {
+  try {
+    fs.copyFileSync(legacyDbPath, dbPath);
+  } catch {
+    // ignore copy error
+  }
+}
+const globalForDb = globalThis as unknown as {
+  __echoSqliteDb?: DatabaseSync;
+  __echoSqliteInitialized?: boolean;
+};
 
-// Enforce foreign key constraints and Write-Ahead Logging
-db.exec(`
+const db = globalForDb.__echoSqliteDb ?? new DatabaseSync(dbPath);
+globalForDb.__echoSqliteDb = db;
+
+// Enforce foreign key constraints and Write-Ahead Logging once per process
+if (!globalForDb.__echoSqliteInitialized) {
+  globalForDb.__echoSqliteInitialized = true;
+  db.exec(`
   PRAGMA foreign_keys = ON;
   PRAGMA journal_mode = WAL;
 
@@ -233,6 +252,7 @@ try {
   }
 } catch (err) {
   console.error("Migration warning on conversations:", err);
+}
 }
 
 /**

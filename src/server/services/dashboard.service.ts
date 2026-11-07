@@ -585,8 +585,44 @@ export class DashboardService {
       throw new ValidationError("Please provide a question to test.");
     }
 
-    const lowerQuery = query.toLowerCase();
-    const queryTokens = lowerQuery.split(/\W+/).filter((w) => w.length > 3);
+    const lowerQuery = query.toLowerCase().trim();
+
+    // 0. Handle conversational greetings naturally
+    if (/^(hi|hello|hey|good morning|good afternoon|good evening|greetings)\b/.test(lowerQuery) && lowerQuery.split(/\s+/).length <= 5) {
+      const orgRow = db.prepare("SELECT name FROM organizations WHERE id = ?").get(orgId) as { name: string } | undefined;
+      const agentRow = db.prepare("SELECT name, greeting FROM agents WHERE organization_id = ? LIMIT 1").get(orgId) as
+        | { name: string; greeting: string }
+        | undefined;
+      return {
+        answer:
+          agentRow?.greeting ||
+          `Hello! Welcome to ${orgRow?.name || "our clinic"}. How can I help you with appointments, pricing, or clinic hours today?`,
+        sources: ["Receptionist Greeting"],
+        confidence: 0.99,
+      };
+    }
+
+    const stopWords = new Set(["what", "when", "where", "which", "have", "does", "with", "from", "your", "that", "this", "there", "their", "about", "would", "could", "should", "please", "tell"]);
+    const baseTokens = lowerQuery
+      .split(/\W+/)
+      .filter((w) => w.length >= 3 && !stopWords.has(w));
+
+    // Synonym expansion so natural client questions match website content accurately
+    const expandedTokens = new Set<string>(baseTokens);
+    if (/(fee|fees|price|pricing|cost|much|charge|rate|consult)/.test(lowerQuery)) {
+      ["consultation", "fees", "initial", "follow", "$140", "$95", "price", "pricing", "cost"].forEach((t) => expandedTokens.add(t));
+    }
+    if (/(hour|hours|open|opening|close|closing|time|when|location|address|where|street|parking|saturday|monday)/.test(lowerQuery)) {
+      ["location", "hours", "monday", "friday", "saturday", "suite", "collins", "street", "melbourne", "open"].forEach((t) => expandedTokens.add(t));
+    }
+    if (/(hicaps|health|fund|funds|insurance|medicare|bupa|medibank|claim|rebate|cover|private)/.test(lowerQuery)) {
+      ["health", "funds", "hicaps", "bupa", "medibank", "hcf", "nib", "medicare", "claims"].forEach((t) => expandedTokens.add(t));
+    }
+    if (/(book|booking|appointment|schedule|availab|doctor|doctors|practitioner|physio|sarah|david|team|specialist|who|tomorrow)/.test(lowerQuery)) {
+      ["clinical", "practitioners", "sarah", "lee", "david", "vance", "physiotherapist", "rehab", "consultation", "fees"].forEach((t) => expandedTokens.add(t));
+    }
+
+    const queryTokens = Array.from(expandedTokens);
 
     // 1. Check approved answered questions first
     const approvedQ = db.prepare(`
@@ -596,8 +632,9 @@ export class DashboardService {
     `).all(orgId) as any[];
 
     for (const q of approvedQ) {
-      const matchWords = String(q.question).toLowerCase().split(/\W+/).filter((w) => w.length > 3);
-      const isMatch = matchWords.some((w) => lowerQuery.includes(w));
+      const qLower = String(q.question).toLowerCase();
+      const matchWords = qLower.split(/\W+/).filter((w) => w.length >= 3 && !stopWords.has(w));
+      const isMatch = qLower === lowerQuery || matchWords.some((w) => lowerQuery.includes(w));
       if (isMatch) {
         return {
           answer: String(q.approved_answer),
@@ -616,41 +653,72 @@ export class DashboardService {
     `).all(orgId) as any[];
 
     if (chunks.length > 0) {
-      // Score chunks by keyword matches
-      let bestChunk: any = null;
-      let highestScore = 0;
+      const scored = chunks
+        .map((chunk) => {
+          const text = (chunk.chunkTitle + " " + chunk.content).toLowerCase();
+          let score = 0;
+          for (const token of queryTokens) {
+            if (text.includes(token)) {
+              score += baseTokens.includes(token) ? 3 : 1;
+            }
+          }
+          return { chunk, score };
+        })
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score);
 
-      for (const chunk of chunks) {
-        const text = (chunk.chunkTitle + " " + chunk.content).toLowerCase();
-        let score = 0;
-        for (const token of queryTokens) {
-          if (text.includes(token)) score++;
-        }
-        if (score > highestScore) {
-          highestScore = score;
-          bestChunk = chunk;
-        }
-      }
+      if (scored.length > 0) {
+        const top = scored[0].chunk;
+        const cleanContent = String(top.content)
+          .replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "")
+          .trim();
 
-      // If keywords matched within the extracted parameters
-      if (highestScore > 0 && bestChunk) {
+        // If booking intent, combine practitioner/fee info with a helpful booking prompt
+        if (/(book|booking|appointment|schedule|tomorrow|available)/.test(lowerQuery)) {
+          const pracChunk = chunks.find((c) => /practitioner|sarah|doctor|team/i.test(c.chunkTitle + " " + c.content));
+          const feeChunk = chunks.find((c) => /fee|price|\$140|consultation/i.test(c.chunkTitle + " " + c.content));
+          const parts: string[] = [];
+          if (pracChunk) {
+            parts.push(String(pracChunk.content).replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "").trim());
+          }
+          if (feeChunk && feeChunk !== pracChunk) {
+            parts.push(String(feeChunk.content).replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "").trim());
+          }
+          const combined = parts.length > 0 ? parts.join(" — ") : cleanContent;
+          return {
+            answer: `I can certainly help you book an appointment! ${combined}. Please share your preferred day/time and contact number, or our front desk can lock that in for you right away.`,
+            sources: [String(top.sourceTitle || top.chunkTitle)],
+            confidence: Math.min(0.96, 0.78 + scored[0].score * 0.04),
+          };
+        }
+
         return {
-          answer: `Verified from verified source parameters: ${bestChunk.content.slice(0, 320)}...`,
-          sources: [String(bestChunk.sourceTitle || bestChunk.chunkTitle)],
-          confidence: Math.min(0.95, 0.75 + highestScore * 0.08),
+          answer: cleanContent,
+          sources: [String(top.sourceTitle || top.chunkTitle)],
+          confidence: Math.min(0.95, 0.75 + scored[0].score * 0.05),
         };
       }
     }
 
     // 3. Strict Boundary Guardrail: DO NOT CROSS LIMITS
-    // Log the unanswered question into queue so staff can review
-    const qId = "unq_" + randomBytes(6).toString("hex");
-    try {
-      db.prepare(`
-        INSERT INTO unanswered_questions (id, organization_id, question, frequency_count, status)
-        VALUES (?, ?, ?, 1, 'pending')
-      `).run(qId, orgId, query.trim());
-    } catch {}
+    // Log the unanswered question into queue so staff can review (avoid duplicate pending rows)
+    const existingUnq = db
+      .prepare(`SELECT id FROM unanswered_questions WHERE organization_id = ? AND lower(question) = ? AND status = 'pending'`)
+      .get(orgId, lowerQuery) as { id: string } | undefined;
+
+    if (existingUnq) {
+      db.prepare(`UPDATE unanswered_questions SET frequency_count = frequency_count + 1, last_asked_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+        existingUnq.id
+      );
+    } else {
+      const qId = "unq_" + randomBytes(6).toString("hex");
+      try {
+        db.prepare(`
+          INSERT INTO unanswered_questions (id, organization_id, question, frequency_count, status)
+          VALUES (?, ?, ?, 1, 'pending')
+        `).run(qId, orgId, query.trim());
+      } catch {}
+    }
 
     return {
       answer:
@@ -773,6 +841,11 @@ export class DashboardService {
     message: string;
     visitorName?: string;
     visitorContact?: string;
+    pageContext?: {
+      url?: string;
+      title?: string;
+      sections?: { title: string; content: string }[];
+    } | null;
   }): {
     conversationId: string;
     clientMsgId: string;
@@ -787,8 +860,36 @@ export class DashboardService {
       throw new ValidationError("Message cannot be empty.");
     }
 
-    let convId = params.conversationId;
     const nowIso = new Date().toISOString();
+
+    // Auto-index attached website content if provided by widget.js and not yet indexed
+    if (params.pageContext?.sections && params.pageContext.sections.length > 0) {
+      const hostUrl = params.pageContext.url || "Attached Website";
+      const existingSource = db
+        .prepare(`SELECT id FROM knowledge_sources WHERE organization_id = ? AND (source_url = ? OR title = ?) LIMIT 1`)
+        .get(orgId, hostUrl, hostUrl) as { id: string } | undefined;
+
+      if (!existingSource) {
+        const srcId = "src_" + randomBytes(6).toString("hex");
+        const sections = params.pageContext.sections;
+        withTransaction(() => {
+          db.prepare(`
+            INSERT INTO knowledge_sources (id, organization_id, title, source_type, source_url, status, page_count, last_synced_at)
+            VALUES (?, ?, ?, 'url', ?, 'indexed', ?, ?)
+          `).run(srcId, orgId, params.pageContext?.title || hostUrl, hostUrl, sections.length, nowIso);
+
+          sections.forEach((sec, idx) => {
+            const cId = "chk_" + randomBytes(6).toString("hex");
+            db.prepare(`
+              INSERT INTO knowledge_chunks (id, source_id, organization_id, chunk_index, title, content, token_count)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(cId, srcId, orgId, idx + 1, sec.title, sec.content, sec.content.split(/\s+/).length);
+          });
+        });
+      }
+    }
+
+    let convId = params.conversationId;
     const clientMsgId = "msg_" + randomBytes(6).toString("hex");
 
     // Verify if conversation exists in DB
@@ -885,20 +986,33 @@ export class DashboardService {
 
     let aiReplyText = "";
     let isEscalated = false;
-    const chips: string[] = ["Book Appointment", "Opening Hours", "Pricing & Health Funds"];
+    const chips: string[] = ["Book Appointment", "Consultation Fees", "HICAPS Health Funds", "Opening Hours"];
 
     // Query knowledge base
     const testResult = this.testKnowledgeQuery(orgId, text);
     aiReplyText = testResult.answer;
 
-    // Check if user is asking for human
+    // Check if user is explicitly asking for a human staff member
     const lower = text.toLowerCase();
-    if (/(human|person|agent|staff|someone|doctor|physio)/.test(lower)) {
+    if (/(talk to a human|speak to a person|real person|human agent|staff member|speak to staff|transfer me)/.test(lower)) {
       isEscalated = true;
       aiReplyText = "I've flagged this thread for our clinic front desk team. A staff member has been alerted and will assist you directly.";
       db.prepare(`
         UPDATE conversations
         SET status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', escalation_reason = 'Visitor requested human staff'
+        WHERE id = ?
+      `).run(convId);
+    } else if (testResult.confidence < 0.5) {
+      isEscalated = true;
+      db.prepare(`
+        UPDATE conversations
+        SET status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', escalation_reason = 'Unverified topic escalated to staff'
+        WHERE id = ?
+      `).run(convId);
+    } else {
+      db.prepare(`
+        UPDATE conversations
+        SET status = 'RESOLVED', resolution_badge = 'AI Resolved'
         WHERE id = ?
       `).run(convId);
     }
@@ -917,16 +1031,21 @@ export class DashboardService {
       WHERE id = ?
     `).run(aiReplyText, aiNowIso, convId);
 
+    const updatedStatus = isEscalated ? "WAITING_FOR_HUMAN" : "RESOLVED";
+    const updatedBadge = isEscalated ? "Human needed" : "AI Resolved";
+
     // Broadcast AI response to dashboard
     dashboardEventBus.emitToOrg(orgId, {
       type: "new_message",
-      title: "AI Receptionist Replied",
+      title: isEscalated ? "⚠️ Escalated to Front Desk" : "🤖 AI Receptionist Answered",
       message: aiReplyText,
-      icon: "🤖",
+      icon: isEscalated ? "⚠️" : "🤖",
       targetTab: "conversations",
       targetId: convId,
       data: {
         conversationId: convId,
+        status: updatedStatus,
+        badge: updatedBadge,
         message: {
           id: aiMsgId,
           sender: "ai",

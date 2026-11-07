@@ -682,6 +682,47 @@
     }
   }
 
+  function extractHostPageContext() {
+    try {
+      const sections = [];
+      const hero = document.querySelector(".hero");
+      if (hero) {
+        const h1 = hero.querySelector("h1, h2")?.innerText?.trim() || "Overview & Pricing";
+        const text = hero.innerText?.replace(/\s+/g, " ").trim() || "";
+        if (text) sections.push({ title: h1, content: text });
+      }
+
+      const cards = document.querySelectorAll(".card, section, article");
+      cards.forEach((el) => {
+        if (el.closest("#echo-receptionist-widget") || el.classList.contains("sandbox-banner")) return;
+        const heading = el.querySelector("h1, h2, h3, h4")?.innerText?.trim() || "Website Section";
+        const text = el.innerText?.replace(/\s+/g, " ").trim() || "";
+        if (text && text.length > 15 && text.length < 1500) {
+          sections.push({ title: heading, content: text });
+        }
+      });
+
+      if (sections.length === 0 && document.body) {
+        const clone = document.body.cloneNode(true);
+        const widgetEl = clone.querySelector("#echo-receptionist-widget");
+        if (widgetEl) widgetEl.remove();
+        clone.querySelectorAll("script, style, noscript").forEach((s) => s.remove());
+        const rawText = (clone.innerText || "").replace(/\s+/g, " ").trim().slice(0, 2500);
+        if (rawText) {
+          sections.push({ title: document.title || "Website Content", content: rawText });
+        }
+      }
+
+      return {
+        url: window.location.origin + window.location.pathname,
+        title: document.title || window.location.hostname,
+        sections: sections.slice(0, 12),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async function sendMessage(text) {
     const trimmed = (text || "").trim();
     if (!trimmed || isSending) return;
@@ -701,6 +742,7 @@
           conversationId,
           orgId,
           visitorName: "Website Visitor (" + window.location.hostname + ")",
+          pageContext: extractHostPageContext(),
         }),
       });
 

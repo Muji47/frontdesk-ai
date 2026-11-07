@@ -250,17 +250,18 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               totalConversations: m.totalConversations + 1,
             }));
           } else if (payload.type === "new_message" && payload.data) {
-            const { conversationId, message } = payload.data;
+            const { conversationId, message, status: nextStatus, badge: nextBadge } = payload.data;
             setConversations((prev) =>
               prev.map((c) => {
                 if (c.id === conversationId) {
                   const exists = c.messages.some((m) => m.id === message.id);
-                  if (exists) return c;
                   return {
                     ...c,
+                    status: nextStatus || c.status,
+                    badge: nextBadge || c.badge,
                     lastMessage: message.content,
                     timeAgo: "just now",
-                    messages: [...c.messages, message],
+                    messages: exists ? c.messages : [...c.messages, message],
                   };
                 }
                 return c;

@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
       message: body.message,
       visitorName: body.visitorName,
       visitorContact: body.visitorContact,
+      pageContext: body.pageContext,
     });
 
     return NextResponse.json(

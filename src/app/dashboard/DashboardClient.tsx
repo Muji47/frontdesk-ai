@@ -714,10 +714,10 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   ];
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-slate-50 text-slate-900">
-      {/* Fixed-Height Sidebar */}
-      <aside className="w-64 h-screen max-h-screen border-r border-slate-200 bg-white flex flex-col shrink-0 select-none">
-        {/* Fixed Top Header (Logo & Organization) */}
+    <div className="flex h-dvh w-full overflow-hidden bg-slate-50 text-slate-900">
+      {/* Fixed Viewport Sidebar (locked to top:0 and bottom:0) */}
+      <aside className="fixed inset-y-0 left-0 z-30 w-64 h-dvh max-h-dvh border-r border-slate-200 bg-white flex flex-col justify-between overflow-hidden shrink-0 select-none">
+        {/* 1. Fixed Top Header (Logo & Organization) */}
         <div className="shrink-0 p-4 border-b border-slate-100 bg-white">
           <Link href="/" className="flex items-center gap-2.5 font-bold text-slate-900 group">
             <EchoLogo size={22} tile={true} tileSize="h-9 w-9" />
@@ -736,7 +736,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           </div>
         </div>
 
-        {/* Scrollable Navigation List (scrolls if items overflow available height) */}
+        {/* 2. Scrollable Middle Navigation List */}
         <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-2 space-y-0.5 text-xs custom-scrollbar">
           {navItems.map((item) => (
             <button
@@ -761,27 +761,44 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           ))}
         </nav>
 
-        {/* Fixed Bottom Footer (User Name, Email, & Sign Out) */}
-        <div className="shrink-0 p-3 border-t border-slate-100 bg-white">
+        {/* 3. Fixed Bottom Footer (Always Visible User Name & Log Out) */}
+        <div className="shrink-0 mt-auto p-3 border-t border-slate-200 bg-slate-50/90">
           <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-slate-900 truncate" title={user.name}>{user.name}</div>
-              <div className="text-[11px] text-slate-500 truncate" title={user.email}>{user.email}</div>
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-[11px] font-bold text-white shadow-xs">
+                {user.name
+                  ? user.name
+                      .split(" ")
+                      .map((n) => n[0])
+                      .join("")
+                      .slice(0, 2)
+                      .toUpperCase()
+                  : "U"}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-bold text-slate-900 truncate" title={user.name}>
+                  {user.name}
+                </div>
+                <div className="text-[11px] text-slate-500 truncate" title={user.email}>
+                  {user.email}
+                </div>
+              </div>
             </div>
             <button
               onClick={handleLogout}
-              title="Sign out"
-              aria-label="Sign out"
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition flex items-center justify-center shrink-0"
+              title="Log out"
+              aria-label="Log out"
+              className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 shadow-2xs hover:border-red-200 hover:bg-red-50 hover:text-red-600 transition flex items-center gap-1 cursor-pointer"
             >
-              <span className="text-sm">🚪</span>
+              <span>🚪</span>
+              <span>Log out</span>
             </button>
           </div>
         </div>
       </aside>
 
-      {/* Main Workspace Area (scrolls independently) */}
-      <main className="flex-1 min-w-0 h-screen overflow-y-auto p-6 md:p-8 relative custom-scrollbar">
+      {/* Main Workspace Area (offset by w-64 sidebar, scrolls independently) */}
+      <main className="ml-64 flex-1 min-w-0 h-dvh overflow-y-auto p-6 md:p-8 relative custom-scrollbar">
         {/* Top-Right Real-Time Notification Stack */}
         <div className="fixed top-5 right-5 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
           {toasts.map((toast) => (

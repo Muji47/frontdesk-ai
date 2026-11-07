@@ -678,13 +678,20 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   };
 
   const handleCopyEmbed = () => {
-    const origin = typeof window !== "undefined" ? window.location.origin : "https://echo.ai";
-    const snippet = `<script src="${origin}/widget.js" data-org="${user.orgId}" async></script>`;
+    const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+    const snippet = `<script src="${origin}/widget.js" data-agent-id="${initialData.agent.id}" data-org-id="${user.orgId}" data-org="${user.orgId}" async></script>`;
     if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(snippet);
-      setCopiedEmbed(true);
-      setTimeout(() => setCopiedEmbed(false), 2200);
+      navigator.clipboard.writeText(snippet).catch(() => {});
+    } else if (typeof document !== "undefined") {
+      const el = document.createElement("textarea");
+      el.value = snippet;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
     }
+    setCopiedEmbed(true);
+    setTimeout(() => setCopiedEmbed(false), 2500);
   };
 
   const navItems = [
@@ -1071,23 +1078,58 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               </div>
 
               {/* Install Script Box */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-bold text-sm text-slate-900">Embed Widget on Your Website</h3>
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                    Ready to copy
-                  </span>
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-3.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-900">Embed Widget on Your Website</h3>
+                    <p className="text-slate-500 mt-0.5">
+                      Copy and paste this single script tag right before the closing &lt;/body&gt; of your website.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyEmbed}
+                    className={`shrink-0 rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-xs flex items-center gap-1.5 cursor-pointer ${
+                      copiedEmbed
+                        ? "bg-emerald-600 text-white"
+                        : "bg-indigo-600 text-white hover:bg-indigo-700"
+                    }`}
+                  >
+                    <span>{copiedEmbed ? "✓" : "📋"}</span>
+                    <span>{copiedEmbed ? "Copied!" : "Copy Script"}</span>
+                  </button>
                 </div>
-                <p className="text-slate-500">
-                  Copy and paste this single script tag right before the closing &lt;/body&gt; of your website.
-                </p>
-                <div className="rounded-xl bg-slate-900 p-4 font-mono text-xs text-indigo-300 overflow-x-auto select-all">
+
+                <div className="relative rounded-xl bg-slate-900 p-4 font-mono text-xs text-indigo-300 overflow-x-auto select-all">
                   &lt;script<br />
-                  &nbsp;&nbsp;src=&quot;http://localhost:3000/widget.js&quot;<br />
+                  &nbsp;&nbsp;src=&quot;{typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/widget.js&quot;<br />
                   &nbsp;&nbsp;data-agent-id=&quot;{initialData.agent.id}&quot;<br />
                   &nbsp;&nbsp;data-org-id=&quot;{user.orgId}&quot;<br />
                   &nbsp;&nbsp;async&gt;<br />
                   &lt;/script&gt;
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleCopyEmbed}
+                    className={`rounded-xl px-4 py-2 text-xs font-bold transition shadow-xs flex items-center gap-2 cursor-pointer ${
+                      copiedEmbed
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : "bg-slate-900 text-white hover:bg-slate-800"
+                    }`}
+                  >
+                    <span>{copiedEmbed ? "✓" : "📋"}</span>
+                    <span>{copiedEmbed ? "Script Copied to Clipboard" : "Copy Embed Code"}</span>
+                  </button>
+                  <a
+                    href="/test-embed.html"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
+                  >
+                    ↗ Preview on Test Website
+                  </a>
                 </div>
               </div>
             </div>

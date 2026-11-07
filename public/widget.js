@@ -9,9 +9,13 @@
   const scriptTag =
     document.currentScript ||
     document.querySelector("script[src*='widget.js']") ||
-    document.querySelector("script[data-org]");
+    document.querySelector("script[data-org]") ||
+    document.querySelector("script[data-org-id]");
 
-  const orgId = scriptTag?.getAttribute("data-org") || "org_demo_101";
+  const orgId =
+    scriptTag?.getAttribute("data-org") ||
+    scriptTag?.getAttribute("data-org-id") ||
+    "org_demo_101";
   let hostUrl = "";
   try {
     if (scriptTag && scriptTag.src) {

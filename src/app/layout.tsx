@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { SiteFooter, SiteHeader } from "@/components/SiteShell";
+import { GlobalWidgetLauncher } from "@/components/GlobalWidgetLauncher";
 
 export const metadata: Metadata = {
   title: "Echo.ai — Autonomous AI Front Desk & High-Touch Reception",
@@ -27,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SiteHeader />
         <main>{children}</main>
         <SiteFooter />
+        <GlobalWidgetLauncher />
       </body>
     </html>
   );

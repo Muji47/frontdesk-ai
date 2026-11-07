@@ -22,8 +22,29 @@ export async function POST(req: NextRequest) {
       visitorContact: body.visitorContact,
     });
 
-    return NextResponse.json({ success: true, ...result }, { status: 200 });
+    return NextResponse.json(
+      { success: true, ...result },
+      {
+        status: 200,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
+      }
+    );
   } catch (error) {
     return handleApiError(error);
   }
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    },
+  });
 }

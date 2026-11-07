@@ -176,6 +176,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   // Performance & Deflection Analytics State
   const [analyticsTimeframe, setAnalyticsTimeframe] = useState<"24h" | "7d" | "30d" | "all">("7d");
   const [exportingCsv, setExportingCsv] = useState<boolean>(false);
+  const [copiedEmbed, setCopiedEmbed] = useState<boolean>(false);
 
   // Connect to SSE real-time socket stream
   useEffect(() => {
@@ -674,6 +675,16 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       document.body.removeChild(link);
       setExportingCsv(false);
     }, 300);
+  };
+
+  const handleCopyEmbed = () => {
+    const origin = typeof window !== "undefined" ? window.location.origin : "https://echo.ai";
+    const snippet = `<script src="${origin}/widget.js" data-org="${user.orgId}" async></script>`;
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(snippet);
+      setCopiedEmbed(true);
+      setTimeout(() => setCopiedEmbed(false), 2200);
+    }
   };
 
   const navItems = [
@@ -2001,31 +2012,126 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
         {/* ===================== TAB: INTEGRATIONS ===================== */}
         {activeTab === "integrations" && (
-          <div className="grid gap-4 md:grid-cols-2">
-            {initialData.integrations.map((int, iIdx) => (
-              <div key={int.id ? `${int.id}-${iIdx}` : `int-${iIdx}`} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex justify-between items-center">
-                  <b className="text-sm font-bold text-slate-900 capitalize">
-                    {int.provider === "cliniko"
-                      ? "Cliniko Practice Management"
-                      : int.provider === "shopify"
-                      ? "Shopify Store Sync"
-                      : "Website Chat Widget"}
-                  </b>
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                    {int.status}
-                  </span>
+          <div className="space-y-6 max-w-5xl">
+            {/* Header */}
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Connected Practice Software & Channels</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Manage your website chat widget installation, Cliniko practice sync, and third-party integrations.
+              </p>
+            </div>
+
+            {/* Standalone Embed Studio Card */}
+            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/70 via-white to-slate-50 p-6 shadow-xs space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-lg shadow-sm">
+                    ⚡
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <b className="text-sm font-bold text-slate-900">Website Chat Widget Studio</b>
+                      <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
+                        Production Ready
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Install your autonomous AI receptionist on WordPress, Webflow, Shopify, Squarespace, or custom websites in 60 seconds.
+                    </p>
+                  </div>
                 </div>
-                <p className="mt-2 text-xs text-slate-600">
-                  {int.provider === "cliniko"
-                    ? "Live calendar availability and 2-way patient appointment sync active."
-                    : int.provider === "shopify"
-                    ? "Live order lookup, return handling, and inventory checking active."
-                    : "JavaScript embed tag active and listening for website visitors."}
-                </p>
-                <div className="mt-3 text-[11px] text-slate-400">Last sync: {int.lastSyncAt}</div>
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href="/test-embed.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                  >
+                    <span>↗ External Site Sandbox</span>
+                  </a>
+                </div>
               </div>
-            ))}
+
+              {/* Code Snippet Box with Copy Button */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-semibold text-slate-700">1-Line Installation Script Tag</span>
+                  <span className="text-[11px] text-slate-400">Place before the closing &lt;/body&gt; tag</span>
+                </div>
+
+                <div className="relative rounded-xl border border-slate-800 bg-slate-950 p-4 font-mono text-xs text-slate-200 flex items-center justify-between overflow-x-auto shadow-inner">
+                  <code className="select-all">
+                    {`<script src="${typeof window !== "undefined" ? window.location.origin : "https://echo.ai"}/widget.js" data-org="${user.orgId}" async></script>`}
+                  </code>
+                  <button
+                    onClick={handleCopyEmbed}
+                    className="ml-4 shrink-0 rounded-lg bg-indigo-600 px-3.5 py-1.5 font-bold text-white text-xs hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs"
+                  >
+                    {copiedEmbed ? (
+                      <>
+                        <span>✓</span> Copied!
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                        </svg>
+                        Copy Script
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Platform Instructions */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 text-[11px]">
+                <div className="p-2.5 rounded-lg border border-slate-200/80 bg-white/70">
+                  <b className="text-slate-900 block font-bold">WordPress</b>
+                  <span className="text-slate-500">Theme Settings &gt; Custom Footer Scripts</span>
+                </div>
+                <div className="p-2.5 rounded-lg border border-slate-200/80 bg-white/70">
+                  <b className="text-slate-900 block font-bold">Webflow</b>
+                  <span className="text-slate-500">Project Settings &gt; Custom Code &gt; Footer</span>
+                </div>
+                <div className="p-2.5 rounded-lg border border-slate-200/80 bg-white/70">
+                  <b className="text-slate-900 block font-bold">Shopify</b>
+                  <span className="text-slate-500">Online Store &gt; Edit Code &gt; theme.liquid</span>
+                </div>
+                <div className="p-2.5 rounded-lg border border-slate-200/80 bg-white/70">
+                  <b className="text-slate-900 block font-bold">Squarespace / Wix</b>
+                  <span className="text-slate-500">Developer Tools &gt; Code Injection</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Existing Integrations Grid */}
+            <div className="grid gap-4 md:grid-cols-2">
+              {initialData.integrations.map((int, iIdx) => (
+                <div key={int.id ? `${int.id}-${iIdx}` : `int-${iIdx}`} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+                  <div className="flex justify-between items-center">
+                    <b className="text-sm font-bold text-slate-900 capitalize">
+                      {int.provider === "cliniko"
+                        ? "Cliniko Practice Management"
+                        : int.provider === "shopify"
+                        ? "Shopify Store Sync"
+                        : "Website Chat Widget"}
+                    </b>
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                      {int.status}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600">
+                    {int.provider === "cliniko"
+                      ? "Live calendar availability and 2-way patient appointment sync active."
+                      : int.provider === "shopify"
+                      ? "Live order lookup, return handling, and inventory checking active."
+                      : "JavaScript embed tag active and listening for website visitors."}
+                  </p>
+                  <div className="mt-3 text-[11px] text-slate-400">Last sync: {int.lastSyncAt}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

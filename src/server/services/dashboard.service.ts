@@ -472,7 +472,6 @@ export class DashboardService {
           last_message = ?,
           status = 'RESOLVED',
           resolution_badge = 'Human Resolved',
-          is_ai_muted = 1,
           last_activity_at = ?
         WHERE id = ?
       `).run(content.trim(), nowIso, conversationId);
@@ -618,8 +617,11 @@ export class DashboardService {
     if (/(hicaps|health|fund|funds|insurance|medicare|bupa|medibank|claim|rebate|cover|private)/.test(lowerQuery)) {
       ["health", "funds", "hicaps", "bupa", "medibank", "hcf", "nib", "medicare", "claims"].forEach((t) => expandedTokens.add(t));
     }
-    if (/(book|booking|appointment|schedule|availab|doctor|doctors|practitioner|physio|sarah|david|team|specialist|who|tomorrow)/.test(lowerQuery)) {
-      ["clinical", "practitioners", "sarah", "lee", "david", "vance", "physiotherapist", "rehab", "consultation", "fees"].forEach((t) => expandedTokens.add(t));
+    if (/(doctor|doctors|dr\b|practitioner|practitioners|physio|physiotherapist|therapist|specialist|clinician|sarah|david|team|who|name)/.test(lowerQuery)) {
+      ["clinical", "practitioners", "dr.", "sarah", "lee", "david", "vance", "physiotherapist", "specialist"].forEach((t) => expandedTokens.add(t));
+    }
+    if (/(book|booking|appointment|schedule|availab|tomorrow)/.test(lowerQuery)) {
+      ["clinical", "practitioners", "sarah", "lee", "david", "vance", "consultation", "fees"].forEach((t) => expandedTokens.add(t));
     }
 
     const queryTokens = Array.from(expandedTokens);
@@ -935,11 +937,8 @@ export class DashboardService {
         },
       });
     } else {
-      // 2. Check if staff has muted AI or already taken over this conversation
-      const hasStaffReplied = db
-        .prepare(`SELECT COUNT(*) as cnt FROM messages WHERE conversation_id = ? AND sender = 'staff'`)
-        .get(convId) as { cnt: number };
-      const isAlreadyMuted = existingConv.is_ai_muted === 1 || (hasStaffReplied && hasStaffReplied.cnt > 0);
+      // 2. Check if staff has EXPLICITLY muted AI via "Take Over (Mute AI)"
+      const isAlreadyMuted = existingConv.is_ai_muted === 1;
 
       // Save Visitor Message to existing conversation
       db.prepare(`

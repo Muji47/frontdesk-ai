@@ -178,12 +178,122 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [exportingCsv, setExportingCsv] = useState<boolean>(false);
   const [copiedEmbed, setCopiedEmbed] = useState<boolean>(false);
 
-  // Connect to SSE real-time socket stream
+  // Connect to SSE real-time socket stream (multiplexed across tabs via BroadcastChannel to prevent HTTP/1.1 connection pool exhaustion)
   useEffect(() => {
     let es: EventSource | null = null;
-    let reconnectTimer: NodeJS.Timeout;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let bc: BroadcastChannel | null = null;
+    const processedEvents = new Set<string>();
+
+    function handleIncomingPayload(payload: any, fromBroadcast = false) {
+      if (!payload) return;
+      if (payload.type === "connected") {
+        setIsSocketConnected(true);
+        return;
+      }
+
+      const eventFingerprint = `${payload.type}:${payload.targetId || ""}:${payload.data?.message?.id || payload.timestamp || ""}`;
+      if (processedEvents.has(eventFingerprint)) return;
+      processedEvents.add(eventFingerprint);
+      if (processedEvents.size > 200) {
+        const oldest = processedEvents.values().next().value;
+        if (oldest) processedEvents.delete(oldest);
+      }
+
+      if (!fromBroadcast && bc) {
+        try {
+          bc.postMessage(payload);
+        } catch {}
+      }
+
+      const isOwnStaffMessage = payload.type === "new_message" && payload.data?.message?.sender === "staff";
+
+      if (!isOwnStaffMessage && !document.hidden) {
+        playNotificationChime();
+
+        const toastId = "tst_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+        const newToast: RealtimeToast = {
+          id: toastId,
+          title: payload.title || "Live Customer Activity",
+          message: payload.message || "New incoming request",
+          icon: payload.icon || "💬",
+          targetTab: payload.targetTab === "inbox" ? "conversations" : payload.targetTab || "conversations",
+          targetId: payload.targetId,
+          timestamp: Date.now(),
+        };
+
+        setToasts((prev) => [newToast, ...prev.slice(0, 3)]);
+
+        setTimeout(() => {
+          setToasts((prev) => prev.filter((t) => t.id !== toastId));
+        }, 6000);
+      }
+
+      // Update local state dynamically
+      if ((payload.type === "new_conversation" || payload.type === "handover_alert") && payload.data) {
+        const raw = payload.data;
+        const convId = raw.id || raw.conversationId || ("conv_" + Math.random().toString(36).slice(2));
+        const newConv: DashboardConversation = {
+          id: convId,
+          visitorName: raw.visitorName || "Customer",
+          visitorContact: raw.visitorContact || "",
+          channel: raw.channel || "web",
+          status: raw.status || "ACTIVE",
+          badge: raw.badge || "AI Active",
+          lastMessage: raw.lastMessage || "",
+          externalRef: raw.externalRef || null,
+          timeAgo: "just now",
+          messages: raw.messages || [],
+        };
+
+        setConversations((prev) => {
+          if (prev.some((c) => c.id === newConv.id)) return prev;
+          return [newConv, ...prev];
+        });
+        setSelectedConvId(convId);
+        setMetrics((m) => ({
+          ...m,
+          totalConversations: m.totalConversations + 1,
+        }));
+      } else if (payload.type === "new_message" && payload.data) {
+        const { conversationId, message, status: nextStatus, badge: nextBadge } = payload.data;
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id === conversationId) {
+              const exists = c.messages.some((m) => m.id === message.id);
+              return {
+                ...c,
+                status: nextStatus || c.status,
+                badge: nextBadge || c.badge,
+                lastMessage: message.content,
+                timeAgo: "just now",
+                messages: exists ? c.messages : [...c.messages, message],
+              };
+            }
+            return c;
+          })
+        );
+      } else if (payload.type === "new_appointment") {
+        router.refresh();
+      }
+    }
+
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`echo_dashboard_sse_${user.orgId}`);
+      bc.onmessage = (ev) => handleIncomingPayload(ev.data, true);
+    }
+
+    function disconnect() {
+      clearTimeout(reconnectTimer);
+      if (es) {
+        es.close();
+        es = null;
+      }
+      setIsSocketConnected(false);
+    }
 
     function connect() {
+      if (document.hidden || es) return;
       es = new EventSource("/api/dashboard/events");
 
       es.onopen = () => {
@@ -193,102 +303,41 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       es.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === "connected") {
-            setIsSocketConnected(true);
-            return;
-          }
-
-          const isOwnStaffMessage = payload.type === "new_message" && payload.data?.message?.sender === "staff";
-
-          if (!isOwnStaffMessage) {
-            // Trigger audio chime
-            playNotificationChime();
-
-            const toastId = "tst_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
-            const newToast: RealtimeToast = {
-              id: toastId,
-              title: payload.title || "Live Customer Activity",
-              message: payload.message || "New incoming request",
-              icon: payload.icon || "💬",
-              targetTab: payload.targetTab === "inbox" ? "conversations" : payload.targetTab || "conversations",
-              targetId: payload.targetId,
-              timestamp: Date.now(),
-            };
-
-            setToasts((prev) => [newToast, ...prev.slice(0, 3)]);
-
-            // Auto dismiss after 6 seconds
-            setTimeout(() => {
-              setToasts((prev) => prev.filter((t) => t.id !== toastId));
-            }, 6000);
-          }
-
-          // Update local state dynamically
-          if ((payload.type === "new_conversation" || payload.type === "handover_alert") && payload.data) {
-            const raw = payload.data;
-            const convId = raw.id || raw.conversationId || ("conv_" + Math.random().toString(36).slice(2));
-            const newConv: DashboardConversation = {
-              id: convId,
-              visitorName: raw.visitorName || "Customer",
-              visitorContact: raw.visitorContact || "",
-              channel: raw.channel || "web",
-              status: raw.status || "ACTIVE",
-              badge: raw.badge || "AI Active",
-              lastMessage: raw.lastMessage || "",
-              externalRef: raw.externalRef || null,
-              timeAgo: "just now",
-              messages: raw.messages || [],
-            };
-
-            setConversations((prev) => {
-              if (prev.some((c) => c.id === newConv.id)) return prev;
-              return [newConv, ...prev];
-            });
-            setSelectedConvId(convId);
-            setMetrics((m) => ({
-              ...m,
-              totalConversations: m.totalConversations + 1,
-            }));
-          } else if (payload.type === "new_message" && payload.data) {
-            const { conversationId, message, status: nextStatus, badge: nextBadge } = payload.data;
-            setConversations((prev) =>
-              prev.map((c) => {
-                if (c.id === conversationId) {
-                  const exists = c.messages.some((m) => m.id === message.id);
-                  return {
-                    ...c,
-                    status: nextStatus || c.status,
-                    badge: nextBadge || c.badge,
-                    lastMessage: message.content,
-                    timeAgo: "just now",
-                    messages: exists ? c.messages : [...c.messages, message],
-                  };
-                }
-                return c;
-              })
-            );
-          } else if (payload.type === "new_appointment") {
-            router.refresh();
-          }
+          handleIncomingPayload(payload, false);
         } catch (err) {
           console.error("SSE parse error:", err);
         }
       };
 
       es.onerror = () => {
-        setIsSocketConnected(false);
-        es?.close();
-        reconnectTimer = setTimeout(connect, 4000);
+        disconnect();
+        if (!document.hidden) {
+          reconnectTimer = setTimeout(connect, 5000);
+        }
       };
     }
 
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        disconnect();
+      } else {
+        connect();
+      }
+    }
+
     connect();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", disconnect);
+    window.addEventListener("beforeunload", disconnect);
 
     return () => {
-      es?.close();
-      clearTimeout(reconnectTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", disconnect);
+      window.removeEventListener("beforeunload", disconnect);
+      disconnect();
+      bc?.close();
     };
-  }, [router]);
+  }, [router, user.orgId]);
 
   function handleToastClick(toast: RealtimeToast) {
     const tab = toast.targetTab === "inbox" ? "conversations" : toast.targetTab;

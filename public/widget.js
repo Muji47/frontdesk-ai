@@ -648,12 +648,18 @@
   }
 
   // Real-time synchronization for live staff replies & session history
-  async function syncMessages() {
+  let lastSyncAt = 0;
+  async function syncMessages(force) {
     if (!conversationId || isSyncing || isSending) return;
+    if (!force && document.hidden && Date.now() - lastSyncAt < 6000) return;
     isSyncing = true;
+    lastSyncAt = Date.now();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
     try {
       const res = await fetch(
-        `${hostUrl}/api/widget/messages?conversationId=${encodeURIComponent(conversationId)}&orgId=${encodeURIComponent(orgId)}`
+        `${hostUrl}/api/widget/messages?conversationId=${encodeURIComponent(conversationId)}&orgId=${encodeURIComponent(orgId)}`,
+        { signal: ctrl.signal }
       );
       if (res.ok) {
         const data = await res.json();
@@ -678,6 +684,7 @@
     } catch (e) {
       // Silent retry on next interval
     } finally {
+      clearTimeout(timer);
       isSyncing = false;
     }
   }
@@ -781,7 +788,10 @@
   });
 
   // Poll every 2 seconds for real-time staff replies from the Dashboard
-  setInterval(syncMessages, 2000);
+  setInterval(() => syncMessages(false), 2000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) syncMessages(true);
+  });
 
   // Start initialization
   loadConfig();

@@ -714,75 +714,74 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   ];
 
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-slate-200 bg-white flex flex-col justify-between shrink-0">
-        <div>
-          {/* Logo & Org Header */}
-          <div className="p-4 border-b border-slate-100">
-            <Link href="/" className="flex items-center gap-2.5 font-bold text-slate-900 group">
-              <EchoLogo size={22} tile={true} tileSize="h-9 w-9" />
-              <span className="font-extrabold tracking-tight text-slate-900 text-lg">
-                Echo<span className="text-indigo-600">.ai</span>
+    <div className="flex h-screen w-full overflow-hidden bg-slate-50 text-slate-900">
+      {/* Fixed-Height Sidebar */}
+      <aside className="w-64 h-screen max-h-screen border-r border-slate-200 bg-white flex flex-col shrink-0 select-none">
+        {/* Fixed Top Header (Logo & Organization) */}
+        <div className="shrink-0 p-4 border-b border-slate-100 bg-white">
+          <Link href="/" className="flex items-center gap-2.5 font-bold text-slate-900 group">
+            <EchoLogo size={22} tile={true} tileSize="h-9 w-9" />
+            <span className="font-extrabold tracking-tight text-slate-900 text-lg">
+              Echo<span className="text-indigo-600">.ai</span>
+            </span>
+          </Link>
+          <div className="mt-3 rounded-xl bg-slate-50 p-2.5 border border-slate-100">
+            <div className="text-xs font-bold text-slate-900 truncate">{user.orgName}</div>
+            <div className="text-[11px] text-slate-500 capitalize flex items-center justify-between mt-0.5">
+              <span>{user.industry}</span>
+              <span className="rounded bg-indigo-50 px-1.5 py-0.2 text-[10px] font-bold text-indigo-700 uppercase">
+                {user.plan}
               </span>
-            </Link>
-            <div className="mt-3 rounded-xl bg-slate-50 p-2.5 border border-slate-100">
-              <div className="text-xs font-bold text-slate-900 truncate">{user.orgName}</div>
-              <div className="text-[11px] text-slate-500 capitalize flex items-center justify-between mt-0.5">
-                <span>{user.industry}</span>
-                <span className="rounded bg-indigo-50 px-1.5 py-0.2 text-[10px] font-bold text-indigo-700 uppercase">
-                  {user.plan}
-                </span>
-              </div>
             </div>
           </div>
-
-          {/* Navigation Links */}
-          <nav className="p-2 space-y-0.5 text-xs">
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left font-semibold transition ${
-                  activeTab === item.id
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <span className="text-sm">{item.icon}</span>
-                  <span>{item.label}</span>
-                </div>
-                {item.badge && (
-                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            ))}
-          </nav>
         </div>
 
-        {/* User Footer Profile & Logout */}
-        <div className="p-3 border-t border-slate-100">
-          <div className="flex items-center justify-between">
+        {/* Scrollable Navigation List (scrolls if items overflow available height) */}
+        <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-2 space-y-0.5 text-xs custom-scrollbar">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left font-semibold transition ${
+                activeTab === item.id
+                  ? "bg-indigo-50 text-indigo-700"
+                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="text-sm">{item.icon}</span>
+                <span>{item.label}</span>
+              </div>
+              {item.badge && (
+                <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                  {item.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
+
+        {/* Fixed Bottom Footer (User Name, Email, & Sign Out) */}
+        <div className="shrink-0 p-3 border-t border-slate-100 bg-white">
+          <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-slate-900 truncate">{user.name}</div>
-              <div className="text-[11px] text-slate-500 truncate">{user.email}</div>
+              <div className="text-xs font-bold text-slate-900 truncate" title={user.name}>{user.name}</div>
+              <div className="text-[11px] text-slate-500 truncate" title={user.email}>{user.email}</div>
             </div>
             <button
               onClick={handleLogout}
-              title="Log out"
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
+              title="Sign out"
+              aria-label="Sign out"
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition flex items-center justify-center shrink-0"
             >
-              🚪
+              <span className="text-sm">🚪</span>
             </button>
           </div>
         </div>
       </aside>
 
-      {/* Main Workspace Area */}
-      <main className="flex-1 min-w-0 p-6 md:p-8 overflow-y-auto relative">
+      {/* Main Workspace Area (scrolls independently) */}
+      <main className="flex-1 min-w-0 h-screen overflow-y-auto p-6 md:p-8 relative custom-scrollbar">
         {/* Top-Right Real-Time Notification Stack */}
         <div className="fixed top-5 right-5 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
           {toasts.map((toast) => (

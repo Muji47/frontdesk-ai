@@ -253,6 +253,20 @@
       opacity: 0.75;
     }
 
+    .echo-msg-staff {
+      align-self: flex-start;
+      background: #ecfdf5;
+      color: #064e3b;
+      border: 1px solid #a7f3d0;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 2px 6px rgba(16, 185, 129, 0.08);
+    }
+
+    .echo-msg-staff .echo-msg-author {
+      color: #047857;
+      opacity: 1;
+    }
+
     .echo-chips-container {
       display: flex;
       flex-wrap: wrap;
@@ -472,8 +486,10 @@
   const clinicNameEl = shadow.getElementById("echoClinicName");
 
   let conversationId = sessionStorage.getItem(`echo_conv_${orgId}`) || null;
+  const renderedIds = new Set();
   let isOpen = false;
   let isSending = false;
+  let isSyncing = false;
   let agentConfig = {
     name: "Maya",
     greeting: "Hello! I'm Maya, your AI receptionist. How can I help you with appointments or clinic info today?",
@@ -496,6 +512,9 @@
       console.warn("Echo.ai: using default config fallback", e);
       applyConfig();
     }
+    if (conversationId) {
+      syncMessages();
+    }
   }
 
   function applyConfig() {
@@ -515,7 +534,7 @@
 
     // Render initial greeting if messages are empty
     if (!messagesBox.children.length) {
-      renderBotMessage(agentConfig.greeting, agentConfig.chips);
+      renderBotMessage(agentConfig.greeting, agentConfig.chips, "echo_greeting");
     }
   }
 
@@ -524,6 +543,7 @@
     if (isOpen) {
       modal.classList.add("echo-open");
       input.focus();
+      scrollToBottom();
     } else {
       modal.classList.remove("echo-open");
     }
@@ -536,9 +556,13 @@
     messagesBox.scrollTop = messagesBox.scrollHeight;
   }
 
-  function renderBotMessage(text, chips) {
+  function renderBotMessage(text, chips, msgId) {
+    if (msgId && renderedIds.has(msgId)) return;
+    if (msgId) renderedIds.add(msgId);
+
     const msg = document.createElement("div");
     msg.className = "echo-msg echo-msg-bot";
+    if (msgId) msg.dataset.msgId = msgId;
 
     const author = document.createElement("div");
     author.className = "echo-msg-author";
@@ -569,12 +593,44 @@
     scrollToBottom();
   }
 
-  function renderUserMessage(text) {
+  function renderStaffMessage(text, msgId) {
+    if (msgId && renderedIds.has(msgId)) return;
+    if (msgId) renderedIds.add(msgId);
+
+    const msg = document.createElement("div");
+    msg.className = "echo-msg echo-msg-staff";
+    if (msgId) msg.dataset.msgId = msgId;
+
+    const author = document.createElement("div");
+    author.className = "echo-msg-author";
+    author.textContent = "👩‍⚕️ Front Desk Staff • Live Reply";
+    msg.appendChild(author);
+
+    const body = document.createElement("div");
+    body.textContent = text;
+    msg.appendChild(body);
+
+    messagesBox.appendChild(msg);
+    scrollToBottom();
+
+    // Automatically open drawer if closed when live staff replies
+    if (!isOpen) {
+      isOpen = true;
+      modal.classList.add("echo-open");
+    }
+  }
+
+  function renderUserMessage(text, msgId) {
+    if (msgId && renderedIds.has(msgId)) return null;
+    if (msgId) renderedIds.add(msgId);
+
     const msg = document.createElement("div");
     msg.className = "echo-msg echo-msg-user";
+    if (msgId) msg.dataset.msgId = msgId;
     msg.textContent = text;
     messagesBox.appendChild(msg);
     scrollToBottom();
+    return msg;
   }
 
   function showTypingIndicator() {
@@ -591,11 +647,46 @@
     if (typing) typing.remove();
   }
 
+  // Real-time synchronization for live staff replies & session history
+  async function syncMessages() {
+    if (!conversationId || isSyncing || isSending) return;
+    isSyncing = true;
+    try {
+      const res = await fetch(
+        `${hostUrl}/api/widget/messages?conversationId=${encodeURIComponent(conversationId)}&orgId=${encodeURIComponent(orgId)}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.messages)) {
+          data.messages.forEach((m) => {
+            if (!renderedIds.has(m.id)) {
+              if (m.sender === "client") {
+                renderUserMessage(m.content, m.id);
+              } else if (m.sender === "staff") {
+                renderStaffMessage(m.content, m.id);
+              } else if (m.sender === "ai") {
+                renderBotMessage(m.content, null, m.id);
+              }
+            }
+          });
+        }
+      } else if (res.status === 404) {
+        // Conversation was cleared/deleted from DB
+        sessionStorage.removeItem(`echo_conv_${orgId}`);
+        conversationId = null;
+      }
+    } catch (e) {
+      // Silent retry on next interval
+    } finally {
+      isSyncing = false;
+    }
+  }
+
   async function sendMessage(text) {
     const trimmed = (text || "").trim();
     if (!trimmed || isSending) return;
 
-    renderUserMessage(trimmed);
+    const userMsgEl = renderUserMessage(trimmed, null);
     input.value = "";
     isSending = true;
     sendBtn.disabled = true;
@@ -621,7 +712,13 @@
           conversationId = data.conversationId;
           sessionStorage.setItem(`echo_conv_${orgId}`, conversationId);
         }
-        renderBotMessage(data.replyText, data.chips);
+        if (data.clientMsgId) {
+          renderedIds.add(data.clientMsgId);
+          if (userMsgEl) userMsgEl.dataset.msgId = data.clientMsgId;
+        }
+        if (data.replyText) {
+          renderBotMessage(data.replyText, data.chips, data.aiMsgId);
+        }
       } else {
         renderBotMessage("I'm sorry, I'm temporarily having trouble connecting. Our front desk team has been notified.", null);
       }
@@ -640,6 +737,9 @@
     e.preventDefault();
     sendMessage(input.value);
   });
+
+  // Poll every 2 seconds for real-time staff replies from the Dashboard
+  setInterval(syncMessages, 2000);
 
   // Start initialization
   loadConfig();

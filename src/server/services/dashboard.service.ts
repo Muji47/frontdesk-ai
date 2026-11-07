@@ -472,6 +472,7 @@ export class DashboardService {
           last_message = ?,
           status = 'RESOLVED',
           resolution_badge = 'Human Resolved',
+          is_ai_muted = 1,
           last_activity_at = ?
         WHERE id = ?
       `).run(content.trim(), nowIso, conversationId);
@@ -772,7 +773,14 @@ export class DashboardService {
     message: string;
     visitorName?: string;
     visitorContact?: string;
-  }): { conversationId: string; replyText: string; chips?: string[]; isEscalated: boolean } {
+  }): {
+    conversationId: string;
+    clientMsgId: string;
+    aiMsgId: string;
+    replyText: string;
+    chips?: string[];
+    isEscalated: boolean;
+  } {
     const orgId = params.orgId || "org_demo_101";
     const text = params.message.trim();
     if (!text) {
@@ -781,9 +789,15 @@ export class DashboardService {
 
     let convId = params.conversationId;
     const nowIso = new Date().toISOString();
+    const clientMsgId = "msg_" + randomBytes(6).toString("hex");
+
+    // Verify if conversation exists in DB
+    const existingConv = convId
+      ? (db.prepare(`SELECT id, visitor_name, is_ai_muted FROM conversations WHERE id = ?`).get(convId) as any)
+      : null;
 
     // 1. Create conversation if new
-    if (!convId) {
+    if (!convId || !existingConv) {
       convId = "conv_" + randomBytes(6).toString("hex");
       const visitorName = params.visitorName || "Website Visitor";
       const visitorContact = params.visitorContact || "+61 400 " + Math.floor(100000 + Math.random() * 900000);
@@ -793,6 +807,12 @@ export class DashboardService {
           id, organization_id, visitor_name, visitor_contact, channel, status, resolution_badge, last_message, created_at, last_activity_at
         ) VALUES (?, ?, ?, ?, 'web', 'ACTIVE', 'AI Active', ?, ?, ?)
       `).run(convId, orgId, visitorName, visitorContact, text, nowIso, nowIso);
+
+      // Save Visitor Message
+      db.prepare(`
+        INSERT INTO messages (id, conversation_id, sender, content, created_at)
+        VALUES (?, ?, 'client', ?, ?)
+      `).run(clientMsgId, convId, text, nowIso);
 
       dashboardEventBus.emitToOrg(orgId, {
         type: "new_conversation",
@@ -810,45 +830,77 @@ export class DashboardService {
           badge: "AI Active",
           lastMessage: text,
           timeAgo: "just now",
-          messages: [{ id: "msg_v_" + Date.now(), sender: "client", content: text, createdAt: nowIso }],
+          messages: [{ id: clientMsgId, sender: "client", content: text, createdAt: nowIso }],
+        },
+      });
+    } else {
+      // 2. Save Visitor Message to existing conversation and broadcast to Dashboard
+      db.prepare(`
+        INSERT INTO messages (id, conversation_id, sender, content, created_at)
+        VALUES (?, ?, 'client', ?, ?)
+      `).run(clientMsgId, convId, text, nowIso);
+
+      dashboardEventBus.emitToOrg(orgId, {
+        type: "new_message",
+        title: `New Message from ${existingConv.visitor_name || "Visitor"}`,
+        message: text,
+        icon: "💬",
+        targetTab: "conversations",
+        targetId: convId,
+        data: {
+          conversationId: convId,
+          message: {
+            id: clientMsgId,
+            sender: "client",
+            content: text,
+            createdAt: nowIso,
+          },
         },
       });
     }
 
-    // 2. Save Visitor Message
-    const clientMsgId = "msg_" + randomBytes(6).toString("hex");
-    db.prepare(`
-      INSERT INTO messages (id, conversation_id, sender, content, created_at)
-      VALUES (?, ?, 'client', ?, ?)
-    `).run(clientMsgId, convId, text, nowIso);
-
-    // 3. Check if staff has muted AI on this conversation
+    // 3. Check if staff has muted AI or already taken over this conversation
     const convRow = db.prepare(`SELECT is_ai_muted, visitor_name FROM conversations WHERE id = ?`).get(convId) as any;
-    const isMuted = convRow?.is_ai_muted === 1;
+    const hasStaffReplied = db
+      .prepare(`SELECT COUNT(*) as cnt FROM messages WHERE conversation_id = ? AND sender = 'staff'`)
+      .get(convId) as { cnt: number };
+    const isMuted = convRow?.is_ai_muted === 1 || (hasStaffReplied && hasStaffReplied.cnt > 0);
+
+    if (isMuted) {
+      db.prepare(`
+        UPDATE conversations
+        SET last_message = ?, status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', is_ai_muted = 1, last_activity_at = ?
+        WHERE id = ?
+      `).run(text, nowIso, convId);
+
+      return {
+        conversationId: convId,
+        clientMsgId,
+        aiMsgId: "",
+        replyText: "",
+        chips: [],
+        isEscalated: true,
+      };
+    }
 
     let aiReplyText = "";
     let isEscalated = false;
     const chips: string[] = ["Book Appointment", "Opening Hours", "Pricing & Health Funds"];
 
-    if (isMuted) {
-      aiReplyText = "Thank you! Our front desk staff is reviewing your message and will reply shortly.";
-      isEscalated = true;
-    } else {
-      // Query knowledge base
-      const testResult = this.testKnowledgeQuery(orgId, text);
-      aiReplyText = testResult.answer;
+    // Query knowledge base
+    const testResult = this.testKnowledgeQuery(orgId, text);
+    aiReplyText = testResult.answer;
 
-      // Check if user is asking for human
-      const lower = text.toLowerCase();
-      if (/(human|person|agent|staff|someone|doctor|physio)/.test(lower)) {
-        isEscalated = true;
-        aiReplyText = "I've flagged this thread for our clinic front desk team. A staff member has been alerted and will assist you directly.";
-        db.prepare(`
-          UPDATE conversations
-          SET status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', escalation_reason = 'Visitor requested human staff'
-          WHERE id = ?
-        `).run(convId);
-      }
+    // Check if user is asking for human
+    const lower = text.toLowerCase();
+    if (/(human|person|agent|staff|someone|doctor|physio)/.test(lower)) {
+      isEscalated = true;
+      aiReplyText = "I've flagged this thread for our clinic front desk team. A staff member has been alerted and will assist you directly.";
+      db.prepare(`
+        UPDATE conversations
+        SET status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', escalation_reason = 'Visitor requested human staff'
+        WHERE id = ?
+      `).run(convId);
     }
 
     // 4. Save AI Response Message
@@ -886,6 +938,8 @@ export class DashboardService {
 
     return {
       conversationId: convId,
+      clientMsgId,
+      aiMsgId,
       replyText: aiReplyText,
       chips,
       isEscalated,

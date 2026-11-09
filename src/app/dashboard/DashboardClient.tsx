@@ -221,15 +221,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [isSavingCard, setIsSavingCard] = useState<boolean>(false);
   const [busyCardId, setBusyCardId] = useState<string | null>(null);
   const [viewingInvoice, setViewingInvoice] = useState<DashboardBillingInvoice | null>(null);
-  const [morCheckoutModal, setMorCheckoutModal] = useState<{
-    open: boolean;
+  const [pendingPlanSelection, setPendingPlanSelection] = useState<{
     plan: "starter" | "growth" | "scale";
-    billingCycle: "monthly" | "biannual" | "annual";
-    gateway: PaymentMethodBrand;
-    payerEmail: string;
-    checkoutUrl: string;
-    isProcessing: boolean;
+    cycle: "monthly" | "biannual" | "annual";
   } | null>(null);
+  const paymentMethodsSectionRef = useRef<HTMLDivElement | null>(null);
+  const addCardInputRef = useRef<HTMLInputElement | null>(null);
 
   // Connect to SSE real-time socket stream (multiplexed across tabs via BroadcastChannel to prevent HTTP/1.1 connection pool exhaustion)
   useEffect(() => {
@@ -854,94 +851,34 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
   }
 
-  async function handleOpenMoRCheckout(
-    plan: "starter" | "growth" | "scale",
-    billingCycle: "monthly" | "biannual" | "annual"
-  ) {
-    setBillingNotice(null);
-    try {
-      const res = await fetch("/api/dashboard/billing/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          plan,
-          billingCycle,
-          currency: selectedCurrency,
-          provider: selectedProvider,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Unable to open checkout");
-
-      // If running with live Lemon Squeezy / Paddle API keys, redirect or open overlay
-      if (data.mode === "live" && data.checkoutUrl) {
-        window.open(data.checkoutUrl, "_blank", "noopener,noreferrer");
-        return;
-      }
-
-      setMorCheckoutModal({
-        open: true,
-        plan,
-        billingCycle,
-        gateway: "PAYPAL",
-        payerEmail: user.email || "billing@clinic.com",
-        checkoutUrl: data.checkoutUrl || "",
-        isProcessing: false,
-      });
-    } catch (err: any) {
-      setBillingNotice({ type: "error", text: err.message || "Failed to initialize checkout." });
-    }
-  }
-
-  async function handleCompleteMoRCheckout(simulateFailed = false) {
-    if (!morCheckoutModal) return;
-    setMorCheckoutModal({ ...morCheckoutModal, isProcessing: true });
-    setBillingNotice(null);
-    try {
-      const res = await fetch("/api/webhooks/billing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          eventName: simulateFailed
-            ? "subscription_payment_failed"
-            : "subscription_payment_success",
-          customData: {
-            organization_id: user.orgId,
-            plan: morCheckoutModal.plan,
-            billing_cycle: morCheckoutModal.billingCycle,
-            currency: selectedCurrency,
-            provider: selectedProvider,
-            paymentGateway: morCheckoutModal.gateway,
-            payerEmail: morCheckoutModal.payerEmail,
-            cardLast4: "4242",
-          },
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Webhook checkout error");
-
-      if (data.billing) {
-        setBillingState(data.billing);
-        setSelectedCycle(data.billing.billingCycle);
-      }
-      setMorCheckoutModal(null);
-      setBillingNotice({
-        type: simulateFailed ? "error" : "success",
-        text:
-          data.message ||
-          (simulateFailed ? "Merchant of Record payment failed." : "Global checkout completed!"),
-      });
-    } catch (err: any) {
-      setMorCheckoutModal({ ...morCheckoutModal, isProcessing: false });
-      setBillingNotice({ type: "error", text: err.message || "Failed to process MoR webhook." });
-    }
-  }
-
   async function handleUpdateSubscription(
     targetPlan: "starter" | "growth" | "scale",
     targetCycle: "monthly" | "biannual" | "annual",
     simulateFailedCharge = false
   ) {
+    // If no payment method is on file, navigate down to Payment Methods and open the Add Payment Method form
+    if (!simulateFailedCharge && billingState.paymentMethods.length === 0) {
+      const planLabel =
+        targetPlan === "starter" ? "Starter Plan" : targetPlan === "scale" ? "Scale Plan" : "Growth Plan";
+      const cycleLabel =
+        targetCycle === "biannual"
+          ? "Bi-Annual (6 Months)"
+          : targetCycle === "annual"
+          ? "Annual (12 Months)"
+          : "Monthly";
+      setPendingPlanSelection({ plan: targetPlan, cycle: targetCycle });
+      setShowAddCardModal(true);
+      setBillingNotice({
+        type: "error",
+        text: `No payment method on file — please add a payment method below to complete your switch to ${planLabel} (${cycleLabel}).`,
+      });
+      setTimeout(() => {
+        paymentMethodsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => addCardInputRef.current?.focus(), 350);
+      }, 60);
+      return;
+    }
+
     setIsUpdatingPlan(`${targetPlan}_${targetCycle}`);
     setBillingNotice(null);
     try {
@@ -963,6 +900,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         setBillingState(data.billing);
         setSelectedCycle(data.billing.billingCycle);
       }
+      setPendingPlanSelection(null);
       setBillingNotice({
         type: data.chargeSucceeded ? "success" : "error",
         text: data.message || (data.chargeSucceeded ? "Plan updated." : "Payment failed."),
@@ -998,6 +936,34 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       if (data.billing) setBillingState(data.billing);
       setCardNumber("");
       setShowAddCardModal(false);
+
+      // If the user clicked Upgrade / Downgrade while having no card, automatically complete their pending plan change now
+      if (pendingPlanSelection) {
+        const pending = pendingPlanSelection;
+        setPendingPlanSelection(null);
+        const subRes = await fetch("/api/dashboard/billing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "update_subscription",
+            plan: pending.plan,
+            billingCycle: pending.cycle,
+            currency: selectedCurrency,
+            simulateFailedCharge: false,
+          }),
+        });
+        const subData = await subRes.json();
+        if (subRes.ok && subData.billing) {
+          setBillingState(subData.billing);
+          setSelectedCycle(subData.billing.billingCycle);
+          setBillingNotice({
+            type: subData.chargeSucceeded ? "success" : "error",
+            text: subData.message || "Payment method added and subscription updated.",
+          });
+          return;
+        }
+      }
+
       setBillingNotice({ type: "success", text: "New payment method saved." });
     } catch (err: any) {
       setBillingNotice({ type: "error", text: err.message || "Failed to add card." });
@@ -3164,7 +3130,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           </ul>
                         </div>
 
-                        <div className="mt-5 space-y-2">
+                        <div className="mt-5">
                           <button
                             type="button"
                             disabled={isExactCurrent || Boolean(isUpdatingPlan)}
@@ -3179,16 +3145,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           >
                             {btnLoading ? "Processing Charge..." : ctaLabel}
                           </button>
-
-                          {!isExactCurrent && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenMoRCheckout(tier.id, selectedCycle)}
-                              className="w-full rounded-lg border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-indigo-700 transition cursor-pointer"
-                            >
-                              Pay with PayPal / Apple Pay / Google Pay →
-                            </button>
-                          )}
                         </div>
                       </div>
                     );
@@ -3199,147 +3155,43 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               {/* Payment Methods & Billing Invoices Grid */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Payment Methods Card */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
+                <div
+                  ref={paymentMethodsSectionRef}
+                  className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between"
+                >
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <h3 className="text-sm font-bold text-slate-900">Payment Methods</h3>
                       <button
                         type="button"
-                        onClick={() => setShowAddCardModal((v) => !v)}
+                        onClick={() => {
+                          setPendingPlanSelection(null);
+                          setShowAddCardModal(true);
+                        }}
                         className="rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 text-xs font-bold transition cursor-pointer"
                       >
-                        {showAddCardModal ? "Cancel" : "+ Add Payment Method"}
+                        + Add Payment Method
                       </button>
                     </div>
                     <p className="text-xs text-slate-500 mb-4">
                       Default payment method is charged automatically on plan updates and renewal cycles.
                     </p>
 
-                    {/* Add Card / Wallet Inline Form */}
-                    {showAddCardModal && (
-                      <form
-                        onSubmit={handleAddPaymentMethod}
-                        className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3 text-xs"
-                      >
-                        <div className="font-bold text-slate-900">
-                          Add Payment Method
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                              Payment Type
-                            </label>
-                            <select
-                              value={cardBrand}
-                              onChange={(e) => setCardBrand(e.target.value as PaymentMethodBrand)}
-                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
-                            >
-                              <option value="VISA">VISA</option>
-                              <option value="MASTERCARD">MASTERCARD</option>
-                              <option value="AMEX">AMEX</option>
-                              <option value="PAYPAL">PayPal</option>
-                              <option value="APPLE_PAY">Apple Pay</option>
-                              <option value="GOOGLE_PAY">Google Pay</option>
-                            </select>
-                          </div>
-                          <div className="sm:col-span-2">
-                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                              {cardBrand === "PAYPAL" ? "Account Holder Name" : "Cardholder Name"}
-                            </label>
-                            <input
-                              type="text"
-                              value={cardHolder}
-                              onChange={(e) => setCardHolder(e.target.value)}
-                              placeholder="Dr. Sarah Lee"
-                              required
-                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
-                            />
-                          </div>
-                        </div>
-
-                        {cardBrand === "PAYPAL" ? (
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                              PayPal Email Address
-                            </label>
-                            <input
-                              type="email"
-                              value={cardNumber}
-                              onChange={(e) => setCardNumber(e.target.value)}
-                              placeholder="billing@clinic.com"
-                              required
-                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
-                            />
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                            <div className="sm:col-span-2">
-                              <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                                Card Number (use 0000 to test declined card)
-                              </label>
-                              <input
-                                type="text"
-                                value={cardNumber}
-                                onChange={(e) => setCardNumber(e.target.value)}
-                                placeholder="4242 •••• •••• 5512"
-                                required
-                                className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
-                              />
-                            </div>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-600 mb-1">MM</label>
-                                <input
-                                  type="text"
-                                  maxLength={2}
-                                  value={cardExpMonth}
-                                  onChange={(e) => setCardExpMonth(e.target.value)}
-                                  placeholder="08"
-                                  required
-                                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-600"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-600 mb-1">YYYY</label>
-                                <input
-                                  type="text"
-                                  maxLength={4}
-                                  value={cardExpYear}
-                                  onChange={(e) => setCardExpYear(e.target.value)}
-                                  placeholder="2029"
-                                  required
-                                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-600"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex items-center justify-between pt-1">
-                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={cardSetDefault}
-                              onChange={(e) => setCardSetDefault(e.target.checked)}
-                              className="rounded border-slate-300 text-indigo-600"
-                            />
-                            <span>Set as default payment method</span>
-                          </label>
-                          <button
-                            type="submit"
-                            disabled={isSavingCard}
-                            className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
-                          >
-                            {isSavingCard ? "Saving..." : "Save Method"}
-                          </button>
-                        </div>
-                      </form>
-                    )}
-
                     {/* Saved Payment Methods List */}
                     {billingState.paymentMethods.length === 0 ? (
                       <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">
-                        No payment methods on file. Click <b>+ Add Payment Method</b> above to add a card or PayPal account.
+                        No payment methods on file. Click{" "}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPendingPlanSelection(null);
+                            setShowAddCardModal(true);
+                          }}
+                          className="font-bold text-indigo-600 hover:underline cursor-pointer"
+                        >
+                          + Add Payment Method
+                        </button>{" "}
+                        to add a card or PayPal account.
                       </div>
                     ) : (
                       <div className="space-y-2.5">
@@ -3502,14 +3354,22 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
 
-              {/* Clean Customer-Facing Express Checkout Modal (PayPal / Apple Pay / Google Pay / Cards) */}
-              {morCheckoutModal && morCheckoutModal.open && (() => {
-                const modalPlanMeta = planCatalog.find((p) => p.id === morCheckoutModal.plan) || planCatalog[1];
-                const modalPricing = getCyclePricing(modalPlanMeta.baseMonthly, morCheckoutModal.billingCycle);
+              {/* Add Payment Method Modal */}
+              {showAddCardModal && (() => {
+                const pendingPlanMeta = pendingPlanSelection
+                  ? planCatalog.find((p) => p.id === pendingPlanSelection.plan) || planCatalog[1]
+                  : null;
+                const pendingPricing = pendingPlanMeta
+                  ? getCyclePricing(pendingPlanMeta.baseMonthly, pendingPlanSelection!.cycle)
+                  : null;
+
                 return (
                   <div
                     className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
-                    onClick={() => setMorCheckoutModal(null)}
+                    onClick={() => {
+                      setShowAddCardModal(false);
+                      setPendingPlanSelection(null);
+                    }}
                   >
                     <div
                       className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4 text-xs"
@@ -3518,102 +3378,172 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <div className="flex items-start justify-between border-b border-slate-100 pb-3">
                         <div>
                           <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-indigo-700">
-                            Secure Subscription Checkout
+                            {pendingPlanSelection ? "Payment Method Required" : "Secure Payment"}
                           </span>
                           <h4 className="text-base font-extrabold text-slate-900 mt-1.5">
-                            {modalPlanMeta.name} Plan ({modalPricing.cycleLabel})
+                            {pendingPlanMeta && pendingPricing
+                              ? `Add Payment Method to activate ${pendingPlanMeta.name} Plan`
+                              : "Add New Payment Method"}
                           </h4>
-                          <p className="text-[11px] text-slate-500">
-                            Complete your subscription using PayPal, Apple Pay, Google Pay, or Credit/Debit Card.
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            {pendingPlanMeta && pendingPricing
+                              ? `You selected ${pendingPlanMeta.name} on a ${pendingPricing.cycleLabel} cycle ($${pendingPricing.totalCharge.toLocaleString()}.00). Add your payment method to activate.`
+                              : "Add a credit/debit card or PayPal account to manage subscriptions."}
                           </p>
                         </div>
                         <button
                           type="button"
-                          onClick={() => setMorCheckoutModal(null)}
-                          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
+                          onClick={() => {
+                            setShowAddCardModal(false);
+                            setPendingPlanSelection(null);
+                          }}
+                          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold cursor-pointer"
                         >
                           ✕
                         </button>
                       </div>
 
-                      {/* Choose Payment Method */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
-                          Payment Method:
-                        </label>
-                        <div className="grid grid-cols-3 gap-2">
-                          {(
-                            [
-                              { id: "PAYPAL", label: "🅿️ PayPal" },
-                              { id: "APPLE_PAY", label: "🍎 Apple Pay" },
-                              { id: "GOOGLE_PAY", label: "🇬 Google Pay" },
-                              { id: "VISA", label: "💳 Visa" },
-                              { id: "MASTERCARD", label: "💳 Mastercard" },
-                              { id: "AMEX", label: "💳 Amex" },
-                            ] as const
-                          ).map((gw) => (
+                      <form onSubmit={handleAddPaymentMethod} className="space-y-3.5">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
+                            Select Payment Type:
+                          </label>
+                          <div className="grid grid-cols-3 gap-2">
+                            {(
+                              [
+                                { id: "VISA", label: "💳 Visa" },
+                                { id: "MASTERCARD", label: "💳 Mastercard" },
+                                { id: "AMEX", label: "💳 Amex" },
+                                { id: "PAYPAL", label: "🅿️ PayPal" },
+                                { id: "APPLE_PAY", label: "🍎 Apple Pay" },
+                                { id: "GOOGLE_PAY", label: "🇬 Google Pay" },
+                              ] as const
+                            ).map((pm) => (
+                              <button
+                                key={pm.id}
+                                type="button"
+                                onClick={() => setCardBrand(pm.id)}
+                                className={`rounded-xl border px-3 py-2 text-xs font-bold transition cursor-pointer ${
+                                  cardBrand === pm.id
+                                    ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                                }`}
+                              >
+                                {pm.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                            {cardBrand === "PAYPAL" ? "Account / Cardholder Name" : "Cardholder Name"}
+                          </label>
+                          <input
+                            type="text"
+                            value={cardHolder}
+                            onChange={(e) => setCardHolder(e.target.value)}
+                            placeholder="Dr. Sarah Lee"
+                            required
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-600"
+                          />
+                        </div>
+
+                        {cardBrand === "PAYPAL" ? (
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              PayPal Email Address
+                            </label>
+                            <input
+                              type="email"
+                              value={cardNumber}
+                              onChange={(e) => setCardNumber(e.target.value)}
+                              placeholder="billing@clinic.com"
+                              required
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-600"
+                            />
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                            <div className="sm:col-span-2">
+                              <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                                Card Number
+                              </label>
+                              <input
+                                ref={addCardInputRef}
+                                type="text"
+                                value={cardNumber}
+                                onChange={(e) => setCardNumber(e.target.value)}
+                                placeholder="4242 •••• •••• 4242"
+                                required
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-600"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-700 mb-1">MM</label>
+                                <input
+                                  type="text"
+                                  maxLength={2}
+                                  value={cardExpMonth}
+                                  onChange={(e) => setCardExpMonth(e.target.value)}
+                                  placeholder="08"
+                                  required
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-indigo-600"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-700 mb-1">YYYY</label>
+                                <input
+                                  type="text"
+                                  maxLength={4}
+                                  value={cardExpYear}
+                                  onChange={(e) => setCardExpYear(e.target.value)}
+                                  placeholder="2029"
+                                  required
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-indigo-600"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={cardSetDefault}
+                              onChange={(e) => setCardSetDefault(e.target.checked)}
+                              className="rounded border-slate-300 text-indigo-600"
+                            />
+                            <span>Set as default payment method</span>
+                          </label>
+                          <div className="flex items-center gap-2">
                             <button
-                              key={gw.id}
                               type="button"
-                              onClick={() => setMorCheckoutModal({ ...morCheckoutModal, gateway: gw.id })}
-                              className={`rounded-xl border px-3 py-2 text-xs font-bold transition cursor-pointer ${
-                                morCheckoutModal.gateway === gw.id
-                                  ? "border-indigo-600 bg-indigo-50 text-indigo-700"
-                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                              }`}
+                              onClick={() => {
+                                setShowAddCardModal(false);
+                                setPendingPlanSelection(null);
+                                paymentMethodsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                              }}
+                              className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
                             >
-                              {gw.label}
+                              Cancel
                             </button>
-                          ))}
+                            <button
+                              type="submit"
+                              disabled={isSavingCard}
+                              className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition cursor-pointer"
+                            >
+                              {isSavingCard
+                                ? "Saving..."
+                                : pendingPricing
+                                ? `Save & Activate Plan ($${pendingPricing.totalCharge.toLocaleString()}.00)`
+                                : "Save Payment Method"}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Billing Email:
-                        </label>
-                        <input
-                          type="email"
-                          value={morCheckoutModal.payerEmail}
-                          onChange={(e) =>
-                            setMorCheckoutModal({ ...morCheckoutModal, payerEmail: e.target.value })
-                          }
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-600"
-                        />
-                      </div>
-
-                      <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-100 space-y-1.5">
-                        <div className="flex justify-between text-slate-600">
-                          <span>Plan & Cycle</span>
-                          <b className="text-slate-900">
-                            {modalPlanMeta.name} • {modalPricing.cycleLabel}
-                          </b>
-                        </div>
-                        <div className="flex justify-between font-extrabold text-slate-900 text-sm pt-1.5 border-t border-slate-200">
-                          <span>Total Due Today</span>
-                          <span>${modalPricing.totalCharge.toLocaleString()}.00</span>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
-                        <button
-                          type="button"
-                          onClick={() => setMorCheckoutModal(null)}
-                          className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          disabled={morCheckoutModal.isProcessing}
-                          onClick={() => handleCompleteMoRCheckout(false)}
-                          className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition cursor-pointer"
-                        >
-                          {morCheckoutModal.isProcessing
-                            ? "Processing..."
-                            : `Pay $${modalPricing.totalCharge.toLocaleString()}.00`}
-                        </button>
-                      </div>
+                      </form>
                     </div>
                   </div>
                 );

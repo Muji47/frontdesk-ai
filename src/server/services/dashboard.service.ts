@@ -635,6 +635,10 @@ export class DashboardService {
       .prepare(`SELECT brand, last4, cardholder_name FROM payment_methods WHERE organization_id = ? AND is_default = 1 LIMIT 1`)
       .get(orgId) as { brand: string; last4: string; cardholder_name: string } | undefined;
 
+    if (!defaultCard && !simulateFailedCharge) {
+      throw new ValidationError("No payment method on file. Please add a payment method first.");
+    }
+
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
     const invId = `INV-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${randomBytes(2).toString("hex").toUpperCase()}`;

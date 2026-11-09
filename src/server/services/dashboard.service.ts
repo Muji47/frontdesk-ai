@@ -645,10 +645,8 @@ export class DashboardService {
 
     const isDeclinedCard = defaultCard && (defaultCard.last4 === "0000" || defaultCard.last4 === "9999");
     const formatMethodSummary = (m: { brand: string; last4: string; cardholder_name: string }) => {
-      if (m.brand === "PAYPAL") return `PayPal (${m.cardholder_name || m.last4})`;
-      if (m.brand === "APPLE_PAY") return `Apple Pay •••• ${m.last4}`;
-      if (m.brand === "GOOGLE_PAY") return `Google Pay •••• ${m.last4}`;
-      return `${m.brand} •••• ${m.last4}`;
+      const brand = m.brand === "MASTERCARD" ? "Mastercard" : m.brand === "AMEX" ? "Amex" : "Visa";
+      return `${brand} •••• ${m.last4}`;
     };
 
     if (!defaultCard || isDeclinedCard || simulateFailedCharge) {

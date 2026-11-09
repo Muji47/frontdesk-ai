@@ -211,12 +211,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   );
   const [isUpdatingPlan, setIsUpdatingPlan] = useState<string | null>(null);
   const [billingNotice, setBillingNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [showAddCardModal, setShowAddCardModal] = useState<boolean>(false);
-  const [cardBrand, setCardBrand] = useState<PaymentMethodBrand>("VISA");
+  const [showInlineCardForm, setShowInlineCardForm] = useState<boolean>(false);
   const [cardHolder, setCardHolder] = useState<string>(user.name || "Dr. Sarah Lee");
   const [cardNumber, setCardNumber] = useState<string>("");
-  const [cardExpMonth, setCardExpMonth] = useState<string>("08");
-  const [cardExpYear, setCardExpYear] = useState<string>("2029");
+  const [cardExpiry, setCardExpiry] = useState<string>("08 / 29");
+  const [cardCvc, setCardCvc] = useState<string>("");
   const [cardSetDefault, setCardSetDefault] = useState<boolean>(true);
   const [isSavingCard, setIsSavingCard] = useState<boolean>(false);
   const [busyCardId, setBusyCardId] = useState<string | null>(null);
@@ -851,12 +850,42 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
   }
 
+  function getDetectedBrand(digits: string): "VISA" | "MASTERCARD" | "AMEX" {
+    const clean = digits.replace(/\D/g, "");
+    if (/^5[1-5]/.test(clean) || /^2[2-7]/.test(clean)) return "MASTERCARD";
+    if (/^3[47]/.test(clean)) return "AMEX";
+    return "VISA";
+  }
+
+  function handleCardNumberChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value.replace(/\D/g, "").slice(0, 16);
+    const parts = [];
+    for (let i = 0; i < raw.length; i += 4) {
+      parts.push(raw.slice(i, i + 4));
+    }
+    setCardNumber(parts.join(" "));
+  }
+
+  function handleExpiryChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value.replace(/\D/g, "").slice(0, 4);
+    if (raw.length >= 3) {
+      setCardExpiry(`${raw.slice(0, 2)} / ${raw.slice(2)}`);
+    } else {
+      setCardExpiry(raw);
+    }
+  }
+
+  function handleCvcChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value.replace(/\D/g, "").slice(0, 4);
+    setCardCvc(raw);
+  }
+
   async function handleUpdateSubscription(
     targetPlan: "starter" | "growth" | "scale",
     targetCycle: "monthly" | "biannual" | "annual",
     simulateFailedCharge = false
   ) {
-    // If no payment method is on file, navigate down to Payment Methods and open the Add Payment Method form
+    // If no payment method is on file, navigate down to Payment Methods and activate the embedded Stripe Element
     if (!simulateFailedCharge && billingState.paymentMethods.length === 0) {
       const planLabel =
         targetPlan === "starter" ? "Starter Plan" : targetPlan === "scale" ? "Scale Plan" : "Growth Plan";
@@ -867,15 +896,15 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           ? "Annual (12 Months)"
           : "Monthly";
       setPendingPlanSelection({ plan: targetPlan, cycle: targetCycle });
-      setShowAddCardModal(true);
+      setShowInlineCardForm(true);
       setBillingNotice({
         type: "error",
-        text: `No payment method on file — please add a payment method below to complete your switch to ${planLabel} (${cycleLabel}).`,
+        text: `No card on file — enter your card below to complete your switch to ${planLabel} (${cycleLabel}).`,
       });
       setTimeout(() => {
         paymentMethodsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-        setTimeout(() => addCardInputRef.current?.focus(), 350);
-      }, 60);
+        setTimeout(() => addCardInputRef.current?.focus(), 300);
+      }, 50);
       return;
     }
 
@@ -914,19 +943,29 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   async function handleAddPaymentMethod(e: React.FormEvent) {
     e.preventDefault();
-    if (!cardNumber.trim()) return;
+    const cleanNum = cardNumber.replace(/\D/g, "");
+    if (!cleanNum || cleanNum.length < 4) {
+      setBillingNotice({ type: "error", text: "Please enter a valid card number." });
+      return;
+    }
     setIsSavingCard(true);
     setBillingNotice(null);
     try {
+      const brand = getDetectedBrand(cleanNum);
+      const parts = cardExpiry.split("/");
+      const expMonth = (parts[0] || "12").trim().padStart(2, "0");
+      let expYear = (parts[1] || "29").trim();
+      if (expYear.length === 2) expYear = `20${expYear}`;
+
       const res = await fetch("/api/dashboard/billing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "add_payment_method",
-          brand: cardBrand,
-          cardNumber,
-          expMonth: cardExpMonth,
-          expYear: cardExpYear,
+          brand,
+          cardNumber: cleanNum,
+          expMonth,
+          expYear,
           cardholderName: cardHolder,
           setAsDefault: cardSetDefault,
         }),
@@ -935,9 +974,10 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       if (!res.ok) throw new Error(data.error || "Failed to add payment method");
       if (data.billing) setBillingState(data.billing);
       setCardNumber("");
-      setShowAddCardModal(false);
+      setCardCvc("");
+      setShowInlineCardForm(false);
 
-      // If the user clicked Upgrade / Downgrade while having no card, automatically complete their pending plan change now
+      // If user clicked Upgrade / Downgrade while having no card, automatically complete their pending plan change now
       if (pendingPlanSelection) {
         const pending = pendingPlanSelection;
         setPendingPlanSelection(null);
@@ -964,9 +1004,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         }
       }
 
-      setBillingNotice({ type: "success", text: "New payment method saved." });
+      setBillingNotice({ type: "success", text: "New card saved securely." });
     } catch (err: any) {
-      setBillingNotice({ type: "error", text: err.message || "Failed to add card." });
+      setBillingNotice({ type: "error", text: err.message || "Failed to save card." });
     } finally {
       setIsSavingCard(false);
     }
@@ -2947,9 +2987,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     <span className="text-[11px] text-slate-500 block mt-0.5">
                       Effective rate: <b>${activePricing.perMonth}/mo</b> •{" "}
                       {defaultCard
-                        ? defaultCard.brand === "PAYPAL"
-                          ? `Charged via PayPal (${defaultCard.cardholderName})`
-                          : `Charged to ${defaultCard.brand} •••• ${defaultCard.last4}`
+                        ? `Charged to ${defaultCard.brand === "MASTERCARD" ? "Mastercard" : defaultCard.brand === "AMEX" ? "Amex" : "Visa"} •••• ${defaultCard.last4}`
                         : "No default payment method on file"}
                     </span>
                   </div>
@@ -3161,133 +3199,277 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 >
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-1">
-                      <h3 className="text-sm font-bold text-slate-900">Payment Methods</h3>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPendingPlanSelection(null);
-                          setShowAddCardModal(true);
-                        }}
-                        className="rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 text-xs font-bold transition cursor-pointer"
-                      >
-                        + Add Payment Method
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-slate-900">Payment Methods</h3>
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                          <svg className="h-2.5 w-2.5 text-emerald-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clipRule="evenodd" />
+                          </svg>
+                          Stripe Encrypted
+                        </span>
+                      </div>
+                      {billingState.paymentMethods.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPendingPlanSelection(null);
+                            setShowInlineCardForm(!showInlineCardForm);
+                            if (!showInlineCardForm) {
+                              setTimeout(() => addCardInputRef.current?.focus(), 150);
+                            }
+                          }}
+                          className="rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 text-xs font-bold transition cursor-pointer"
+                        >
+                          {showInlineCardForm ? "✕ Cancel" : "+ Add Payment Method"}
+                        </button>
+                      )}
                     </div>
                     <p className="text-xs text-slate-500 mb-4">
                       Default payment method is charged automatically on plan updates and renewal cycles.
                     </p>
 
+                    {/* Pending Plan Switch Callout Banner */}
+                    {pendingPlanSelection && (() => {
+                      const pPlanMeta = planCatalog.find((p) => p.id === pendingPlanSelection.plan) || planCatalog[1];
+                      const pPricing = getCyclePricing(pPlanMeta.baseMonthly, pendingPlanSelection.cycle);
+                      return (
+                        <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3.5 text-xs text-indigo-900 flex items-start gap-3">
+                          <span className="text-lg leading-none">💳</span>
+                          <div className="flex-1">
+                            <div className="font-bold flex items-center justify-between">
+                              <span>Activate {pPlanMeta.name} Plan</span>
+                              <span className="font-black text-indigo-700">${pPricing.totalCharge.toLocaleString()}.00</span>
+                            </div>
+                            <p className="text-[11px] text-indigo-700/80 mt-0.5">
+                              Enter your card details in the payment element below to charge ${pPricing.totalCharge.toLocaleString()}.00 and switch plans.
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* Saved Payment Methods List */}
-                    {billingState.paymentMethods.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">
-                        No payment methods on file. Click{" "}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPendingPlanSelection(null);
-                            setShowAddCardModal(true);
-                          }}
-                          className="font-bold text-indigo-600 hover:underline cursor-pointer"
-                        >
-                          + Add Payment Method
-                        </button>{" "}
-                        to add a card or PayPal account.
-                      </div>
-                    ) : (
+                    {billingState.paymentMethods.length > 0 && !showInlineCardForm && !pendingPlanSelection && (
                       <div className="space-y-2.5">
-                        {billingState.paymentMethods.map((pm) => (
-                          <div
-                            key={pm.id}
-                            className={`flex items-center justify-between gap-3 p-3.5 rounded-xl border transition ${
-                              pm.isDefault
-                                ? "border-indigo-200 bg-indigo-50/30"
-                                : "border-slate-200 bg-slate-50/50"
-                            }`}
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div
-                                className={`h-8 w-16 shrink-0 rounded font-bold text-[10px] flex items-center justify-center tracking-wider text-white ${
-                                  pm.brand === "MASTERCARD"
-                                    ? "bg-amber-600"
-                                    : pm.brand === "AMEX"
-                                    ? "bg-sky-700"
-                                    : pm.brand === "PAYPAL"
-                                    ? "bg-blue-700"
-                                    : pm.brand === "APPLE_PAY" || pm.brand === "GOOGLE_PAY"
-                                    ? "bg-emerald-700"
-                                    : "bg-slate-900"
-                                }`}
-                              >
-                                {pm.brand === "APPLE_PAY"
-                                  ? "APPLE"
-                                  : pm.brand === "GOOGLE_PAY"
-                                  ? "GPAY"
-                                  : pm.brand}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <b className="text-xs text-slate-900 font-bold truncate">
-                                    {pm.brand === "PAYPAL"
-                                      ? `PayPal (${pm.cardholderName})`
-                                      : `${pm.brand} ending in ${pm.last4}`}
-                                  </b>
-                                  {pm.isDefault && (
-                                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                                      Default
-                                    </span>
-                                  )}
+                        {billingState.paymentMethods.map((pm) => {
+                          const brandTitle = pm.brand === "MASTERCARD" ? "Mastercard" : pm.brand === "AMEX" ? "Amex" : "Visa";
+                          return (
+                            <div
+                              key={pm.id}
+                              className={`flex items-center justify-between gap-3 p-3.5 rounded-xl border transition ${
+                                pm.isDefault
+                                  ? "border-indigo-200 bg-indigo-50/30"
+                                  : "border-slate-200 bg-slate-50/50"
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="h-8 w-14 shrink-0 rounded-lg font-black text-[10px] flex items-center justify-center tracking-wider text-white bg-slate-900 shadow-xs">
+                                  {pm.brand === "MASTERCARD" ? "MC" : pm.brand === "AMEX" ? "AMEX" : "VISA"}
                                 </div>
-                                <span className="text-[11px] text-slate-500 block truncate">
-                                  {pm.brand === "PAYPAL"
-                                    ? `Verified PayPal Account`
-                                    : `${pm.cardholderName} • Expires ${pm.expMonth}/${pm.expYear}`}
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <b className="text-xs text-slate-900 font-bold truncate">
+                                      {brandTitle} ending in {pm.last4}
+                                    </b>
+                                    {pm.isDefault && (
+                                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                        Default
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 block truncate">
+                                    {pm.cardholderName} • Expires {pm.expMonth}/{pm.expYear}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {!pm.isDefault && (
+                                  <button
+                                    type="button"
+                                    disabled={busyCardId === pm.id}
+                                    onClick={() => handleSetDefaultCard(pm.id)}
+                                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 transition cursor-pointer"
+                                  >
+                                    Set Default
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={busyCardId === pm.id}
+                                  onClick={() => handleDeleteCard(pm.id)}
+                                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-red-600 hover:border-red-200 hover:bg-red-50 transition cursor-pointer"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Stripe Element Form: shown when no cards exist OR when showInlineCardForm / pendingPlanSelection is active */}
+                    {(billingState.paymentMethods.length === 0 || showInlineCardForm || pendingPlanSelection) && (() => {
+                      const detectedBrand = getDetectedBrand(cardNumber);
+                      const pendingPlanMeta = pendingPlanSelection
+                        ? planCatalog.find((p) => p.id === pendingPlanSelection.plan) || planCatalog[1]
+                        : null;
+                      const pendingPricing = pendingPlanMeta
+                        ? getCyclePricing(pendingPlanMeta.baseMonthly, pendingPlanSelection!.cycle)
+                        : null;
+
+                      return (
+                        <form onSubmit={handleAddPaymentMethod} className="space-y-3.5">
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <label className="text-[11px] font-bold text-slate-700">Card information</label>
+                              <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                                <span className={`px-1.5 py-0.5 rounded font-black tracking-wider transition ${detectedBrand === "VISA" ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-400"}`}>
+                                  VISA
+                                </span>
+                                <span className={`px-1.5 py-0.5 rounded font-black tracking-wider transition ${detectedBrand === "MASTERCARD" ? "bg-amber-600 text-white" : "bg-slate-100 text-slate-400"}`}>
+                                  MC
+                                </span>
+                                <span className={`px-1.5 py-0.5 rounded font-black tracking-wider transition ${detectedBrand === "AMEX" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-400"}`}>
+                                  AMEX
                                 </span>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              {!pm.isDefault && (
-                                <button
-                                  type="button"
-                                  disabled={busyCardId === pm.id}
-                                  onClick={() => handleSetDefaultCard(pm.id)}
-                                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 transition cursor-pointer"
-                                >
-                                  Set Default
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                disabled={busyCardId === pm.id}
-                                onClick={() => handleDeleteCard(pm.id)}
-                                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-red-600 hover:border-red-200 hover:bg-red-50 transition cursor-pointer"
-                              >
-                                Delete
-                              </button>
+                            {/* Stripe-style unified card container */}
+                            <div className="rounded-xl border border-slate-300 bg-white shadow-xs focus-within:border-indigo-600 focus-within:ring-2 focus-within:ring-indigo-100/70 transition-all overflow-hidden">
+                              {/* Card Number */}
+                              <div className="px-3.5 py-2.5 flex items-center justify-between">
+                                <input
+                                  ref={addCardInputRef}
+                                  type="text"
+                                  value={cardNumber}
+                                  onChange={handleCardNumberChange}
+                                  placeholder="1234 1234 1234 1234"
+                                  maxLength={19}
+                                  required
+                                  className="w-full bg-transparent text-xs font-mono tracking-wide text-slate-900 outline-none placeholder:text-slate-400 placeholder:font-sans"
+                                />
+                                <svg className="h-4 w-4 text-slate-400 shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <rect x="2" y="5" width="20" height="14" rx="2" strokeWidth="2" />
+                                  <line x1="2" y1="10" x2="22" y2="10" strokeWidth="2" />
+                                </svg>
+                              </div>
+
+                              {/* Divider & Expiry + CVC row */}
+                              <div className="border-t border-slate-200 grid grid-cols-2">
+                                <div className="px-3.5 py-2">
+                                  <input
+                                    type="text"
+                                    value={cardExpiry}
+                                    onChange={handleExpiryChange}
+                                    placeholder="MM / YY"
+                                    maxLength={7}
+                                    required
+                                    className="w-full bg-transparent text-xs font-mono tracking-wide text-slate-900 outline-none placeholder:text-slate-400 placeholder:font-sans"
+                                  />
+                                </div>
+                                <div className="border-l border-slate-200 px-3.5 py-2 flex items-center justify-between">
+                                  <input
+                                    type="text"
+                                    value={cardCvc}
+                                    onChange={handleCvcChange}
+                                    placeholder="CVC"
+                                    maxLength={4}
+                                    required
+                                    className="w-full bg-transparent text-xs font-mono tracking-wide text-slate-900 outline-none placeholder:text-slate-400 placeholder:font-sans"
+                                  />
+                                  <svg className="h-3.5 w-3.5 text-slate-400 shrink-0 ml-1" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                                  </svg>
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
+
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">Name on card</label>
+                            <input
+                              type="text"
+                              value={cardHolder}
+                              onChange={(e) => setCardHolder(e.target.value)}
+                              placeholder="Dr. Sarah Lee"
+                              required
+                              className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 shadow-xs"
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between pt-1">
+                            <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                              <svg className="h-3.5 w-3.5 text-emerald-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                              End-to-end encrypted • PCI compliant
+                            </span>
+
+                            {billingState.paymentMethods.length > 0 && (
+                              <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={cardSetDefault}
+                                  onChange={(e) => setCardSetDefault(e.target.checked)}
+                                  className="rounded border-slate-300 text-indigo-600"
+                                />
+                                <span>Set as default</span>
+                              </label>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-end gap-2 pt-1">
+                            {(billingState.paymentMethods.length > 0 || pendingPlanSelection) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowInlineCardForm(false);
+                                  setPendingPlanSelection(null);
+                                }}
+                                className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                            <button
+                              type="submit"
+                              disabled={isSavingCard}
+                              className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition shadow-xs cursor-pointer"
+                            >
+                              {isSavingCard
+                                ? "Processing..."
+                                : pendingPricing
+                                ? `Pay $${pendingPricing.totalCharge.toLocaleString()}.00 & Activate ${pendingPlanMeta?.name || "Plan"}`
+                                : "Save Payment Method"}
+                            </button>
+                          </div>
+                        </form>
+                      );
+                    })()}
                   </div>
 
                   <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
                     <span className="text-xs text-slate-500">
                       {defaultCard
-                        ? `Auto-billing active (${
-                            defaultCard.brand === "PAYPAL"
-                              ? `PayPal • ${defaultCard.cardholderName}`
-                              : `${defaultCard.brand} •••• ${defaultCard.last4}`
-                          })`
+                        ? `Auto-billing active (${defaultCard.brand === "MASTERCARD" ? "Mastercard" : defaultCard.brand === "AMEX" ? "Amex" : "Visa"} •••• ${defaultCard.last4})`
                         : "Auto-billing paused (no default method)"}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setShowAddCardModal(true)}
-                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 transition cursor-pointer"
-                    >
-                      Update Payment Method
-                    </button>
+                    {billingState.paymentMethods.length > 0 && !showInlineCardForm && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingPlanSelection(null);
+                          setShowInlineCardForm(true);
+                          setTimeout(() => addCardInputRef.current?.focus(), 150);
+                        }}
+                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 transition cursor-pointer"
+                      >
+                        + Add New Card
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -3354,200 +3536,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
 
-              {/* Add Payment Method Modal */}
-              {showAddCardModal && (() => {
-                const pendingPlanMeta = pendingPlanSelection
-                  ? planCatalog.find((p) => p.id === pendingPlanSelection.plan) || planCatalog[1]
-                  : null;
-                const pendingPricing = pendingPlanMeta
-                  ? getCyclePricing(pendingPlanMeta.baseMonthly, pendingPlanSelection!.cycle)
-                  : null;
 
-                return (
-                  <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
-                    onClick={() => {
-                      setShowAddCardModal(false);
-                      setPendingPlanSelection(null);
-                    }}
-                  >
-                    <div
-                      className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4 text-xs"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="flex items-start justify-between border-b border-slate-100 pb-3">
-                        <div>
-                          <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-indigo-700">
-                            {pendingPlanSelection ? "Payment Method Required" : "Secure Payment"}
-                          </span>
-                          <h4 className="text-base font-extrabold text-slate-900 mt-1.5">
-                            {pendingPlanMeta && pendingPricing
-                              ? `Add Payment Method to activate ${pendingPlanMeta.name} Plan`
-                              : "Add New Payment Method"}
-                          </h4>
-                          <p className="text-[11px] text-slate-500 mt-0.5">
-                            {pendingPlanMeta && pendingPricing
-                              ? `You selected ${pendingPlanMeta.name} on a ${pendingPricing.cycleLabel} cycle ($${pendingPricing.totalCharge.toLocaleString()}.00). Add your payment method to activate.`
-                              : "Add a credit/debit card or PayPal account to manage subscriptions."}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowAddCardModal(false);
-                            setPendingPlanSelection(null);
-                          }}
-                          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold cursor-pointer"
-                        >
-                          ✕
-                        </button>
-                      </div>
-
-                      <form onSubmit={handleAddPaymentMethod} className="space-y-3.5">
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
-                            Select Payment Type:
-                          </label>
-                          <div className="grid grid-cols-3 gap-2">
-                            {(
-                              [
-                                { id: "VISA", label: "💳 Visa" },
-                                { id: "MASTERCARD", label: "💳 Mastercard" },
-                                { id: "AMEX", label: "💳 Amex" },
-                                { id: "PAYPAL", label: "🅿️ PayPal" },
-                                { id: "APPLE_PAY", label: "🍎 Apple Pay" },
-                                { id: "GOOGLE_PAY", label: "🇬 Google Pay" },
-                              ] as const
-                            ).map((pm) => (
-                              <button
-                                key={pm.id}
-                                type="button"
-                                onClick={() => setCardBrand(pm.id)}
-                                className={`rounded-xl border px-3 py-2 text-xs font-bold transition cursor-pointer ${
-                                  cardBrand === pm.id
-                                    ? "border-indigo-600 bg-indigo-50 text-indigo-700"
-                                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                                }`}
-                              >
-                                {pm.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                            {cardBrand === "PAYPAL" ? "Account / Cardholder Name" : "Cardholder Name"}
-                          </label>
-                          <input
-                            type="text"
-                            value={cardHolder}
-                            onChange={(e) => setCardHolder(e.target.value)}
-                            placeholder="Dr. Sarah Lee"
-                            required
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-600"
-                          />
-                        </div>
-
-                        {cardBrand === "PAYPAL" ? (
-                          <div>
-                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                              PayPal Email Address
-                            </label>
-                            <input
-                              type="email"
-                              value={cardNumber}
-                              onChange={(e) => setCardNumber(e.target.value)}
-                              placeholder="billing@clinic.com"
-                              required
-                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-600"
-                            />
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                            <div className="sm:col-span-2">
-                              <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                                Card Number
-                              </label>
-                              <input
-                                ref={addCardInputRef}
-                                type="text"
-                                value={cardNumber}
-                                onChange={(e) => setCardNumber(e.target.value)}
-                                placeholder="4242 •••• •••• 4242"
-                                required
-                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-600"
-                              />
-                            </div>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <div>
-                                <label className="block text-[11px] font-bold text-slate-700 mb-1">MM</label>
-                                <input
-                                  type="text"
-                                  maxLength={2}
-                                  value={cardExpMonth}
-                                  onChange={(e) => setCardExpMonth(e.target.value)}
-                                  placeholder="08"
-                                  required
-                                  className="w-full rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-indigo-600"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-bold text-slate-700 mb-1">YYYY</label>
-                                <input
-                                  type="text"
-                                  maxLength={4}
-                                  value={cardExpYear}
-                                  onChange={(e) => setCardExpYear(e.target.value)}
-                                  placeholder="2029"
-                                  required
-                                  className="w-full rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-indigo-600"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={cardSetDefault}
-                              onChange={(e) => setCardSetDefault(e.target.checked)}
-                              className="rounded border-slate-300 text-indigo-600"
-                            />
-                            <span>Set as default payment method</span>
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setShowAddCardModal(false);
-                                setPendingPlanSelection(null);
-                                paymentMethodsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-                              }}
-                              className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="submit"
-                              disabled={isSavingCard}
-                              className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition cursor-pointer"
-                            >
-                              {isSavingCard
-                                ? "Saving..."
-                                : pendingPricing
-                                ? `Save & Activate Plan ($${pendingPricing.totalCharge.toLocaleString()}.00)`
-                                : "Save Payment Method"}
-                            </button>
-                          </div>
-                        </div>
-                      </form>
-                    </div>
-                  </div>
-                );
-              })()}
 
               {/* Tax Invoice / Receipt Modal (Only accessible for Paid invoices) */}
               {viewingInvoice && viewingInvoice.status === "Paid" && (() => {

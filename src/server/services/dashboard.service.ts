@@ -98,6 +98,35 @@ export interface DashboardIntegration {
   lastSyncAt: string;
 }
 
+export interface DashboardPaymentMethod {
+  id: string;
+  brand: "VISA" | "MASTERCARD" | "AMEX";
+  last4: string;
+  expMonth: string;
+  expYear: string;
+  cardholderName: string;
+  isDefault: boolean;
+}
+
+export interface DashboardBillingInvoice {
+  id: string;
+  planName: string;
+  billingCycle: "monthly" | "biannual" | "annual";
+  amountCents: number;
+  amountFormatted: string;
+  status: "Paid" | "Failed";
+  cardSummary: string | null;
+  failureReason: string | null;
+  invoiceDate: string;
+}
+
+export interface DashboardBillingData {
+  plan: "starter" | "growth" | "scale";
+  billingCycle: "monthly" | "biannual" | "annual";
+  paymentMethods: DashboardPaymentMethod[];
+  invoices: DashboardBillingInvoice[];
+}
+
 export interface DashboardData {
   metrics: DashboardMetricData;
   conversations: DashboardConversation[];
@@ -107,6 +136,7 @@ export interface DashboardData {
   orders: DashboardOrder[];
   leads: DashboardLead[];
   integrations: DashboardIntegration[];
+  billing: DashboardBillingData;
   agent: {
     id: string;
     name: string;
@@ -354,6 +384,8 @@ export class DashboardService {
       actionMetricSubtext: isEcom ? "Tracked via Shopify connector" : "Synced via Cliniko PMS",
     };
 
+    const billing = this.getBillingData(orgId);
+
     return {
       metrics,
       conversations,
@@ -363,8 +395,331 @@ export class DashboardService {
       orders,
       leads,
       integrations,
+      billing,
       agent,
     };
+  }
+
+  /**
+   * Retrieves (and seeds initial records if empty) billing subscription, payment methods, and invoices.
+   */
+  public static getBillingData(orgId: string): DashboardBillingData {
+    const orgRow = db
+      .prepare("SELECT plan, billing_cycle FROM organizations WHERE id = ?")
+      .get(orgId) as { plan?: string; billing_cycle?: string } | undefined;
+
+    const rawPlan = (orgRow?.plan || "growth").toLowerCase();
+    const plan: "starter" | "growth" | "scale" =
+      rawPlan === "starter" ? "starter" : rawPlan === "scale" || rawPlan === "enterprise" ? "scale" : "growth";
+    const rawCycle = (orgRow?.billing_cycle || "monthly").toLowerCase();
+    const billingCycle: "monthly" | "biannual" | "annual" =
+      rawCycle === "biannual" ? "biannual" : rawCycle === "annual" ? "annual" : "monthly";
+
+    // Seed initial payment methods & sample invoices once per organization if billing_invoices is empty
+    const invCount = db
+      .prepare("SELECT COUNT(*) as cnt FROM billing_invoices WHERE organization_id = ?")
+      .get(orgId) as { cnt: number };
+
+    if (invCount.cnt === 0) {
+      withTransaction(() => {
+        const pmCount = db
+          .prepare("SELECT COUNT(*) as cnt FROM payment_methods WHERE organization_id = ?")
+          .get(orgId) as { cnt: number };
+        if (pmCount.cnt === 0) {
+          db.prepare(`
+            INSERT INTO payment_methods (id, organization_id, brand, last4, exp_month, exp_year, cardholder_name, is_default)
+            VALUES (?, ?, 'VISA', '4242', '08', '2029', 'Dr. Sarah Lee', 1)
+          `).run("pm_" + randomBytes(5).toString("hex"), orgId);
+
+          db.prepare(`
+            INSERT INTO payment_methods (id, organization_id, brand, last4, exp_month, exp_year, cardholder_name, is_default)
+            VALUES (?, ?, 'MASTERCARD', '8819', '11', '2028', 'Healing Hands Clinic', 0)
+          `).run("pm_" + randomBytes(5).toString("hex"), orgId);
+        }
+
+        const insertInv = db.prepare(`
+          INSERT INTO billing_invoices (
+            id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, status, card_summary, failure_reason, invoice_date, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        insertInv.run(
+          `INV-2026-1101-${orgId.slice(-3)}`,
+          orgId,
+          "Growth Plan",
+          "monthly",
+          9900,
+          "$99.00 AUD",
+          "Paid",
+          "VISA •••• 4242",
+          null,
+          "Nov 01, 2026",
+          "2026-11-01T09:00:00.000Z"
+        );
+        insertInv.run(
+          `INV-2026-1015-${orgId.slice(-3)}`,
+          orgId,
+          "Growth Plan",
+          "monthly",
+          9900,
+          "$99.00 AUD",
+          "Failed",
+          "MASTERCARD •••• 0000",
+          "Card declined by issuer (insufficient funds)",
+          "Oct 15, 2026",
+          "2026-10-15T09:00:00.000Z"
+        );
+        insertInv.run(
+          `INV-2026-1001-${orgId.slice(-3)}`,
+          orgId,
+          "Growth Plan",
+          "monthly",
+          9900,
+          "$99.00 AUD",
+          "Paid",
+          "VISA •••• 4242",
+          null,
+          "Oct 01, 2026",
+          "2026-10-01T09:00:00.000Z"
+        );
+      });
+    }
+
+    const pmRows = db
+      .prepare(`
+        SELECT id, brand, last4, exp_month, exp_year, cardholder_name, is_default
+        FROM payment_methods
+        WHERE organization_id = ?
+        ORDER BY is_default DESC, created_at DESC
+      `)
+      .all(orgId) as any[];
+
+    const paymentMethods: DashboardPaymentMethod[] = pmRows.map((p) => ({
+      id: String(p.id),
+      brand: (p.brand === "MASTERCARD" || p.brand === "AMEX" ? p.brand : "VISA") as "VISA" | "MASTERCARD" | "AMEX",
+      last4: String(p.last4),
+      expMonth: String(p.exp_month),
+      expYear: String(p.exp_year),
+      cardholderName: String(p.cardholder_name || "Clinic Account"),
+      isDefault: p.is_default === 1,
+    }));
+
+    const invRows = db
+      .prepare(`
+        SELECT id, plan_name, billing_cycle, amount_cents, amount_formatted, status, card_summary, failure_reason, invoice_date
+        FROM billing_invoices
+        WHERE organization_id = ?
+        ORDER BY created_at DESC
+      `)
+      .all(orgId) as any[];
+
+    const invoices: DashboardBillingInvoice[] = invRows.map((inv) => ({
+      id: String(inv.id).replace(/-[a-zA-Z0-9]{3}$/, ""),
+      planName: String(inv.plan_name),
+      billingCycle: (inv.billing_cycle === "biannual" || inv.billing_cycle === "annual"
+        ? inv.billing_cycle
+        : "monthly") as "monthly" | "biannual" | "annual",
+      amountCents: Number(inv.amount_cents),
+      amountFormatted: String(inv.amount_formatted),
+      status: inv.status === "Failed" ? "Failed" : "Paid",
+      cardSummary: inv.card_summary ? String(inv.card_summary) : null,
+      failureReason: inv.failure_reason ? String(inv.failure_reason) : null,
+      invoiceDate: String(inv.invoice_date),
+    }));
+
+    return {
+      plan,
+      billingCycle,
+      paymentMethods,
+      invoices,
+    };
+  }
+
+  /**
+   * Upgrades, downgrades, or switches billing cycle (monthly, biannual, annual) and charges the default card.
+   */
+  public static updateSubscription(
+    orgId: string,
+    targetPlan: "starter" | "growth" | "scale",
+    targetCycle: "monthly" | "biannual" | "annual",
+    simulateFailedCharge = false
+  ): { billing: DashboardBillingData; chargedInvoice: DashboardBillingInvoice; chargeSucceeded: boolean; message: string } {
+    const monthlyBase: Record<"starter" | "growth" | "scale", number> = {
+      starter: 49,
+      growth: 99,
+      scale: 249,
+    };
+    const base = monthlyBase[targetPlan] || 99;
+    // Monthly = 1x base, Bi-Annual (6 months) = 10% off * 6 months, Annual (12 months) = 20% off * 12 months
+    const perMonthEffective =
+      targetCycle === "biannual"
+        ? Math.round(base * 0.9)
+        : targetCycle === "annual"
+        ? Math.round(base * 0.8)
+        : base;
+    const monthsMultiplier = targetCycle === "biannual" ? 6 : targetCycle === "annual" ? 12 : 1;
+    const totalDollars = perMonthEffective * monthsMultiplier;
+    const amountCents = totalDollars * 100;
+    const amountFormatted = `$${totalDollars.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AUD`;
+
+    const planLabel =
+      targetPlan === "starter" ? "Starter Plan" : targetPlan === "scale" ? "Scale Plan" : "Growth Plan";
+    const cycleLabel =
+      targetCycle === "biannual" ? "Bi-Annual (6 Months)" : targetCycle === "annual" ? "Annual (12 Months)" : "Monthly";
+
+    // Check default payment method
+    const defaultCard = db
+      .prepare(`SELECT brand, last4 FROM payment_methods WHERE organization_id = ? AND is_default = 1 LIMIT 1`)
+      .get(orgId) as { brand: string; last4: string } | undefined;
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+    const invId = `INV-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${randomBytes(2).toString("hex").toUpperCase()}`;
+
+    const isDeclinedCard = defaultCard && (defaultCard.last4 === "0000" || defaultCard.last4 === "9999");
+    if (!defaultCard || isDeclinedCard || simulateFailedCharge) {
+      const failReason = !defaultCard
+        ? "No default payment method on file"
+        : "Card declined by issuer during subscription charge";
+      const cardSummary = defaultCard ? `${defaultCard.brand} •••• ${defaultCard.last4}` : "No Card on File";
+
+      db.prepare(`
+        INSERT INTO billing_invoices (
+          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, status, card_summary, failure_reason, invoice_date, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'Failed', ?, ?, ?, ?)
+      `).run(invId, orgId, `${planLabel} (${cycleLabel})`, targetCycle, amountCents, amountFormatted, cardSummary, failReason, dateStr, now.toISOString());
+
+      const billing = this.getBillingData(orgId);
+      return {
+        billing,
+        chargedInvoice: billing.invoices[0],
+        chargeSucceeded: false,
+        message: `Payment failed (${amountFormatted}): ${failReason}. Failed invoice ${invId} recorded.`,
+      };
+    }
+
+    const cardSummary = `${defaultCard.brand} •••• ${defaultCard.last4}`;
+    withTransaction(() => {
+      db.prepare(`UPDATE organizations SET plan = ?, billing_cycle = ? WHERE id = ?`).run(
+        targetPlan,
+        targetCycle,
+        orgId
+      );
+
+      db.prepare(`
+        INSERT INTO billing_invoices (
+          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, status, card_summary, failure_reason, invoice_date, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'Paid', ?, NULL, ?, ?)
+      `).run(invId, orgId, `${planLabel} (${cycleLabel})`, targetCycle, amountCents, amountFormatted, cardSummary, dateStr, now.toISOString());
+    });
+
+    const billing = this.getBillingData(orgId);
+    return {
+      billing,
+      chargedInvoice: billing.invoices[0],
+      chargeSucceeded: true,
+      message: `Subscription updated to ${planLabel} (${cycleLabel}) — Charged ${amountFormatted} to ${cardSummary}.`,
+    };
+  }
+
+  /**
+   * Adds a new payment method and optionally sets it as default.
+   */
+  public static addPaymentMethod(
+    orgId: string,
+    params: {
+      brand?: string;
+      cardNumber: string;
+      expMonth: string;
+      expYear: string;
+      cardholderName: string;
+      setAsDefault?: boolean;
+    }
+  ): DashboardBillingData {
+    const digits = (params.cardNumber || "").replace(/\D/g, "");
+    if (digits.length < 4) {
+      throw new ValidationError("Please enter at least the last 4 digits of the card number.");
+    }
+    const last4 = digits.slice(-4);
+    let brand: "VISA" | "MASTERCARD" | "AMEX" = "VISA";
+    if (params.brand === "MASTERCARD" || params.brand === "AMEX" || params.brand === "VISA") {
+      brand = params.brand;
+    } else if (digits.startsWith("5") || digits.startsWith("2")) {
+      brand = "MASTERCARD";
+    } else if (digits.startsWith("3")) {
+      brand = "AMEX";
+    }
+
+    const expMonth = String(params.expMonth || "12").padStart(2, "0");
+    const rawYear = String(params.expYear || "2029").trim();
+    const expYear = rawYear.length === 2 ? `20${rawYear}` : rawYear;
+    const holder = (params.cardholderName || "Clinic Account").trim();
+
+    const existingCount = db
+      .prepare("SELECT COUNT(*) as cnt FROM payment_methods WHERE organization_id = ?")
+      .get(orgId) as { cnt: number };
+    const makeDefault = params.setAsDefault !== false || existingCount.cnt === 0;
+
+    withTransaction(() => {
+      if (makeDefault) {
+        db.prepare("UPDATE payment_methods SET is_default = 0 WHERE organization_id = ?").run(orgId);
+      }
+      db.prepare(`
+        INSERT INTO payment_methods (id, organization_id, brand, last4, exp_month, exp_year, cardholder_name, is_default)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run("pm_" + randomBytes(5).toString("hex"), orgId, brand, last4, expMonth, expYear, holder, makeDefault ? 1 : 0);
+    });
+
+    return this.getBillingData(orgId);
+  }
+
+  /**
+   * Marks a payment method as default for the organization.
+   */
+  public static setDefaultPaymentMethod(orgId: string, paymentMethodId: string): DashboardBillingData {
+    const existing = db
+      .prepare("SELECT id FROM payment_methods WHERE id = ? AND organization_id = ?")
+      .get(paymentMethodId, orgId);
+    if (!existing) {
+      throw new NotFoundError("Payment method not found.");
+    }
+
+    withTransaction(() => {
+      db.prepare("UPDATE payment_methods SET is_default = 0 WHERE organization_id = ?").run(orgId);
+      db.prepare("UPDATE payment_methods SET is_default = 1 WHERE id = ? AND organization_id = ?").run(
+        paymentMethodId,
+        orgId
+      );
+    });
+
+    return this.getBillingData(orgId);
+  }
+
+  /**
+   * Deletes a payment method; if it was default, promotes the next available card to default.
+   */
+  public static deletePaymentMethod(orgId: string, paymentMethodId: string): DashboardBillingData {
+    const existing = db
+      .prepare("SELECT id, is_default FROM payment_methods WHERE id = ? AND organization_id = ?")
+      .get(paymentMethodId, orgId) as { id: string; is_default: number } | undefined;
+    if (!existing) {
+      throw new NotFoundError("Payment method not found.");
+    }
+
+    withTransaction(() => {
+      db.prepare("DELETE FROM payment_methods WHERE id = ? AND organization_id = ?").run(paymentMethodId, orgId);
+
+      if (existing.is_default === 1) {
+        const nextCard = db
+          .prepare("SELECT id FROM payment_methods WHERE organization_id = ? ORDER BY created_at DESC LIMIT 1")
+          .get(orgId) as { id: string } | undefined;
+        if (nextCard) {
+          db.prepare("UPDATE payment_methods SET is_default = 1 WHERE id = ?").run(nextCard.id);
+        }
+      }
+    });
+
+    return this.getBillingData(orgId);
   }
 
   /**

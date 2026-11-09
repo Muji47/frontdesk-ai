@@ -255,6 +255,51 @@ try {
 }
 }
 
+// Ensure Billing tables & columns exist (safe to run idempotently across hot reloads)
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS payment_methods (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      brand TEXT NOT NULL DEFAULT 'VISA',
+      last4 TEXT NOT NULL,
+      exp_month TEXT NOT NULL,
+      exp_year TEXT NOT NULL,
+      cardholder_name TEXT NOT NULL DEFAULT 'Clinic Account',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_payment_methods_org ON payment_methods(organization_id);
+
+    CREATE TABLE IF NOT EXISTS billing_invoices (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      plan_name TEXT NOT NULL,
+      billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+      amount_cents INTEGER NOT NULL,
+      amount_formatted TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Paid',
+      card_summary TEXT,
+      failure_reason TEXT,
+      invoice_date TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_billing_invoices_org ON billing_invoices(organization_id, created_at DESC);
+  `);
+
+  const orgCols = db.prepare("PRAGMA table_info(organizations)").all() as { name: string }[];
+  const orgColNames = new Set(orgCols.map((c) => c.name));
+  if (!orgColNames.has("billing_cycle")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN billing_cycle TEXT NOT NULL DEFAULT 'monthly'");
+  }
+} catch (err) {
+  console.error("Billing schema migration warning:", err);
+}
+
 /**
  * Executes a function within an atomic SQLite transaction.
  * Automatically rolls back on uncaught errors.

@@ -10,6 +10,8 @@ import type {
   DashboardConversation,
   DashboardUnansweredQuestion,
   DashboardKnowledgeSource,
+  DashboardBillingData,
+  DashboardBillingInvoice,
   ConversationMessage,
 } from "@/server/services/dashboard.service";
 
@@ -177,6 +179,31 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [analyticsTimeframe, setAnalyticsTimeframe] = useState<"24h" | "7d" | "30d" | "all">("7d");
   const [exportingCsv, setExportingCsv] = useState<boolean>(false);
   const [copiedEmbed, setCopiedEmbed] = useState<boolean>(false);
+
+  // Billing, Subscription Cycles, Payment Methods & Invoice Modal State
+  const [billingState, setBillingState] = useState<DashboardBillingData>(
+    initialData.billing || {
+      plan: (user.plan as "starter" | "growth" | "scale") || "growth",
+      billingCycle: "monthly",
+      paymentMethods: [],
+      invoices: [],
+    }
+  );
+  const [selectedCycle, setSelectedCycle] = useState<"monthly" | "biannual" | "annual">(
+    initialData.billing?.billingCycle || "monthly"
+  );
+  const [isUpdatingPlan, setIsUpdatingPlan] = useState<string | null>(null);
+  const [billingNotice, setBillingNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [showAddCardModal, setShowAddCardModal] = useState<boolean>(false);
+  const [cardBrand, setCardBrand] = useState<"VISA" | "MASTERCARD" | "AMEX">("VISA");
+  const [cardHolder, setCardHolder] = useState<string>(user.name || "Dr. Sarah Lee");
+  const [cardNumber, setCardNumber] = useState<string>("");
+  const [cardExpMonth, setCardExpMonth] = useState<string>("08");
+  const [cardExpYear, setCardExpYear] = useState<string>("2029");
+  const [cardSetDefault, setCardSetDefault] = useState<boolean>(true);
+  const [isSavingCard, setIsSavingCard] = useState<boolean>(false);
+  const [busyCardId, setBusyCardId] = useState<string | null>(null);
+  const [viewingInvoice, setViewingInvoice] = useState<DashboardBillingInvoice | null>(null);
 
   // Connect to SSE real-time socket stream (multiplexed across tabs via BroadcastChannel to prevent HTTP/1.1 connection pool exhaustion)
   useEffect(() => {
@@ -776,6 +803,120 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     setTimeout(() => setCopiedEmbed(false), 2500);
   };
 
+  async function handleUpdateSubscription(
+    targetPlan: "starter" | "growth" | "scale",
+    targetCycle: "monthly" | "biannual" | "annual",
+    simulateFailedCharge = false
+  ) {
+    setIsUpdatingPlan(`${targetPlan}_${targetCycle}`);
+    setBillingNotice(null);
+    try {
+      const res = await fetch("/api/dashboard/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_subscription",
+          plan: targetPlan,
+          billingCycle: targetCycle,
+          simulateFailedCharge,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update subscription");
+
+      if (data.billing) {
+        setBillingState(data.billing);
+        setSelectedCycle(data.billing.billingCycle);
+      }
+      setBillingNotice({
+        type: data.chargeSucceeded ? "success" : "error",
+        text: data.message || (data.chargeSucceeded ? "Plan updated." : "Payment failed."),
+      });
+    } catch (err: any) {
+      setBillingNotice({ type: "error", text: err.message || "Unable to update subscription." });
+    } finally {
+      setIsUpdatingPlan(null);
+    }
+  }
+
+  async function handleAddPaymentMethod(e: React.FormEvent) {
+    e.preventDefault();
+    if (!cardNumber.trim()) return;
+    setIsSavingCard(true);
+    setBillingNotice(null);
+    try {
+      const res = await fetch("/api/dashboard/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "add_payment_method",
+          brand: cardBrand,
+          cardNumber,
+          expMonth: cardExpMonth,
+          expYear: cardExpYear,
+          cardholderName: cardHolder,
+          setAsDefault: cardSetDefault,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to add payment method");
+      if (data.billing) setBillingState(data.billing);
+      setCardNumber("");
+      setShowAddCardModal(false);
+      setBillingNotice({ type: "success", text: "New payment method saved." });
+    } catch (err: any) {
+      setBillingNotice({ type: "error", text: err.message || "Failed to add card." });
+    } finally {
+      setIsSavingCard(false);
+    }
+  }
+
+  async function handleSetDefaultCard(paymentMethodId: string) {
+    setBusyCardId(paymentMethodId);
+    setBillingNotice(null);
+    try {
+      const res = await fetch("/api/dashboard/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "set_default_payment_method",
+          paymentMethodId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to set default card");
+      if (data.billing) setBillingState(data.billing);
+      setBillingNotice({ type: "success", text: "Default payment method updated." });
+    } catch (err: any) {
+      setBillingNotice({ type: "error", text: err.message || "Failed to update default card." });
+    } finally {
+      setBusyCardId(null);
+    }
+  }
+
+  async function handleDeleteCard(paymentMethodId: string) {
+    setBusyCardId(paymentMethodId);
+    setBillingNotice(null);
+    try {
+      const res = await fetch("/api/dashboard/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete_payment_method",
+          paymentMethodId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete card");
+      if (data.billing) setBillingState(data.billing);
+      setBillingNotice({ type: "success", text: "Payment method removed." });
+    } catch (err: any) {
+      setBillingNotice({ type: "error", text: err.message || "Failed to delete card." });
+    } finally {
+      setBusyCardId(null);
+    }
+  }
+
   const navItems = [
     { id: "overview", icon: "▦", label: "Overview" },
     { id: "agent", icon: "🤖", label: "AI Receptionist" },
@@ -819,7 +960,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             <div className="text-[11px] text-slate-500 capitalize flex items-center justify-between mt-0.5">
               <span>{user.industry}</span>
               <span className="rounded bg-indigo-50 px-1.5 py-0.2 text-[10px] font-bold text-indigo-700 uppercase">
-                {user.plan}
+                {billingState.plan}
               </span>
             </div>
           </div>
@@ -2573,128 +2714,679 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         )}
 
         {/* ===================== TAB: BILLING ===================== */}
-        {activeTab === "billing" && (
-          <div className="space-y-6 max-w-4xl">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">Billing & Subscription Management</h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Manage your subscription tier, usage quotas, payment methods, and invoice history.
-              </p>
-            </div>
+        {activeTab === "billing" && (() => {
+          const planCatalog: Array<{
+            id: "starter" | "growth" | "scale";
+            name: string;
+            tagline: string;
+            baseMonthly: number;
+            convLimit: number;
+            seatsLimit: number;
+            features: string[];
+          }> = [
+            {
+              id: "starter",
+              name: "Starter",
+              tagline: "Solo practitioners & single-site front desks",
+              baseMonthly: 49,
+              convLimit: 500,
+              seatsLimit: 1,
+              features: ["500 AI conversations / mo", "1 Staff seat", "Website embed widget", "Email & live inbox handover"],
+            },
+            {
+              id: "growth",
+              name: "Growth",
+              tagline: "Multi-practitioner clinics & high-volume reception",
+              baseMonthly: 99,
+              convLimit: 2000,
+              seatsLimit: 3,
+              features: ["2,000 AI conversations / mo", "3 Staff seats", "Cliniko & Shopify 2-way sync", "Self-learning Q&A approval queue"],
+            },
+            {
+              id: "scale",
+              name: "Scale",
+              tagline: "Multi-location clinic groups & enterprise SLAs",
+              baseMonthly: 249,
+              convLimit: 10000,
+              seatsLimit: 10,
+              features: ["10,000 AI conversations / mo", "10 Staff seats", "Priority SLA & custom webhooks", "Dedicated multi-site analytics"],
+            },
+          ];
 
-            {/* Current Plan Card */}
-            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/60 via-white to-slate-50 p-6 shadow-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          const tierOrder: Record<"starter" | "growth" | "scale", number> = {
+            starter: 1,
+            growth: 2,
+            scale: 3,
+          };
+
+          const getCyclePricing = (baseMonthly: number, cycle: "monthly" | "biannual" | "annual") => {
+            const perMonth =
+              cycle === "biannual"
+                ? Math.round(baseMonthly * 0.9)
+                : cycle === "annual"
+                ? Math.round(baseMonthly * 0.8)
+                : baseMonthly;
+            const months = cycle === "biannual" ? 6 : cycle === "annual" ? 12 : 1;
+            const totalCharge = perMonth * months;
+            const cycleLabel =
+              cycle === "biannual" ? "Bi-Annual (6 Months)" : cycle === "annual" ? "Annual (12 Months)" : "Monthly";
+            const cycleShort =
+              cycle === "biannual" ? "/ 6 months" : cycle === "annual" ? "/ year" : "/ month";
+            return { perMonth, months, totalCharge, cycleLabel, cycleShort };
+          };
+
+          const activePlanMeta = planCatalog.find((p) => p.id === billingState.plan) || planCatalog[1];
+          const activePricing = getCyclePricing(activePlanMeta.baseMonthly, billingState.billingCycle);
+          const defaultCard = billingState.paymentMethods.find((pm) => pm.isDefault);
+
+          return (
+            <div className="space-y-6 max-w-5xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
-                    Current Active Plan
-                  </span>
-                  <h3 className="text-2xl font-black text-slate-900 mt-1 capitalize">{user.plan} Plan</h3>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Autonomous AI receptionist with Cliniko practice integration, booking automation, and live escalation handover.
+                  <h2 className="text-lg font-bold text-slate-900">Billing & Subscription Management</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Upgrade or downgrade plans, switch between Monthly, Bi-Annual, and Annual billing cycles, manage cards, and review invoices.
                   </p>
                 </div>
-                <div className="sm:text-right">
-                  <div className="text-2xl font-black text-slate-900">$99<span className="text-xs font-normal text-slate-500"> / month</span></div>
-                  <span className="text-[11px] text-emerald-600 font-semibold block mt-0.5">Renews Nov 28, 2026</span>
-                </div>
+                <button
+                  onClick={() => handleUpdateSubscription(billingState.plan, selectedCycle, true)}
+                  disabled={Boolean(isUpdatingPlan)}
+                  className="self-start sm:self-auto rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-800 hover:bg-amber-100 transition cursor-pointer"
+                  title="Simulate a declined card charge to verify Failed invoice behavior"
+                >
+                  ⚡ Test Failed Charge
+                </button>
               </div>
 
-              {/* Usage Quotas */}
-              <div className="mt-6 pt-6 border-t border-indigo-100/80 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-                <div>
-                  <div className="flex justify-between text-slate-600 font-medium mb-1">
-                    <span>Monthly Conversations</span>
-                    <b className="text-slate-900">{totalConvs} / 2,000</b>
-                  </div>
-                  <div className="h-2 w-full rounded-full bg-indigo-100 overflow-hidden">
-                    <div
-                      className="h-full bg-indigo-600 rounded-full"
-                      style={{ width: `${Math.min(100, Math.max(5, (totalConvs / 2000) * 100))}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-slate-400 mt-1 block">{(2000 - totalConvs).toLocaleString()} remaining</span>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-slate-600 font-medium mb-1">
-                    <span>Staff Team Seats</span>
-                    <b className="text-slate-900">1 / 3 Seats</b>
-                  </div>
-                  <div className="h-2 w-full rounded-full bg-indigo-100 overflow-hidden">
-                    <div className="h-full bg-indigo-600 rounded-full" style={{ width: "33%" }} />
-                  </div>
-                  <span className="text-[10px] text-slate-400 mt-1 block">2 seats available</span>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-slate-600 font-medium mb-1">
-                    <span>Practice Integrations</span>
-                    <b className="text-slate-900">{initialData.integrations.length} Active</b>
-                  </div>
-                  <div className="h-2 w-full rounded-full bg-indigo-100 overflow-hidden">
-                    <div className="h-full bg-emerald-500 rounded-full" style={{ width: "100%" }} />
-                  </div>
-                  <span className="text-[10px] text-emerald-600 font-medium mt-1 block">Cliniko 2-Way Sync</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Payment Method & Invoices */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Payment Card */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 mb-1">Payment Method</h3>
-                  <p className="text-xs text-slate-500 mb-4">Card charged automatically every monthly cycle</p>
-
-                  <div className="flex items-center gap-3 p-3.5 rounded-xl border border-slate-200 bg-slate-50/50">
-                    <div className="h-8 w-12 rounded bg-slate-900 text-white font-bold text-[11px] flex items-center justify-center tracking-wider">
-                      VISA
-                    </div>
-                    <div>
-                      <b className="text-xs text-slate-900 font-bold block">Visa ending in 4242</b>
-                      <span className="text-[11px] text-slate-500">Expires 08/2029 • Default</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-xs text-slate-500">Auto-billing active</span>
-                  <button className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 transition">
-                    Update Payment Method
+              {billingNotice && (
+                <div
+                  className={`rounded-xl border p-3.5 text-xs font-semibold flex items-center justify-between gap-3 ${
+                    billingNotice.type === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                      : "border-red-200 bg-red-50 text-red-900"
+                  }`}
+                >
+                  <span>
+                    {billingNotice.type === "success" ? "✓ " : "⚠️ "}
+                    {billingNotice.text}
+                  </span>
+                  <button
+                    onClick={() => setBillingNotice(null)}
+                    className="text-slate-400 hover:text-slate-700 font-bold px-1.5"
+                  >
+                    ✕
                   </button>
                 </div>
-              </div>
+              )}
 
-              {/* Invoices List */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-                <h3 className="text-sm font-bold text-slate-900 mb-1">Billing Invoices</h3>
-                <p className="text-xs text-slate-500 mb-4">Past statements and tax receipts</p>
-
-                <div className="space-y-2.5">
-                  {[
-                    { id: "INV-2026-11-01", date: "Nov 01, 2026", amount: "$99.00 AUD", status: "Paid" },
-                    { id: "INV-2026-10-01", date: "Oct 01, 2026", amount: "$99.00 AUD", status: "Paid" },
-                  ].map((inv) => (
-                    <div key={inv.id} className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 text-xs">
-                      <div>
-                        <b className="font-semibold text-slate-900 block">{inv.id}</b>
-                        <span className="text-[11px] text-slate-400">{inv.date}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-900">{inv.amount}</span>
-                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
-                          {inv.status}
-                        </span>
-                      </div>
+              {/* Current Plan Summary Card */}
+              <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/60 via-white to-slate-50 p-6 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-100 px-2.5 py-0.5 rounded-full">
+                        Current Active Plan
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                        {activePricing.cycleLabel}
+                      </span>
                     </div>
-                  ))}
+                    <h3 className="text-2xl font-black text-slate-900 mt-1.5 capitalize">
+                      {activePlanMeta.name} Plan
+                    </h3>
+                    <p className="text-xs text-slate-600 mt-1">{activePlanMeta.tagline}</p>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="text-2xl font-black text-slate-900">
+                      ${activePricing.totalCharge.toLocaleString()} AUD
+                      <span className="text-xs font-normal text-slate-500"> {activePricing.cycleShort}</span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 block mt-0.5">
+                      Effective rate: <b>${activePricing.perMonth}/mo</b> •{" "}
+                      {defaultCard ? `Charged to ${defaultCard.brand} •••• ${defaultCard.last4}` : "No default card on file"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Usage Quotas */}
+                <div className="mt-6 pt-6 border-t border-indigo-100/80 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <div className="flex justify-between text-slate-600 font-medium mb-1">
+                      <span>Monthly Conversations</span>
+                      <b className="text-slate-900">
+                        {totalConvs} / {activePlanMeta.convLimit.toLocaleString()}
+                      </b>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-indigo-100 overflow-hidden">
+                      <div
+                        className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                        style={{
+                          width: `${Math.min(100, Math.max(4, (totalConvs / activePlanMeta.convLimit) * 100))}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      {Math.max(0, activePlanMeta.convLimit - totalConvs).toLocaleString()} remaining
+                    </span>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-slate-600 font-medium mb-1">
+                      <span>Staff Team Seats</span>
+                      <b className="text-slate-900">1 / {activePlanMeta.seatsLimit} Seats</b>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-indigo-100 overflow-hidden">
+                      <div
+                        className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                        style={{ width: `${Math.round((1 / activePlanMeta.seatsLimit) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      {Math.max(0, activePlanMeta.seatsLimit - 1)} seats available
+                    </span>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-slate-600 font-medium mb-1">
+                      <span>Practice Integrations</span>
+                      <b className="text-slate-900">{initialData.integrations.length} Active</b>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-indigo-100 overflow-hidden">
+                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: "100%" }} />
+                    </div>
+                    <span className="text-[10px] text-emerald-600 font-medium mt-1 block">Cliniko 2-Way Sync</span>
+                  </div>
                 </div>
               </div>
+
+              {/* Plan Upgrade / Downgrade & Billing Cycle Selector (Monthly / Bi-Annual / Annual) */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-5">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Upgrade, Downgrade & Billing Cycle</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Select a billing cycle and plan tier below. Switching immediately charges the selected cycle amount to your default payment method.
+                    </p>
+                  </div>
+
+                  {/* Billing Cycle Toggle: Monthly | Bi-Annual | Annual */}
+                  <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 text-xs self-start">
+                    {(
+                      [
+                        { id: "monthly", label: "Monthly", badge: null },
+                        { id: "biannual", label: "Bi-Annual (6 Mo)", badge: "-10%" },
+                        { id: "annual", label: "Annual (12 Mo)", badge: "-20%" },
+                      ] as const
+                    ).map((cycleOpt) => {
+                      const active = selectedCycle === cycleOpt.id;
+                      return (
+                        <button
+                          key={cycleOpt.id}
+                          type="button"
+                          onClick={() => setSelectedCycle(cycleOpt.id)}
+                          className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                            active
+                              ? "bg-white text-indigo-700 shadow-xs"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          <span>{cycleOpt.label}</span>
+                          {cycleOpt.badge && (
+                            <span
+                              className={`rounded-full px-1.5 py-0.2 text-[10px] font-extrabold ${
+                                active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-700"
+                              }`}
+                            >
+                              {cycleOpt.badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 3 Plan Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {planCatalog.map((tier) => {
+                    const pricing = getCyclePricing(tier.baseMonthly, selectedCycle);
+                    const isExactCurrent =
+                      billingState.plan === tier.id && billingState.billingCycle === selectedCycle;
+                    const isSamePlanDifferentCycle =
+                      billingState.plan === tier.id && billingState.billingCycle !== selectedCycle;
+                    const isUpgrade = tierOrder[tier.id] > tierOrder[billingState.plan];
+                    const isDowngrade = tierOrder[tier.id] < tierOrder[billingState.plan];
+                    const btnLoading = isUpdatingPlan === `${tier.id}_${selectedCycle}`;
+
+                    let ctaLabel = `Select ${tier.name}`;
+                    if (isExactCurrent) {
+                      ctaLabel = "✓ Current Plan & Cycle";
+                    } else if (isSamePlanDifferentCycle) {
+                      ctaLabel = `Switch to ${
+                        selectedCycle === "biannual"
+                          ? "Bi-Annual"
+                          : selectedCycle === "annual"
+                          ? "Annual"
+                          : "Monthly"
+                      } ($${pricing.totalCharge.toLocaleString()} AUD)`;
+                    } else if (isUpgrade) {
+                      ctaLabel = `Upgrade to ${tier.name} ($${pricing.totalCharge.toLocaleString()} AUD)`;
+                    } else if (isDowngrade) {
+                      ctaLabel = `Downgrade to ${tier.name} ($${pricing.totalCharge.toLocaleString()} AUD)`;
+                    }
+
+                    return (
+                      <div
+                        key={tier.id}
+                        className={`rounded-2xl border p-5 flex flex-col justify-between transition ${
+                          billingState.plan === tier.id
+                            ? "border-indigo-600 bg-indigo-50/20 ring-1 ring-indigo-600"
+                            : "border-slate-200 bg-white hover:border-slate-300"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <h4 className="text-base font-extrabold text-slate-900">{tier.name}</h4>
+                            {billingState.plan === tier.id && (
+                              <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                                Active Tier
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-1 min-h-[30px]">{tier.tagline}</p>
+
+                          <div className="mt-4 pt-4 border-t border-slate-100">
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-2xl font-black text-slate-900">${pricing.perMonth}</span>
+                              <span className="text-xs text-slate-500 font-medium">/ month</span>
+                            </div>
+                            <div className="text-[11px] font-semibold text-indigo-700 mt-0.5">
+                              {selectedCycle === "monthly"
+                                ? `Billed monthly ($${pricing.totalCharge}.00 AUD)`
+                                : selectedCycle === "biannual"
+                                ? `Billed every 6 months ($${pricing.totalCharge.toLocaleString()}.00 AUD)`
+                                : `Billed annually ($${pricing.totalCharge.toLocaleString()}.00 AUD)`}
+                            </div>
+                          </div>
+
+                          <ul className="mt-4 space-y-2 text-xs text-slate-600">
+                            {tier.features.map((feat) => (
+                              <li key={feat} className="flex items-center gap-2">
+                                <span className="text-emerald-600 font-bold">✓</span>
+                                <span>{feat}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={isExactCurrent || Boolean(isUpdatingPlan)}
+                          onClick={() => handleUpdateSubscription(tier.id, selectedCycle, false)}
+                          className={`mt-5 w-full rounded-xl px-3.5 py-2.5 text-xs font-bold transition cursor-pointer ${
+                            isExactCurrent
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default"
+                              : isUpgrade || isSamePlanDifferentCycle
+                              ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs"
+                              : "bg-slate-900 text-white hover:bg-slate-800 shadow-xs"
+                          } disabled:opacity-60`}
+                        >
+                          {btnLoading ? "Processing Charge..." : ctaLabel}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Payment Methods & Billing Invoices Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Payment Methods Card */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <h3 className="text-sm font-bold text-slate-900">Payment Methods</h3>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddCardModal((v) => !v)}
+                        className="rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 text-xs font-bold transition cursor-pointer"
+                      >
+                        {showAddCardModal ? "Cancel" : "+ Add Payment Method"}
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Default card is charged automatically on plan updates and renewal cycles.
+                    </p>
+
+                    {/* Add Card Inline Form */}
+                    {showAddCardModal && (
+                      <form
+                        onSubmit={handleAddPaymentMethod}
+                        className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3 text-xs"
+                      >
+                        <div className="font-bold text-slate-900">Add New Credit / Debit Card</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">Brand</label>
+                            <select
+                              value={cardBrand}
+                              onChange={(e) => setCardBrand(e.target.value as "VISA" | "MASTERCARD" | "AMEX")}
+                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
+                            >
+                              <option value="VISA">VISA</option>
+                              <option value="MASTERCARD">MASTERCARD</option>
+                              <option value="AMEX">AMEX</option>
+                            </select>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                              Cardholder Name
+                            </label>
+                            <input
+                              type="text"
+                              value={cardHolder}
+                              onChange={(e) => setCardHolder(e.target.value)}
+                              placeholder="Dr. Sarah Lee"
+                              required
+                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div className="sm:col-span-2">
+                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                              Card Number (use 0000 to test declined card)
+                            </label>
+                            <input
+                              type="text"
+                              value={cardNumber}
+                              onChange={(e) => setCardNumber(e.target.value)}
+                              placeholder="4242 •••• •••• 5512"
+                              required
+                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-600 mb-1">MM</label>
+                              <input
+                                type="text"
+                                maxLength={2}
+                                value={cardExpMonth}
+                                onChange={(e) => setCardExpMonth(e.target.value)}
+                                placeholder="08"
+                                required
+                                className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-600"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-600 mb-1">YYYY</label>
+                              <input
+                                type="text"
+                                maxLength={4}
+                                value={cardExpYear}
+                                onChange={(e) => setCardExpYear(e.target.value)}
+                                placeholder="2029"
+                                required
+                                className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-600"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={cardSetDefault}
+                              onChange={(e) => setCardSetDefault(e.target.checked)}
+                              className="rounded border-slate-300 text-indigo-600"
+                            />
+                            <span>Set as default payment method</span>
+                          </label>
+                          <button
+                            type="submit"
+                            disabled={isSavingCard}
+                            className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
+                          >
+                            {isSavingCard ? "Saving..." : "Save Card"}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Saved Payment Methods List */}
+                    {billingState.paymentMethods.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">
+                        No payment methods on file. Click <b>+ Add Payment Method</b> above to add a card.
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {billingState.paymentMethods.map((pm) => (
+                          <div
+                            key={pm.id}
+                            className={`flex items-center justify-between gap-3 p-3.5 rounded-xl border transition ${
+                              pm.isDefault
+                                ? "border-indigo-200 bg-indigo-50/30"
+                                : "border-slate-200 bg-slate-50/50"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className={`h-8 w-14 shrink-0 rounded font-bold text-[10px] flex items-center justify-center tracking-wider text-white ${
+                                  pm.brand === "MASTERCARD"
+                                    ? "bg-amber-600"
+                                    : pm.brand === "AMEX"
+                                    ? "bg-sky-700"
+                                    : "bg-slate-900"
+                                }`}
+                              >
+                                {pm.brand}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <b className="text-xs text-slate-900 font-bold truncate">
+                                    {pm.brand} ending in {pm.last4}
+                                  </b>
+                                  {pm.isDefault && (
+                                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                      Default
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[11px] text-slate-500 block truncate">
+                                  {pm.cardholderName} • Expires {pm.expMonth}/{pm.expYear}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {!pm.isDefault && (
+                                <button
+                                  type="button"
+                                  disabled={busyCardId === pm.id}
+                                  onClick={() => handleSetDefaultCard(pm.id)}
+                                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 transition cursor-pointer"
+                                >
+                                  Set Default
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={busyCardId === pm.id}
+                                onClick={() => handleDeleteCard(pm.id)}
+                                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-red-600 hover:border-red-200 hover:bg-red-50 transition cursor-pointer"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
+                    <span className="text-xs text-slate-500">
+                      {defaultCard ? `Auto-billing active (${defaultCard.brand} •••• ${defaultCard.last4})` : "Auto-billing paused (no default card)"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddCardModal(true)}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 transition cursor-pointer"
+                    >
+                      Update Payment Method
+                    </button>
+                  </div>
+                </div>
+
+                {/* Billing Invoices List */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 mb-1">Billing Invoices</h3>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Past statements and tax receipts. Failed charges show status only without a receipt view button.
+                    </p>
+
+                    <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1 custom-scrollbar">
+                      {billingState.invoices.map((inv) => {
+                        const isFailed = inv.status === "Failed";
+                        return (
+                          <div
+                            key={inv.id}
+                            className={`flex items-center justify-between gap-3 p-3 rounded-xl border text-xs ${
+                              isFailed ? "border-red-200 bg-red-50/40" : "border-slate-100 bg-white"
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <b className="font-bold text-slate-900">{inv.id}</b>
+                                <span className="text-[11px] text-slate-500 truncate">• {inv.planName}</span>
+                              </div>
+                              <span className="text-[11px] text-slate-400 block mt-0.5">
+                                {inv.invoiceDate}
+                                {inv.cardSummary ? ` • ${inv.cardSummary}` : ""}
+                              </span>
+                              {isFailed && inv.failureReason && (
+                                <span className="text-[11px] text-red-600 font-medium block mt-0.5">
+                                  {inv.failureReason}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-bold text-slate-900">{inv.amountFormatted}</span>
+                              {isFailed ? (
+                                <span className="rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 border border-red-200">
+                                  Failed
+                                </span>
+                              ) : (
+                                <>
+                                  <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                    Paid
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewingInvoice(inv)}
+                                    className="rounded-lg border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 px-2.5 py-1 text-[11px] font-bold text-slate-700 transition cursor-pointer"
+                                  >
+                                    View Invoice
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tax Invoice / Receipt Modal (Only accessible for Paid invoices) */}
+              {viewingInvoice && viewingInvoice.status === "Paid" && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
+                  onClick={() => setViewingInvoice(null)}
+                >
+                  <div
+                    className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4 text-xs"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                          Paid Tax Invoice
+                        </span>
+                        <h4 className="text-base font-extrabold text-slate-900 mt-1">{viewingInvoice.id}</h4>
+                        <span className="text-[11px] text-slate-500">Issued on {viewingInvoice.invoiceDate}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setViewingInvoice(null)}
+                        className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 text-slate-600">
+                      <div className="flex justify-between">
+                        <span>Billed Organization:</span>
+                        <b className="text-slate-900">{user.orgName}</b>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Subscription Plan:</span>
+                        <b className="text-slate-900">{viewingInvoice.planName}</b>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Billing Cycle:</span>
+                        <b className="text-slate-900 capitalize">{viewingInvoice.billingCycle}</b>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Payment Method:</span>
+                        <b className="text-slate-900">{viewingInvoice.cardSummary || "Card on file"}</b>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-100 space-y-1.5">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Subtotal (excl. GST)</span>
+                        <span>${((viewingInvoice.amountCents / 100) * 0.9091).toFixed(2)} AUD</span>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <span>GST (10%)</span>
+                        <span>${((viewingInvoice.amountCents / 100) * 0.0909).toFixed(2)} AUD</span>
+                      </div>
+                      <div className="flex justify-between font-extrabold text-slate-900 text-sm pt-1.5 border-t border-slate-200">
+                        <span>Total Paid</span>
+                        <span>{viewingInvoice.amountFormatted}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => window.print()}
+                        className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                      >
+                        🖨️ Print Receipt
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setViewingInvoice(null)}
+                        className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition cursor-pointer"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
       </main>
     </div>
   );

@@ -671,9 +671,15 @@ export class DashboardService {
 
       if (scored.length > 0) {
         const top = scored[0].chunk;
-        const cleanContent = String(top.content)
+        const cleanTitle = String(top.chunkTitle || "")
           .replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "")
           .trim();
+        let cleanContent = String(top.content)
+          .replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "")
+          .trim();
+        if (cleanTitle && cleanContent.toLowerCase().startsWith(cleanTitle.toLowerCase())) {
+          cleanContent = cleanContent.slice(cleanTitle.length).trim();
+        }
 
         // If booking intent, combine practitioner/fee info with a helpful booking prompt
         if (/(book|booking|appointment|schedule|tomorrow|available)/.test(lowerQuery)) {
@@ -681,12 +687,18 @@ export class DashboardService {
           const feeChunk = chunks.find((c) => /fee|price|\$140|consultation/i.test(c.chunkTitle + " " + c.content));
           const parts: string[] = [];
           if (pracChunk) {
-            parts.push(String(pracChunk.content).replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "").trim());
+            const pTitle = String(pracChunk.chunkTitle || "").replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "").trim();
+            let pText = String(pracChunk.content).replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "").trim();
+            if (pTitle && pText.toLowerCase().startsWith(pTitle.toLowerCase())) pText = pText.slice(pTitle.length).trim();
+            parts.push(`Our practitioners are ${pText}`);
           }
           if (feeChunk && feeChunk !== pracChunk) {
-            parts.push(String(feeChunk.content).replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "").trim());
+            const feeMatch = String(feeChunk.content).match(/Consultation Fees:\s*([^\n.]+)/i);
+            if (feeMatch) {
+              parts.push(`Consultation fees are ${feeMatch[1].trim()}`);
+            }
           }
-          const combined = parts.length > 0 ? parts.join(" — ") : cleanContent;
+          const combined = parts.length > 0 ? parts.join(". ") : cleanContent;
           return {
             answer: `I can certainly help you book an appointment! ${combined}. Please share your preferred day/time and contact number, or our front desk can lock that in for you right away.`,
             sources: [String(top.sourceTitle || top.chunkTitle)],
@@ -694,8 +706,23 @@ export class DashboardService {
           };
         }
 
+        // Synthesize natural receptionist phrasing strictly from verified chunk content
+        let naturalAnswer = cleanContent;
+        if (/hicaps/i.test(lowerQuery) && /hicaps|on-the-spot|electronic claims/i.test(top.chunkTitle + " " + cleanContent)) {
+          naturalAnswer = `HICAPS is our on-the-spot electronic health fund claiming system at reception — it lets you claim your private health rebate immediately after your appointment. ${cleanContent}`;
+        } else if (/(doctor|dr\b|practitioner|physio|therapist|specialist|who|name)/.test(lowerQuery) && /sarah|david|practitioner/i.test(top.chunkTitle + " " + cleanContent)) {
+          naturalAnswer = `Our clinical practitioners are: ${cleanContent}.`;
+        } else if (/(fee|fees|price|pricing|cost|much|charge|consult)/.test(lowerQuery)) {
+          const feeMatch = cleanContent.match(/Consultation Fees:\s*([^\n.]+)/i);
+          if (feeMatch) {
+            naturalAnswer = `Our consultation fees are ${feeMatch[1].trim()}. (${cleanContent.replace(/Consultation Fees:.*$/i, "").trim()})`;
+          }
+        } else if (/(where|location|address|street|hour|open|close|when)/.test(lowerQuery) && /suite|street|monday|saturday/i.test(cleanContent)) {
+          naturalAnswer = `We are located at ${cleanContent}`;
+        }
+
         return {
-          answer: cleanContent,
+          answer: naturalAnswer,
           sources: [String(top.sourceTitle || top.chunkTitle)],
           confidence: Math.min(0.95, 0.75 + scored[0].score * 0.05),
         };

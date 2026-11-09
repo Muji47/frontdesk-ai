@@ -2922,23 +2922,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
           return (
             <div className="space-y-6 max-w-5xl">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-900">Billing & Subscription Management</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Upgrade or downgrade plans, switch between Monthly, Bi-Annual, and Annual billing cycles, manage payment methods, and review invoices.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={() => handleUpdateSubscription(billingState.plan, selectedCycle, true)}
-                    disabled={Boolean(isUpdatingPlan)}
-                    className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-800 hover:bg-amber-100 transition cursor-pointer"
-                    title="Simulate a declined card charge to verify Failed invoice behavior"
-                  >
-                    ⚡ Test Failed Charge
-                  </button>
-                </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Billing & Subscription Management</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Upgrade or downgrade plans, switch between Monthly, Bi-Annual, and Annual billing cycles, manage payment methods, and review invoices.
+                </p>
               </div>
 
               {billingNotice && (

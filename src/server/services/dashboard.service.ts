@@ -3,6 +3,13 @@ import { db, withTransaction, seedOrganizationData } from "@/lib/db";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { CrawlerService } from "./crawler.service";
 import { dashboardEventBus } from "@/lib/events";
+import {
+  calculatePlanCharge,
+  getMerchantOfRecordStatus,
+  type BillingCurrency,
+  type BillingProvider,
+  type PaymentMethodBrand,
+} from "@/lib/billing-config";
 
 export interface DashboardMetricData {
   totalConversations: number;
@@ -100,7 +107,7 @@ export interface DashboardIntegration {
 
 export interface DashboardPaymentMethod {
   id: string;
-  brand: "VISA" | "MASTERCARD" | "AMEX";
+  brand: PaymentMethodBrand;
   last4: string;
   expMonth: string;
   expYear: string;
@@ -114,6 +121,7 @@ export interface DashboardBillingInvoice {
   billingCycle: "monthly" | "biannual" | "annual";
   amountCents: number;
   amountFormatted: string;
+  currency: BillingCurrency;
   status: "Paid" | "Failed";
   cardSummary: string | null;
   failureReason: string | null;
@@ -123,6 +131,11 @@ export interface DashboardBillingInvoice {
 export interface DashboardBillingData {
   plan: "starter" | "growth" | "scale";
   billingCycle: "monthly" | "biannual" | "annual";
+  currency: BillingCurrency;
+  provider: BillingProvider;
+  morMode: "live" | "sandbox";
+  externalSubscriptionId: string | null;
+  customerPortalUrl: string | null;
   paymentMethods: DashboardPaymentMethod[];
   invoices: DashboardBillingInvoice[];
 }
@@ -405,8 +418,19 @@ export class DashboardService {
    */
   public static getBillingData(orgId: string): DashboardBillingData {
     const orgRow = db
-      .prepare("SELECT plan, billing_cycle FROM organizations WHERE id = ?")
-      .get(orgId) as { plan?: string; billing_cycle?: string } | undefined;
+      .prepare(
+        "SELECT plan, billing_cycle, billing_currency, billing_provider, external_subscription_id, customer_portal_url FROM organizations WHERE id = ?"
+      )
+      .get(orgId) as
+      | {
+          plan?: string;
+          billing_cycle?: string;
+          billing_currency?: string;
+          billing_provider?: string;
+          external_subscription_id?: string | null;
+          customer_portal_url?: string | null;
+        }
+      | undefined;
 
     const rawPlan = (orgRow?.plan || "growth").toLowerCase();
     const plan: "starter" | "growth" | "scale" =
@@ -414,6 +438,15 @@ export class DashboardService {
     const rawCycle = (orgRow?.billing_cycle || "monthly").toLowerCase();
     const billingCycle: "monthly" | "biannual" | "annual" =
       rawCycle === "biannual" ? "biannual" : rawCycle === "annual" ? "annual" : "monthly";
+
+    const rawCurrency = (orgRow?.billing_currency || "AUD").toUpperCase();
+    const currency: BillingCurrency =
+      rawCurrency === "USD" || rawCurrency === "GBP" || rawCurrency === "EUR" ? rawCurrency : "AUD";
+
+    const rawProvider = (orgRow?.billing_provider || "lemonsqueezy").toLowerCase();
+    const provider: BillingProvider = rawProvider === "paddle" ? "paddle" : "lemonsqueezy";
+
+    const morStatus = getMerchantOfRecordStatus();
 
     // Seed initial payment methods & sample invoices once per organization if billing_invoices is empty
     const invCount = db
@@ -439,8 +472,8 @@ export class DashboardService {
 
         const insertInv = db.prepare(`
           INSERT INTO billing_invoices (
-            id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, status, card_summary, failure_reason, invoice_date, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'AUD', ?, ?, ?, ?, ?)
         `);
 
         insertInv.run(
@@ -494,9 +527,18 @@ export class DashboardService {
       `)
       .all(orgId) as any[];
 
+    const validBrands = new Set<PaymentMethodBrand>([
+      "VISA",
+      "MASTERCARD",
+      "AMEX",
+      "PAYPAL",
+      "APPLE_PAY",
+      "GOOGLE_PAY",
+    ]);
+
     const paymentMethods: DashboardPaymentMethod[] = pmRows.map((p) => ({
       id: String(p.id),
-      brand: (p.brand === "MASTERCARD" || p.brand === "AMEX" ? p.brand : "VISA") as "VISA" | "MASTERCARD" | "AMEX",
+      brand: validBrands.has(p.brand as PaymentMethodBrand) ? (p.brand as PaymentMethodBrand) : "VISA",
       last4: String(p.last4),
       expMonth: String(p.exp_month),
       expYear: String(p.exp_year),
@@ -506,88 +548,113 @@ export class DashboardService {
 
     const invRows = db
       .prepare(`
-        SELECT id, plan_name, billing_cycle, amount_cents, amount_formatted, status, card_summary, failure_reason, invoice_date
+        SELECT id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date
         FROM billing_invoices
         WHERE organization_id = ?
         ORDER BY created_at DESC
       `)
       .all(orgId) as any[];
 
-    const invoices: DashboardBillingInvoice[] = invRows.map((inv) => ({
-      id: String(inv.id).replace(/-[a-zA-Z0-9]{3}$/, ""),
-      planName: String(inv.plan_name),
-      billingCycle: (inv.billing_cycle === "biannual" || inv.billing_cycle === "annual"
-        ? inv.billing_cycle
-        : "monthly") as "monthly" | "biannual" | "annual",
-      amountCents: Number(inv.amount_cents),
-      amountFormatted: String(inv.amount_formatted),
-      status: inv.status === "Failed" ? "Failed" : "Paid",
-      cardSummary: inv.card_summary ? String(inv.card_summary) : null,
-      failureReason: inv.failure_reason ? String(inv.failure_reason) : null,
-      invoiceDate: String(inv.invoice_date),
-    }));
+    const invoices: DashboardBillingInvoice[] = invRows.map((inv) => {
+      const invCurr = String(inv.currency || "AUD").toUpperCase();
+      return {
+        id: String(inv.id).replace(/-[a-zA-Z0-9]{3}$/, ""),
+        planName: String(inv.plan_name),
+        billingCycle: (inv.billing_cycle === "biannual" || inv.billing_cycle === "annual"
+          ? inv.billing_cycle
+          : "monthly") as "monthly" | "biannual" | "annual",
+        amountCents: Number(inv.amount_cents),
+        amountFormatted: String(inv.amount_formatted),
+        currency: (invCurr === "USD" || invCurr === "GBP" || invCurr === "EUR" ? invCurr : "AUD") as BillingCurrency,
+        status: inv.status === "Failed" ? "Failed" : "Paid",
+        cardSummary: inv.card_summary ? String(inv.card_summary) : null,
+        failureReason: inv.failure_reason ? String(inv.failure_reason) : null,
+        invoiceDate: String(inv.invoice_date),
+      };
+    });
 
     return {
       plan,
       billingCycle,
+      currency,
+      provider,
+      morMode: morStatus.mode,
+      externalSubscriptionId: orgRow?.external_subscription_id || `sub_mor_${orgId.slice(-6)}`,
+      customerPortalUrl:
+        orgRow?.customer_portal_url ||
+        (provider === "paddle"
+          ? "https://customer-portal.paddle.com/cpl_echo_ai"
+          : "https://app.lemonsqueezy.com/my-orders"),
       paymentMethods,
       invoices,
     };
   }
 
   /**
-   * Upgrades, downgrades, or switches billing cycle (monthly, biannual, annual) and charges the default card.
+   * Updates the active billing currency (USD, AUD, GBP, EUR) and Merchant of Record provider (lemonsqueezy | paddle).
+   */
+  public static updateBillingPreferences(
+    orgId: string,
+    params: { currency?: BillingCurrency; provider?: BillingProvider }
+  ): DashboardBillingData {
+    if (params.currency && ["USD", "AUD", "GBP", "EUR"].includes(params.currency)) {
+      db.prepare("UPDATE organizations SET billing_currency = ? WHERE id = ?").run(params.currency, orgId);
+    }
+    if (params.provider && ["lemonsqueezy", "paddle"].includes(params.provider)) {
+      db.prepare("UPDATE organizations SET billing_provider = ? WHERE id = ?").run(params.provider, orgId);
+    }
+    return this.getBillingData(orgId);
+  }
+
+  /**
+   * Upgrades, downgrades, or switches billing cycle (monthly, biannual, annual) and charges the default payment method.
    */
   public static updateSubscription(
     orgId: string,
     targetPlan: "starter" | "growth" | "scale",
     targetCycle: "monthly" | "biannual" | "annual",
-    simulateFailedCharge = false
+    simulateFailedCharge = false,
+    overrideCurrency?: BillingCurrency
   ): { billing: DashboardBillingData; chargedInvoice: DashboardBillingInvoice; chargeSucceeded: boolean; message: string } {
-    const monthlyBase: Record<"starter" | "growth" | "scale", number> = {
-      starter: 49,
-      growth: 99,
-      scale: 249,
-    };
-    const base = monthlyBase[targetPlan] || 99;
-    // Monthly = 1x base, Bi-Annual (6 months) = 10% off * 6 months, Annual (12 months) = 20% off * 12 months
-    const perMonthEffective =
-      targetCycle === "biannual"
-        ? Math.round(base * 0.9)
-        : targetCycle === "annual"
-        ? Math.round(base * 0.8)
-        : base;
-    const monthsMultiplier = targetCycle === "biannual" ? 6 : targetCycle === "annual" ? 12 : 1;
-    const totalDollars = perMonthEffective * monthsMultiplier;
-    const amountCents = totalDollars * 100;
-    const amountFormatted = `$${totalDollars.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} AUD`;
+    const orgRow = db
+      .prepare("SELECT billing_currency, billing_provider FROM organizations WHERE id = ?")
+      .get(orgId) as { billing_currency?: string; billing_provider?: string } | undefined;
 
-    const planLabel =
-      targetPlan === "starter" ? "Starter Plan" : targetPlan === "scale" ? "Scale Plan" : "Growth Plan";
-    const cycleLabel =
-      targetCycle === "biannual" ? "Bi-Annual (6 Months)" : targetCycle === "annual" ? "Annual (12 Months)" : "Monthly";
+    const rawCurr = (overrideCurrency || orgRow?.billing_currency || "AUD").toUpperCase();
+    const currency: BillingCurrency =
+      rawCurr === "USD" || rawCurr === "GBP" || rawCurr === "EUR" ? rawCurr : "AUD";
+
+    const charge = calculatePlanCharge(targetPlan, targetCycle, currency);
+    const { amountCents, amountFormatted, planLabel, cycleLabel } = charge;
 
     // Check default payment method
     const defaultCard = db
-      .prepare(`SELECT brand, last4 FROM payment_methods WHERE organization_id = ? AND is_default = 1 LIMIT 1`)
-      .get(orgId) as { brand: string; last4: string } | undefined;
+      .prepare(`SELECT brand, last4, cardholder_name FROM payment_methods WHERE organization_id = ? AND is_default = 1 LIMIT 1`)
+      .get(orgId) as { brand: string; last4: string; cardholder_name: string } | undefined;
 
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
     const invId = `INV-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${randomBytes(2).toString("hex").toUpperCase()}`;
 
     const isDeclinedCard = defaultCard && (defaultCard.last4 === "0000" || defaultCard.last4 === "9999");
+    const formatMethodSummary = (m: { brand: string; last4: string; cardholder_name: string }) => {
+      if (m.brand === "PAYPAL") return `PayPal (${m.cardholder_name || m.last4})`;
+      if (m.brand === "APPLE_PAY") return `Apple Pay •••• ${m.last4}`;
+      if (m.brand === "GOOGLE_PAY") return `Google Pay •••• ${m.last4}`;
+      return `${m.brand} •••• ${m.last4}`;
+    };
+
     if (!defaultCard || isDeclinedCard || simulateFailedCharge) {
       const failReason = !defaultCard
         ? "No default payment method on file"
-        : "Card declined by issuer during subscription charge";
-      const cardSummary = defaultCard ? `${defaultCard.brand} •••• ${defaultCard.last4}` : "No Card on File";
+        : "Payment declined by issuer during subscription charge";
+      const cardSummary = defaultCard ? formatMethodSummary(defaultCard) : "No Payment Method";
 
       db.prepare(`
         INSERT INTO billing_invoices (
-          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, status, card_summary, failure_reason, invoice_date, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'Failed', ?, ?, ?, ?)
-      `).run(invId, orgId, `${planLabel} (${cycleLabel})`, targetCycle, amountCents, amountFormatted, cardSummary, failReason, dateStr, now.toISOString());
+          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Failed', ?, ?, ?, ?)
+      `).run(invId, orgId, `${planLabel} (${cycleLabel})`, targetCycle, amountCents, amountFormatted, currency, cardSummary, failReason, dateStr, now.toISOString());
 
       const billing = this.getBillingData(orgId);
       return {
@@ -598,19 +665,20 @@ export class DashboardService {
       };
     }
 
-    const cardSummary = `${defaultCard.brand} •••• ${defaultCard.last4}`;
+    const cardSummary = formatMethodSummary(defaultCard);
     withTransaction(() => {
-      db.prepare(`UPDATE organizations SET plan = ?, billing_cycle = ? WHERE id = ?`).run(
+      db.prepare(`UPDATE organizations SET plan = ?, billing_cycle = ?, billing_currency = ? WHERE id = ?`).run(
         targetPlan,
         targetCycle,
+        currency,
         orgId
       );
 
       db.prepare(`
         INSERT INTO billing_invoices (
-          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, status, card_summary, failure_reason, invoice_date, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'Paid', ?, NULL, ?, ?)
-      `).run(invId, orgId, `${planLabel} (${cycleLabel})`, targetCycle, amountCents, amountFormatted, cardSummary, dateStr, now.toISOString());
+          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Paid', ?, NULL, ?, ?)
+      `).run(invId, orgId, `${planLabel} (${cycleLabel})`, targetCycle, amountCents, amountFormatted, currency, cardSummary, dateStr, now.toISOString());
     });
 
     const billing = this.getBillingData(orgId);
@@ -618,12 +686,135 @@ export class DashboardService {
       billing,
       chargedInvoice: billing.invoices[0],
       chargeSucceeded: true,
-      message: `Subscription updated to ${planLabel} (${cycleLabel}) — Charged ${amountFormatted} to ${cardSummary}.`,
+      message: `Subscription updated to ${planLabel} (${cycleLabel}) — Charged ${amountFormatted} via ${cardSummary}.`,
     };
   }
 
   /**
-   * Adds a new payment method and optionally sets it as default.
+   * Processes a Merchant of Record (Lemon Squeezy / Paddle) webhook event to sync subscriptions and invoices.
+   */
+  public static processMoRWebhookEvent(params: {
+    orgId: string;
+    eventName:
+      | "subscription_created"
+      | "subscription_updated"
+      | "subscription_payment_success"
+      | "subscription_payment_failed"
+      | "subscription_cancelled";
+    plan?: "starter" | "growth" | "scale";
+    billingCycle?: "monthly" | "biannual" | "annual";
+    currency?: BillingCurrency;
+    provider?: BillingProvider;
+    paymentGateway?: PaymentMethodBrand;
+    cardLast4?: string;
+    payerEmail?: string;
+    externalSubscriptionId?: string;
+    customerPortalUrl?: string;
+    failureReason?: string;
+  }): { billing: DashboardBillingData; eventProcessed: string; message: string } {
+    const {
+      orgId,
+      eventName,
+      plan = "growth",
+      billingCycle = "monthly",
+      currency = "USD",
+      provider = "lemonsqueezy",
+      paymentGateway = "PAYPAL",
+      cardLast4 = "4242",
+      payerEmail = "billing@clinic.com",
+      externalSubscriptionId,
+      customerPortalUrl,
+      failureReason,
+    } = params;
+
+    const charge = calculatePlanCharge(plan, billingCycle, currency);
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+    const invId = `INV-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${randomBytes(2).toString("hex").toUpperCase()}`;
+    const providerLabel = provider === "paddle" ? "Paddle MoR" : "Lemon Squeezy MoR";
+    const summaryLabel =
+      paymentGateway === "PAYPAL"
+        ? `PayPal (${payerEmail}) • ${providerLabel}`
+        : paymentGateway === "APPLE_PAY"
+        ? `Apple Pay •••• ${cardLast4} • ${providerLabel}`
+        : paymentGateway === "GOOGLE_PAY"
+        ? `Google Pay •••• ${cardLast4} • ${providerLabel}`
+        : `${paymentGateway} •••• ${cardLast4} • ${providerLabel}`;
+
+    withTransaction(() => {
+      if (
+        eventName === "subscription_created" ||
+        eventName === "subscription_updated" ||
+        eventName === "subscription_payment_success"
+      ) {
+        db.prepare(
+          `UPDATE organizations
+           SET plan = ?, billing_cycle = ?, billing_currency = ?, billing_provider = ?,
+               external_subscription_id = COALESCE(?, external_subscription_id),
+               customer_portal_url = COALESCE(?, customer_portal_url)
+           WHERE id = ?`
+        ).run(
+          plan,
+          billingCycle,
+          currency,
+          provider,
+          externalSubscriptionId || `sub_${provider}_${randomBytes(3).toString("hex")}`,
+          customerPortalUrl || null,
+          orgId
+        );
+      }
+
+      if (eventName === "subscription_payment_success" || eventName === "subscription_created") {
+        db.prepare(`
+          INSERT INTO billing_invoices (
+            id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Paid', ?, NULL, ?, ?)
+        `).run(
+          invId,
+          orgId,
+          `${charge.planLabel} (${charge.cycleLabel})`,
+          billingCycle,
+          charge.amountCents,
+          charge.amountFormatted,
+          currency,
+          summaryLabel,
+          dateStr,
+          now.toISOString()
+        );
+      } else if (eventName === "subscription_payment_failed") {
+        db.prepare(`
+          INSERT INTO billing_invoices (
+            id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Failed', ?, ?, ?, ?)
+        `).run(
+          invId,
+          orgId,
+          `${charge.planLabel} (${charge.cycleLabel})`,
+          billingCycle,
+          charge.amountCents,
+          charge.amountFormatted,
+          currency,
+          summaryLabel,
+          failureReason || `${providerLabel}: Payment declined by customer bank / PayPal wallet`,
+          dateStr,
+          now.toISOString()
+        );
+      }
+    });
+
+    const billing = this.getBillingData(orgId);
+    return {
+      billing,
+      eventProcessed: eventName,
+      message:
+        eventName === "subscription_payment_failed"
+          ? `Webhook [${eventName}] processed: Recorded failed invoice ${invId} (${charge.amountFormatted}).`
+          : `Webhook [${eventName}] processed via ${providerLabel}: Active plan synced to ${charge.planLabel} (${charge.cycleLabel}) • ${charge.amountFormatted} (${summaryLabel}).`,
+    };
+  }
+
+  /**
+   * Adds a new payment method (Card or PayPal / Apple Pay / Google Pay via Merchant of Record) and optionally sets it as default.
    */
   public static addPaymentMethod(
     orgId: string,
@@ -636,24 +827,46 @@ export class DashboardService {
       setAsDefault?: boolean;
     }
   ): DashboardBillingData {
-    const digits = (params.cardNumber || "").replace(/\D/g, "");
-    if (digits.length < 4) {
-      throw new ValidationError("Please enter at least the last 4 digits of the card number.");
-    }
-    const last4 = digits.slice(-4);
-    let brand: "VISA" | "MASTERCARD" | "AMEX" = "VISA";
-    if (params.brand === "MASTERCARD" || params.brand === "AMEX" || params.brand === "VISA") {
-      brand = params.brand;
-    } else if (digits.startsWith("5") || digits.startsWith("2")) {
-      brand = "MASTERCARD";
-    } else if (digits.startsWith("3")) {
-      brand = "AMEX";
+    const validBrands = new Set<PaymentMethodBrand>([
+      "VISA",
+      "MASTERCARD",
+      "AMEX",
+      "PAYPAL",
+      "APPLE_PAY",
+      "GOOGLE_PAY",
+    ]);
+    let brand: PaymentMethodBrand = "VISA";
+    if (params.brand && validBrands.has(params.brand as PaymentMethodBrand)) {
+      brand = params.brand as PaymentMethodBrand;
     }
 
-    const expMonth = String(params.expMonth || "12").padStart(2, "0");
-    const rawYear = String(params.expYear || "2029").trim();
-    const expYear = rawYear.length === 2 ? `20${rawYear}` : rawYear;
-    const holder = (params.cardholderName || "Clinic Account").trim();
+    let last4 = "4242";
+    let expMonth = String(params.expMonth || "12").padStart(2, "0");
+    let expYear = String(params.expYear || "2029").trim();
+    if (expYear.length === 2) expYear = `20${expYear}`;
+    let holder = (params.cardholderName || "Clinic Account").trim();
+
+    if (brand === "PAYPAL") {
+      // For PayPal wallet via Merchant of Record, cardNumber or cardholderName can hold the PayPal email
+      const emailInput = (params.cardNumber || params.cardholderName || "billing@clinic.com").trim();
+      last4 = emailInput.slice(-4) || "PPAL";
+      holder = emailInput.includes("@") ? emailInput : `${holder} (PayPal MoR)`;
+      expMonth = "MoR";
+      expYear = "Active";
+    } else {
+      const digits = (params.cardNumber || "").replace(/\D/g, "");
+      if (digits.length < 4) {
+        throw new ValidationError("Please enter at least the last 4 digits of the card number.");
+      }
+      last4 = digits.slice(-4);
+      if (!params.brand) {
+        if (digits.startsWith("5") || digits.startsWith("2")) {
+          brand = "MASTERCARD";
+        } else if (digits.startsWith("3")) {
+          brand = "AMEX";
+        }
+      }
+    }
 
     const existingCount = db
       .prepare("SELECT COUNT(*) as cnt FROM payment_methods WHERE organization_id = ?")

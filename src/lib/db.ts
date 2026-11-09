@@ -296,6 +296,30 @@ try {
   if (!orgColNames.has("billing_cycle")) {
     db.exec("ALTER TABLE organizations ADD COLUMN billing_cycle TEXT NOT NULL DEFAULT 'monthly'");
   }
+  if (!orgColNames.has("billing_currency")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN billing_currency TEXT NOT NULL DEFAULT 'AUD'");
+  }
+  if (!orgColNames.has("billing_provider")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN billing_provider TEXT NOT NULL DEFAULT 'lemonsqueezy'");
+  }
+  if (!orgColNames.has("external_customer_id")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN external_customer_id TEXT");
+  }
+  if (!orgColNames.has("external_subscription_id")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN external_subscription_id TEXT");
+  }
+  if (!orgColNames.has("customer_portal_url")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN customer_portal_url TEXT");
+  }
+
+  const invCols = db.prepare("PRAGMA table_info(billing_invoices)").all() as { name: string }[];
+  const invColNames = new Set(invCols.map((c) => c.name));
+  if (!invColNames.has("currency")) {
+    db.exec("ALTER TABLE billing_invoices ADD COLUMN currency TEXT NOT NULL DEFAULT 'AUD'");
+  }
+  if (!invColNames.has("external_invoice_id")) {
+    db.exec("ALTER TABLE billing_invoices ADD COLUMN external_invoice_id TEXT");
+  }
 } catch (err) {
   console.error("Billing schema migration warning:", err);
 }

@@ -14,6 +14,12 @@ import type {
   DashboardBillingInvoice,
   ConversationMessage,
 } from "@/server/services/dashboard.service";
+import {
+  CURRENCY_CONFIGS,
+  type BillingCurrency,
+  type BillingProvider,
+  type PaymentMethodBrand,
+} from "@/lib/billing-config";
 
 interface DashboardClientProps {
   user: UserSession;
@@ -185,6 +191,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     initialData.billing || {
       plan: (user.plan as "starter" | "growth" | "scale") || "growth",
       billingCycle: "monthly",
+      currency: "AUD",
+      provider: "lemonsqueezy",
+      morMode: "sandbox",
+      externalSubscriptionId: "sub_mor_demo",
+      customerPortalUrl: "https://app.lemonsqueezy.com/my-orders",
       paymentMethods: [],
       invoices: [],
     }
@@ -192,10 +203,16 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [selectedCycle, setSelectedCycle] = useState<"monthly" | "biannual" | "annual">(
     initialData.billing?.billingCycle || "monthly"
   );
+  const [selectedCurrency, setSelectedCurrency] = useState<BillingCurrency>(
+    initialData.billing?.currency || "AUD"
+  );
+  const [selectedProvider, setSelectedProvider] = useState<BillingProvider>(
+    initialData.billing?.provider || "lemonsqueezy"
+  );
   const [isUpdatingPlan, setIsUpdatingPlan] = useState<string | null>(null);
   const [billingNotice, setBillingNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showAddCardModal, setShowAddCardModal] = useState<boolean>(false);
-  const [cardBrand, setCardBrand] = useState<"VISA" | "MASTERCARD" | "AMEX">("VISA");
+  const [cardBrand, setCardBrand] = useState<PaymentMethodBrand>("VISA");
   const [cardHolder, setCardHolder] = useState<string>(user.name || "Dr. Sarah Lee");
   const [cardNumber, setCardNumber] = useState<string>("");
   const [cardExpMonth, setCardExpMonth] = useState<string>("08");
@@ -204,6 +221,15 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [isSavingCard, setIsSavingCard] = useState<boolean>(false);
   const [busyCardId, setBusyCardId] = useState<string | null>(null);
   const [viewingInvoice, setViewingInvoice] = useState<DashboardBillingInvoice | null>(null);
+  const [morCheckoutModal, setMorCheckoutModal] = useState<{
+    open: boolean;
+    plan: "starter" | "growth" | "scale";
+    billingCycle: "monthly" | "biannual" | "annual";
+    gateway: PaymentMethodBrand;
+    payerEmail: string;
+    checkoutUrl: string;
+    isProcessing: boolean;
+  } | null>(null);
 
   // Connect to SSE real-time socket stream (multiplexed across tabs via BroadcastChannel to prevent HTTP/1.1 connection pool exhaustion)
   useEffect(() => {
@@ -803,6 +829,114 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     setTimeout(() => setCopiedEmbed(false), 2500);
   };
 
+  async function handleUpdateBillingPreferences(
+    nextCurrency: BillingCurrency,
+    nextProvider: BillingProvider
+  ) {
+    setSelectedCurrency(nextCurrency);
+    setSelectedProvider(nextProvider);
+    try {
+      const res = await fetch("/api/dashboard/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_preferences",
+          currency: nextCurrency,
+          provider: nextProvider,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.billing) {
+        setBillingState(data.billing);
+      }
+    } catch {
+      // Keep optimistic UI selection
+    }
+  }
+
+  async function handleOpenMoRCheckout(
+    plan: "starter" | "growth" | "scale",
+    billingCycle: "monthly" | "biannual" | "annual"
+  ) {
+    setBillingNotice(null);
+    try {
+      const res = await fetch("/api/dashboard/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan,
+          billingCycle,
+          currency: selectedCurrency,
+          provider: selectedProvider,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Unable to open checkout");
+
+      // If running with live Lemon Squeezy / Paddle API keys, redirect or open overlay
+      if (data.mode === "live" && data.checkoutUrl) {
+        window.open(data.checkoutUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      setMorCheckoutModal({
+        open: true,
+        plan,
+        billingCycle,
+        gateway: "PAYPAL",
+        payerEmail: user.email || "billing@clinic.com",
+        checkoutUrl: data.checkoutUrl || "",
+        isProcessing: false,
+      });
+    } catch (err: any) {
+      setBillingNotice({ type: "error", text: err.message || "Failed to initialize checkout." });
+    }
+  }
+
+  async function handleCompleteMoRCheckout(simulateFailed = false) {
+    if (!morCheckoutModal) return;
+    setMorCheckoutModal({ ...morCheckoutModal, isProcessing: true });
+    setBillingNotice(null);
+    try {
+      const res = await fetch("/api/webhooks/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventName: simulateFailed
+            ? "subscription_payment_failed"
+            : "subscription_payment_success",
+          customData: {
+            organization_id: user.orgId,
+            plan: morCheckoutModal.plan,
+            billing_cycle: morCheckoutModal.billingCycle,
+            currency: selectedCurrency,
+            provider: selectedProvider,
+            paymentGateway: morCheckoutModal.gateway,
+            payerEmail: morCheckoutModal.payerEmail,
+            cardLast4: "4242",
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Webhook checkout error");
+
+      if (data.billing) {
+        setBillingState(data.billing);
+        setSelectedCycle(data.billing.billingCycle);
+      }
+      setMorCheckoutModal(null);
+      setBillingNotice({
+        type: simulateFailed ? "error" : "success",
+        text:
+          data.message ||
+          (simulateFailed ? "Merchant of Record payment failed." : "Global checkout completed!"),
+      });
+    } catch (err: any) {
+      setMorCheckoutModal({ ...morCheckoutModal, isProcessing: false });
+      setBillingNotice({ type: "error", text: err.message || "Failed to process MoR webhook." });
+    }
+  }
+
   async function handleUpdateSubscription(
     targetPlan: "starter" | "growth" | "scale",
     targetCycle: "monthly" | "biannual" | "annual",
@@ -818,6 +952,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           action: "update_subscription",
           plan: targetPlan,
           billingCycle: targetCycle,
+          currency: selectedCurrency,
           simulateFailedCharge,
         }),
       });
@@ -2715,6 +2850,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
         {/* ===================== TAB: BILLING ===================== */}
         {activeTab === "billing" && (() => {
+          const currConfig = CURRENCY_CONFIGS[selectedCurrency] || CURRENCY_CONFIGS.AUD;
           const planCatalog: Array<{
             id: "starter" | "growth" | "scale";
             name: string;
@@ -2728,7 +2864,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               id: "starter",
               name: "Starter",
               tagline: "Solo practitioners & single-site front desks",
-              baseMonthly: 49,
+              baseMonthly: currConfig.monthlyBase.starter,
               convLimit: 500,
               seatsLimit: 1,
               features: ["500 AI conversations / mo", "1 Staff seat", "Website embed widget", "Email & live inbox handover"],
@@ -2737,7 +2873,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               id: "growth",
               name: "Growth",
               tagline: "Multi-practitioner clinics & high-volume reception",
-              baseMonthly: 99,
+              baseMonthly: currConfig.monthlyBase.growth,
               convLimit: 2000,
               seatsLimit: 3,
               features: ["2,000 AI conversations / mo", "3 Staff seats", "Cliniko & Shopify 2-way sync", "Self-learning Q&A approval queue"],
@@ -2746,7 +2882,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               id: "scale",
               name: "Scale",
               tagline: "Multi-location clinic groups & enterprise SLAs",
-              baseMonthly: 249,
+              baseMonthly: currConfig.monthlyBase.scale,
               convLimit: 10000,
               seatsLimit: 10,
               features: ["10,000 AI conversations / mo", "10 Staff seats", "Priority SLA & custom webhooks", "Dedicated multi-site analytics"],
@@ -2778,24 +2914,99 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           const activePlanMeta = planCatalog.find((p) => p.id === billingState.plan) || planCatalog[1];
           const activePricing = getCyclePricing(activePlanMeta.baseMonthly, billingState.billingCycle);
           const defaultCard = billingState.paymentMethods.find((pm) => pm.isDefault);
+          const providerLabel = selectedProvider === "paddle" ? "Paddle MoR" : "Lemon Squeezy MoR";
 
           return (
             <div className="space-y-6 max-w-5xl">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900">Billing & Subscription Management</h2>
+                  <h2 className="text-lg font-bold text-slate-900">Billing & Worldwide Subscription Management</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Upgrade or downgrade plans, switch between Monthly, Bi-Annual, and Annual billing cycles, manage cards, and review invoices.
+                    Global Merchant of Record billing (Cards, PayPal, Apple Pay, Google Pay) with Monthly, Bi-Annual, and Annual cycles.
                   </p>
                 </div>
-                <button
-                  onClick={() => handleUpdateSubscription(billingState.plan, selectedCycle, true)}
-                  disabled={Boolean(isUpdatingPlan)}
-                  className="self-start sm:self-auto rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-800 hover:bg-amber-100 transition cursor-pointer"
-                  title="Simulate a declined card charge to verify Failed invoice behavior"
-                >
-                  ⚡ Test Failed Charge
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Global Currency Selector */}
+                  <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5 text-[11px] font-bold shadow-2xs">
+                    {(["USD", "AUD", "GBP", "EUR"] as BillingCurrency[]).map((curr) => (
+                      <button
+                        key={curr}
+                        type="button"
+                        onClick={() => handleUpdateBillingPreferences(curr, selectedProvider)}
+                        className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                          selectedCurrency === curr
+                            ? "bg-indigo-600 text-white"
+                            : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        {CURRENCY_CONFIGS[curr].symbol} {curr}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={() => handleOpenMoRCheckout(billingState.plan, selectedCycle)}
+                    className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                  >
+                    🌐 Pay with PayPal / Apple Pay (MoR)
+                  </button>
+
+                  <button
+                    onClick={() => handleUpdateSubscription(billingState.plan, selectedCycle, true)}
+                    disabled={Boolean(isUpdatingPlan)}
+                    className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-bold text-amber-800 hover:bg-amber-100 transition cursor-pointer"
+                    title="Simulate a declined card charge to verify Failed invoice behavior"
+                  >
+                    ⚡ Test Failed Charge
+                  </button>
+                </div>
+              </div>
+
+              {/* Worldwide Merchant of Record Banner (Option 1 — Pakistan Founder Global Payouts) */}
+              <div className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50/80 via-white to-indigo-50/50 p-4 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-white">
+                      🌐 Worldwide MoR Active ({providerLabel})
+                    </span>
+                    <span className="text-[11px] font-bold text-slate-700">
+                      Customer Checkout: <span className="text-indigo-700">PayPal • Apple Pay • Google Pay • Visa • Mastercard • Amex</span>
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    <b>{providerLabel}</b> processes global cards & PayPal on their US/UK merchant entity, handles automatic{" "}
+                    <b>{currConfig.taxLabel}</b> compliance, and settles payouts directly to Pakistan via{" "}
+                    <b>Payoneer, Elevate Pay, or Pakistani Bank IBAN (SWIFT)</b>.
+                  </p>
+                </div>
+
+                {/* Switch MoR Provider: Lemon Squeezy vs Paddle */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateBillingPreferences(selectedCurrency, "lemonsqueezy")}
+                      className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                        selectedProvider === "lemonsqueezy"
+                          ? "bg-white text-indigo-700 shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      🍋 Lemon Squeezy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateBillingPreferences(selectedCurrency, "paddle")}
+                      className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                        selectedProvider === "paddle"
+                          ? "bg-white text-indigo-700 shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      🛶 Paddle
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {billingNotice && (
@@ -2830,6 +3041,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
                         {activePricing.cycleLabel}
                       </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                        {providerLabel}
+                      </span>
                     </div>
                     <h3 className="text-2xl font-black text-slate-900 mt-1.5 capitalize">
                       {activePlanMeta.name} Plan
@@ -2838,12 +3052,16 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   </div>
                   <div className="sm:text-right">
                     <div className="text-2xl font-black text-slate-900">
-                      ${activePricing.totalCharge.toLocaleString()} AUD
+                      {currConfig.symbol}{activePricing.totalCharge.toLocaleString()} {selectedCurrency}
                       <span className="text-xs font-normal text-slate-500"> {activePricing.cycleShort}</span>
                     </div>
                     <span className="text-[11px] text-slate-500 block mt-0.5">
-                      Effective rate: <b>${activePricing.perMonth}/mo</b> •{" "}
-                      {defaultCard ? `Charged to ${defaultCard.brand} •••• ${defaultCard.last4}` : "No default card on file"}
+                      Effective rate: <b>{currConfig.symbol}{activePricing.perMonth}/mo</b> •{" "}
+                      {defaultCard
+                        ? defaultCard.brand === "PAYPAL"
+                          ? `Charged via PayPal (${defaultCard.cardholderName})`
+                          : `Charged to ${defaultCard.brand} •••• ${defaultCard.last4}`
+                        : "No default payment method on file"}
                     </span>
                   </div>
                 </div>
@@ -2905,7 +3123,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">Upgrade, Downgrade & Billing Cycle</h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Select a billing cycle and plan tier below. Switching immediately charges the selected cycle amount to your default payment method.
+                      Select a billing cycle and plan tier below. Switching immediately charges the selected cycle amount in <b>{selectedCurrency}</b>.
                     </p>
                   </div>
 
@@ -2968,11 +3186,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           : selectedCycle === "annual"
                           ? "Annual"
                           : "Monthly"
-                      } ($${pricing.totalCharge.toLocaleString()} AUD)`;
+                      } (${currConfig.symbol}${pricing.totalCharge.toLocaleString()} ${selectedCurrency})`;
                     } else if (isUpgrade) {
-                      ctaLabel = `Upgrade to ${tier.name} ($${pricing.totalCharge.toLocaleString()} AUD)`;
+                      ctaLabel = `Upgrade to ${tier.name} (${currConfig.symbol}${pricing.totalCharge.toLocaleString()} ${selectedCurrency})`;
                     } else if (isDowngrade) {
-                      ctaLabel = `Downgrade to ${tier.name} ($${pricing.totalCharge.toLocaleString()} AUD)`;
+                      ctaLabel = `Downgrade to ${tier.name} (${currConfig.symbol}${pricing.totalCharge.toLocaleString()} ${selectedCurrency})`;
                     }
 
                     return (
@@ -2997,15 +3215,19 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
                           <div className="mt-4 pt-4 border-t border-slate-100">
                             <div className="flex items-baseline gap-1">
-                              <span className="text-2xl font-black text-slate-900">${pricing.perMonth}</span>
-                              <span className="text-xs text-slate-500 font-medium">/ month</span>
+                              <span className="text-2xl font-black text-slate-900">
+                                {currConfig.symbol}{pricing.perMonth}
+                              </span>
+                              <span className="text-xs text-slate-500 font-medium">
+                                {selectedCurrency} / month
+                              </span>
                             </div>
                             <div className="text-[11px] font-semibold text-indigo-700 mt-0.5">
                               {selectedCycle === "monthly"
-                                ? `Billed monthly ($${pricing.totalCharge}.00 AUD)`
+                                ? `Billed monthly (${currConfig.symbol}${pricing.totalCharge}.00 ${selectedCurrency})`
                                 : selectedCycle === "biannual"
-                                ? `Billed every 6 months ($${pricing.totalCharge.toLocaleString()}.00 AUD)`
-                                : `Billed annually ($${pricing.totalCharge.toLocaleString()}.00 AUD)`}
+                                ? `Billed every 6 months (${currConfig.symbol}${pricing.totalCharge.toLocaleString()}.00 ${selectedCurrency})`
+                                : `Billed annually (${currConfig.symbol}${pricing.totalCharge.toLocaleString()}.00 ${selectedCurrency})`}
                             </div>
                           </div>
 
@@ -3019,20 +3241,32 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           </ul>
                         </div>
 
-                        <button
-                          type="button"
-                          disabled={isExactCurrent || Boolean(isUpdatingPlan)}
-                          onClick={() => handleUpdateSubscription(tier.id, selectedCycle, false)}
-                          className={`mt-5 w-full rounded-xl px-3.5 py-2.5 text-xs font-bold transition cursor-pointer ${
-                            isExactCurrent
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default"
-                              : isUpgrade || isSamePlanDifferentCycle
-                              ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs"
-                              : "bg-slate-900 text-white hover:bg-slate-800 shadow-xs"
-                          } disabled:opacity-60`}
-                        >
-                          {btnLoading ? "Processing Charge..." : ctaLabel}
-                        </button>
+                        <div className="mt-5 space-y-2">
+                          <button
+                            type="button"
+                            disabled={isExactCurrent || Boolean(isUpdatingPlan)}
+                            onClick={() => handleUpdateSubscription(tier.id, selectedCycle, false)}
+                            className={`w-full rounded-xl px-3.5 py-2.5 text-xs font-bold transition cursor-pointer ${
+                              isExactCurrent
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default"
+                                : isUpgrade || isSamePlanDifferentCycle
+                                ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs"
+                                : "bg-slate-900 text-white hover:bg-slate-800 shadow-xs"
+                            } disabled:opacity-60`}
+                          >
+                            {btnLoading ? "Processing Charge..." : ctaLabel}
+                          </button>
+
+                          {!isExactCurrent && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenMoRCheckout(tier.id, selectedCycle)}
+                              className="w-full rounded-lg border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-indigo-700 transition cursor-pointer"
+                            >
+                              Checkout via {providerLabel} (PayPal / Apple Pay) →
+                            </button>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -3055,32 +3289,39 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       </button>
                     </div>
                     <p className="text-xs text-slate-500 mb-4">
-                      Default card is charged automatically on plan updates and renewal cycles.
+                      Add credit/debit cards or global wallets (PayPal, Apple Pay, Google Pay via {providerLabel}).
                     </p>
 
-                    {/* Add Card Inline Form */}
+                    {/* Add Card / Global Wallet Inline Form */}
                     {showAddCardModal && (
                       <form
                         onSubmit={handleAddPaymentMethod}
                         className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3 text-xs"
                       >
-                        <div className="font-bold text-slate-900">Add New Credit / Debit Card</div>
+                        <div className="font-bold text-slate-900">
+                          Add Card or Global Wallet (PayPal / Apple Pay)
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                           <div>
-                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">Brand</label>
+                            <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                              Payment Type
+                            </label>
                             <select
                               value={cardBrand}
-                              onChange={(e) => setCardBrand(e.target.value as "VISA" | "MASTERCARD" | "AMEX")}
+                              onChange={(e) => setCardBrand(e.target.value as PaymentMethodBrand)}
                               className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
                             >
-                              <option value="VISA">VISA</option>
+                              <option value="VISA">VISA Card</option>
                               <option value="MASTERCARD">MASTERCARD</option>
-                              <option value="AMEX">AMEX</option>
+                              <option value="AMEX">AMEX Card</option>
+                              <option value="PAYPAL">PayPal (via MoR)</option>
+                              <option value="APPLE_PAY">Apple Pay (via MoR)</option>
+                              <option value="GOOGLE_PAY">Google Pay (via MoR)</option>
                             </select>
                           </div>
                           <div className="sm:col-span-2">
                             <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                              Cardholder Name
+                              {cardBrand === "PAYPAL" ? "Account Holder Name" : "Cardholder Name"}
                             </label>
                             <input
                               type="text"
@@ -3093,47 +3334,63 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                          <div className="sm:col-span-2">
+                        {cardBrand === "PAYPAL" ? (
+                          <div>
                             <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                              Card Number (use 0000 to test declined card)
+                              PayPal Email Address (processed via {providerLabel})
                             </label>
                             <input
-                              type="text"
+                              type="email"
                               value={cardNumber}
                               onChange={(e) => setCardNumber(e.target.value)}
-                              placeholder="4242 •••• •••• 5512"
+                              placeholder="billing@healinghands.com.au"
                               required
                               className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
                             />
                           </div>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <div>
-                              <label className="block text-[11px] font-semibold text-slate-600 mb-1">MM</label>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                            <div className="sm:col-span-2">
+                              <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                                Card Number (use 0000 to test declined card)
+                              </label>
                               <input
                                 type="text"
-                                maxLength={2}
-                                value={cardExpMonth}
-                                onChange={(e) => setCardExpMonth(e.target.value)}
-                                placeholder="08"
+                                value={cardNumber}
+                                onChange={(e) => setCardNumber(e.target.value)}
+                                placeholder="4242 •••• •••• 5512"
                                 required
-                                className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-600"
+                                className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
                               />
                             </div>
-                            <div>
-                              <label className="block text-[11px] font-semibold text-slate-600 mb-1">YYYY</label>
-                              <input
-                                type="text"
-                                maxLength={4}
-                                value={cardExpYear}
-                                onChange={(e) => setCardExpYear(e.target.value)}
-                                placeholder="2029"
-                                required
-                                className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-600"
-                              />
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-600 mb-1">MM</label>
+                                <input
+                                  type="text"
+                                  maxLength={2}
+                                  value={cardExpMonth}
+                                  onChange={(e) => setCardExpMonth(e.target.value)}
+                                  placeholder="08"
+                                  required
+                                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-600"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-600 mb-1">YYYY</label>
+                                <input
+                                  type="text"
+                                  maxLength={4}
+                                  value={cardExpYear}
+                                  onChange={(e) => setCardExpYear(e.target.value)}
+                                  placeholder="2029"
+                                  required
+                                  className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-600"
+                                />
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
 
                         <div className="flex items-center justify-between pt-1">
                           <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
@@ -3150,7 +3407,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                             disabled={isSavingCard}
                             className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
                           >
-                            {isSavingCard ? "Saving..." : "Save Card"}
+                            {isSavingCard ? "Saving..." : "Save Method"}
                           </button>
                         </div>
                       </form>
@@ -3159,7 +3416,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     {/* Saved Payment Methods List */}
                     {billingState.paymentMethods.length === 0 ? (
                       <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">
-                        No payment methods on file. Click <b>+ Add Payment Method</b> above to add a card.
+                        No payment methods on file. Click <b>+ Add Payment Method</b> above to add a card or PayPal wallet.
                       </div>
                     ) : (
                       <div className="space-y-2.5">
@@ -3174,20 +3431,30 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           >
                             <div className="flex items-center gap-3 min-w-0">
                               <div
-                                className={`h-8 w-14 shrink-0 rounded font-bold text-[10px] flex items-center justify-center tracking-wider text-white ${
+                                className={`h-8 w-16 shrink-0 rounded font-bold text-[10px] flex items-center justify-center tracking-wider text-white ${
                                   pm.brand === "MASTERCARD"
                                     ? "bg-amber-600"
                                     : pm.brand === "AMEX"
                                     ? "bg-sky-700"
+                                    : pm.brand === "PAYPAL"
+                                    ? "bg-blue-700"
+                                    : pm.brand === "APPLE_PAY" || pm.brand === "GOOGLE_PAY"
+                                    ? "bg-emerald-700"
                                     : "bg-slate-900"
                                 }`}
                               >
-                                {pm.brand}
+                                {pm.brand === "APPLE_PAY"
+                                  ? "APPLE"
+                                  : pm.brand === "GOOGLE_PAY"
+                                  ? "GPAY"
+                                  : pm.brand}
                               </div>
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
                                   <b className="text-xs text-slate-900 font-bold truncate">
-                                    {pm.brand} ending in {pm.last4}
+                                    {pm.brand === "PAYPAL"
+                                      ? `PayPal Wallet (${pm.cardholderName})`
+                                      : `${pm.brand} ending in ${pm.last4}`}
                                   </b>
                                   {pm.isDefault && (
                                     <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
@@ -3196,7 +3463,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                   )}
                                 </div>
                                 <span className="text-[11px] text-slate-500 block truncate">
-                                  {pm.cardholderName} • Expires {pm.expMonth}/{pm.expYear}
+                                  {pm.brand === "PAYPAL"
+                                    ? `Connected via ${providerLabel} • Active`
+                                    : `${pm.cardholderName} • Expires ${pm.expMonth}/${pm.expYear}`}
                                 </span>
                               </div>
                             </div>
@@ -3229,7 +3498,13 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
                   <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
                     <span className="text-xs text-slate-500">
-                      {defaultCard ? `Auto-billing active (${defaultCard.brand} •••• ${defaultCard.last4})` : "Auto-billing paused (no default card)"}
+                      {defaultCard
+                        ? `Auto-billing active (${
+                            defaultCard.brand === "PAYPAL"
+                              ? `PayPal • ${defaultCard.cardholderName}`
+                              : `${defaultCard.brand} •••• ${defaultCard.last4}`
+                          })`
+                        : "Auto-billing paused (no default method)"}
                     </span>
                     <button
                       type="button"
@@ -3304,86 +3579,230 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
 
-              {/* Tax Invoice / Receipt Modal (Only accessible for Paid invoices) */}
-              {viewingInvoice && viewingInvoice.status === "Paid" && (
-                <div
-                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
-                  onClick={() => setViewingInvoice(null)}
-                >
+              {/* Merchant of Record (Lemon Squeezy / Paddle) Global Overlay Checkout Modal */}
+              {morCheckoutModal && morCheckoutModal.open && (() => {
+                const modalPlanMeta = planCatalog.find((p) => p.id === morCheckoutModal.plan) || planCatalog[1];
+                const modalPricing = getCyclePricing(modalPlanMeta.baseMonthly, morCheckoutModal.billingCycle);
+                return (
                   <div
-                    className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4 text-xs"
-                    onClick={(e) => e.stopPropagation()}
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
+                    onClick={() => setMorCheckoutModal(null)}
                   >
-                    <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                    <div
+                      className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4 text-xs"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                        <div>
+                          <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-indigo-700">
+                            {providerLabel} • Global Hosted Checkout
+                          </span>
+                          <h4 className="text-base font-extrabold text-slate-900 mt-1.5">
+                            {modalPlanMeta.name} Plan ({modalPricing.cycleLabel})
+                          </h4>
+                          <p className="text-[11px] text-slate-500">
+                            Merchant of Record processes PayPal, Apple Pay & Cards globally and settles to Pakistan via Payoneer / Bank Wire.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setMorCheckoutModal(null)}
+                          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      {/* Choose Customer Payment Gateway */}
                       <div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                          Paid Tax Invoice
-                        </span>
-                        <h4 className="text-base font-extrabold text-slate-900 mt-1">{viewingInvoice.id}</h4>
-                        <span className="text-[11px] text-slate-500">Issued on {viewingInvoice.invoiceDate}</span>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
+                          Select Customer Payment Gateway:
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(
+                            [
+                              { id: "PAYPAL", label: "🅿️ PayPal Wallet" },
+                              { id: "APPLE_PAY", label: "🍎 Apple Pay" },
+                              { id: "GOOGLE_PAY", label: "🇬 Google Pay" },
+                              { id: "VISA", label: "💳 Visa Card" },
+                              { id: "MASTERCARD", label: "💳 Mastercard" },
+                              { id: "AMEX", label: "💳 Amex Card" },
+                            ] as const
+                          ).map((gw) => (
+                            <button
+                              key={gw.id}
+                              type="button"
+                              onClick={() => setMorCheckoutModal({ ...morCheckoutModal, gateway: gw.id })}
+                              className={`rounded-xl border px-3 py-2 text-xs font-bold transition cursor-pointer ${
+                                morCheckoutModal.gateway === gw.id
+                                  ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                              }`}
+                            >
+                              {gw.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setViewingInvoice(null)}
-                        className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
-                      >
-                        ✕
-                      </button>
-                    </div>
 
-                    <div className="space-y-2 text-slate-600">
-                      <div className="flex justify-between">
-                        <span>Billed Organization:</span>
-                        <b className="text-slate-900">{user.orgName}</b>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Customer Billing Email (PayPal / Receipt Email):
+                        </label>
+                        <input
+                          type="email"
+                          value={morCheckoutModal.payerEmail}
+                          onChange={(e) =>
+                            setMorCheckoutModal({ ...morCheckoutModal, payerEmail: e.target.value })
+                          }
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-indigo-600"
+                        />
                       </div>
-                      <div className="flex justify-between">
-                        <span>Subscription Plan:</span>
-                        <b className="text-slate-900">{viewingInvoice.planName}</b>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Billing Cycle:</span>
-                        <b className="text-slate-900 capitalize">{viewingInvoice.billingCycle}</b>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Payment Method:</span>
-                        <b className="text-slate-900">{viewingInvoice.cardSummary || "Card on file"}</b>
-                      </div>
-                    </div>
 
-                    <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-100 space-y-1.5">
-                      <div className="flex justify-between text-slate-600">
-                        <span>Subtotal (excl. GST)</span>
-                        <span>${((viewingInvoice.amountCents / 100) * 0.9091).toFixed(2)} AUD</span>
+                      <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-100 space-y-1.5">
+                        <div className="flex justify-between text-slate-600">
+                          <span>Plan & Cycle</span>
+                          <b className="text-slate-900">
+                            {modalPlanMeta.name} • {modalPricing.cycleLabel}
+                          </b>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span>Tax Compliance ({currConfig.taxLabel})</span>
+                          <span className="text-emerald-700 font-semibold">Handled by {providerLabel}</span>
+                        </div>
+                        <div className="flex justify-between font-extrabold text-slate-900 text-sm pt-1.5 border-t border-slate-200">
+                          <span>Total Due Today</span>
+                          <span>
+                            {currConfig.symbol}
+                            {modalPricing.totalCharge.toLocaleString()}.00 {selectedCurrency}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex justify-between text-slate-600">
-                        <span>GST (10%)</span>
-                        <span>${((viewingInvoice.amountCents / 100) * 0.0909).toFixed(2)} AUD</span>
-                      </div>
-                      <div className="flex justify-between font-extrabold text-slate-900 text-sm pt-1.5 border-t border-slate-200">
-                        <span>Total Paid</span>
-                        <span>{viewingInvoice.amountFormatted}</span>
-                      </div>
-                    </div>
 
-                    <div className="flex justify-end gap-2 pt-2">
-                      <button
-                        type="button"
-                        onClick={() => window.print()}
-                        className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                      >
-                        🖨️ Print Receipt
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setViewingInvoice(null)}
-                        className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition cursor-pointer"
-                      >
-                        Done
-                      </button>
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+                        <button
+                          type="button"
+                          disabled={morCheckoutModal.isProcessing}
+                          onClick={() => handleCompleteMoRCheckout(true)}
+                          className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 font-bold text-red-700 hover:bg-red-100 transition cursor-pointer"
+                        >
+                          Simulate Failed Webhook
+                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setMorCheckoutModal(null)}
+                            className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={morCheckoutModal.isProcessing}
+                            onClick={() => handleCompleteMoRCheckout(false)}
+                            className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition cursor-pointer"
+                          >
+                            {morCheckoutModal.isProcessing
+                              ? "Processing Webhook..."
+                              : `Pay ${currConfig.symbol}${modalPricing.totalCharge.toLocaleString()} ${selectedCurrency} via ${morCheckoutModal.gateway}`}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
+
+              {/* Tax Invoice / Receipt Modal (Only accessible for Paid invoices) */}
+              {viewingInvoice && viewingInvoice.status === "Paid" && (() => {
+                const invCurr = CURRENCY_CONFIGS[viewingInvoice.currency || "AUD"] || CURRENCY_CONFIGS.AUD;
+                const totalNum = viewingInvoice.amountCents / 100;
+                const taxPart = totalNum - totalNum / (1 + invCurr.taxRate);
+                const subPart = totalNum - taxPart;
+                return (
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
+                    onClick={() => setViewingInvoice(null)}
+                  >
+                    <div
+                      className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4 text-xs"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                            Paid Tax Invoice • {providerLabel}
+                          </span>
+                          <h4 className="text-base font-extrabold text-slate-900 mt-1">{viewingInvoice.id}</h4>
+                          <span className="text-[11px] text-slate-500">Issued on {viewingInvoice.invoiceDate}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setViewingInvoice(null)}
+                          className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div className="space-y-2 text-slate-600">
+                        <div className="flex justify-between">
+                          <span>Billed Organization:</span>
+                          <b className="text-slate-900">{user.orgName}</b>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Subscription Plan:</span>
+                          <b className="text-slate-900">{viewingInvoice.planName}</b>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Billing Cycle:</span>
+                          <b className="text-slate-900 capitalize">{viewingInvoice.billingCycle}</b>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Payment Method:</span>
+                          <b className="text-slate-900">{viewingInvoice.cardSummary || "Card / PayPal on file"}</b>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-100 space-y-1.5">
+                        <div className="flex justify-between text-slate-600">
+                          <span>Subtotal (excl. tax)</span>
+                          <span>
+                            {invCurr.symbol}{subPart.toFixed(2)} {invCurr.code}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span>{invCurr.taxLabel}</span>
+                          <span>
+                            {invCurr.symbol}{taxPart.toFixed(2)} {invCurr.code}
+                          </span>
+                        </div>
+                        <div className="flex justify-between font-extrabold text-slate-900 text-sm pt-1.5 border-t border-slate-200">
+                          <span>Total Paid</span>
+                          <span>{viewingInvoice.amountFormatted}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => window.print()}
+                          className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                        >
+                          🖨️ Print Receipt
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setViewingInvoice(null)}
+                          className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition cursor-pointer"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}

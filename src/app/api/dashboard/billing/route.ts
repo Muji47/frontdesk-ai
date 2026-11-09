@@ -23,6 +23,17 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const action = body.action;
 
+    if (action === "update_preferences") {
+      const billing = DashboardService.updateBillingPreferences(user.orgId, {
+        currency: body.currency,
+        provider: body.provider,
+      });
+      return NextResponse.json({
+        billing,
+        message: `Billing preferences updated (${billing.currency} • ${billing.provider === "paddle" ? "Paddle" : "Lemon Squeezy"}).`,
+      });
+    }
+
     if (action === "update_subscription") {
       const plan =
         body.plan === "starter" || body.plan === "scale" ? body.plan : "growth";
@@ -34,7 +45,8 @@ export async function POST(req: NextRequest) {
         user.orgId,
         plan,
         billingCycle,
-        Boolean(body.simulateFailedCharge)
+        Boolean(body.simulateFailedCharge),
+        body.currency
       );
       return NextResponse.json(result);
     }

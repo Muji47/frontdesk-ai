@@ -24,7 +24,7 @@ export const RegisterInputSchema = z.object({
     .string()
     .min(8, "Password must be at least 8 characters long")
     .max(128, "Password cannot exceed 128 characters")
-    .refine((val) => /[0-9]/.test(val) || /[a-zA-Z]/.test(val), {
+    .refine((val) => /[0-9]/.test(val) && /[a-zA-Z]/.test(val), {
       message: "Password must contain letters and numbers",
     }),
 });

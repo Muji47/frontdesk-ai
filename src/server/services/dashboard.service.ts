@@ -968,12 +968,28 @@ export class DashboardService {
         WHERE id = ? AND organization_id = ?
       `).run(approvedAnswer.trim(), userId, questionId, orgId);
 
-      // Ingest approved Q&A as an active verified knowledge document
+      const questionRow = db.prepare("SELECT question FROM unanswered_questions WHERE id = ?").get(questionId) as { question: string } | undefined;
+      const questionText = questionRow?.question || "FAQ";
+
+      // Ingest approved Q&A as an active verified knowledge document & chunk
       const docId = "doc_" + randomBytes(6).toString("hex");
       db.prepare(`
         INSERT INTO knowledge_sources (id, organization_id, title, source_type, source_url, status, page_count)
         VALUES (?, ?, ?, 'manual_qa', NULL, 'indexed', 1)
-      `).run(docId, orgId, `FAQ: ${approvedAnswer.slice(0, 40)}...`);
+      `).run(docId, orgId, `FAQ: ${questionText.slice(0, 40)}`);
+
+      const chunkId = "chk_" + randomBytes(6).toString("hex");
+      db.prepare(`
+        INSERT INTO knowledge_chunks (id, source_id, organization_id, chunk_index, title, content, token_count)
+        VALUES (?, ?, ?, 1, ?, ?, ?)
+      `).run(
+        chunkId,
+        docId,
+        orgId,
+        `FAQ: ${questionText}`,
+        `Question: ${questionText}\nAnswer: ${approvedAnswer.trim()}`,
+        Math.max(1, Math.round(approvedAnswer.length / 4))
+      );
     });
   }
 
@@ -1041,9 +1057,10 @@ export class DashboardService {
           last_message = ?,
           status = 'RESOLVED',
           resolution_badge = 'Human Resolved',
+          is_ai_muted = 1,
           last_activity_at = ?
-        WHERE id = ?
-      `).run(content.trim(), nowIso, conversationId);
+        WHERE id = ? AND organization_id = ?
+      `).run(content.trim(), nowIso, conversationId, orgId);
     });
 
     dashboardEventBus.emitToOrg(orgId, {
@@ -1098,10 +1115,15 @@ export class DashboardService {
     title: string,
     sourceType: "url" | "pdf" | "document" | "manual_qa",
     sourceUrl?: string,
-    pageCount: number = 1
+    pageCount: number = 1,
+    content?: string
   ): Promise<DashboardKnowledgeSource> {
     if (!title || title.trim().length === 0) {
       throw new ValidationError("Source title or URL is required.");
+    }
+
+    if (sourceType === "url") {
+      await CrawlerService.validateUrlSafety(title.trim());
     }
 
     const id = "src_" + randomBytes(6).toString("hex");
@@ -1112,8 +1134,21 @@ export class DashboardService {
       VALUES (?, ?, ?, ?, ?, 'indexing', ?, ?)
     `).run(id, orgId, title.trim(), sourceType, sourceUrl?.trim() || null, Math.max(1, pageCount), nowIso);
 
+    // If manual Q&A, also register in unanswered_questions as approved for immediate match retrieval
+    if (sourceType === "manual_qa" && content?.trim()) {
+      const unqId = "unq_" + randomBytes(6).toString("hex");
+      try {
+        db.prepare(`
+          INSERT INTO unanswered_questions (id, organization_id, question, frequency_count, status, approved_answer, approved_by)
+          VALUES (?, ?, ?, 1, 'approved', ?, 'staff')
+        `).run(unqId, orgId, title.trim(), content.trim());
+      } catch (err) {
+        console.warn("[addKnowledgeSource] Failed to insert manual Q&A into unanswered_questions:", err);
+      }
+    }
+
     // Extract real parameter chunks from the website or document
-    const extractedChunks = await CrawlerService.processAndSaveChunks(id, orgId, title.trim(), sourceType);
+    const extractedChunks = await CrawlerService.processAndSaveChunks(id, orgId, title.trim(), sourceType, content);
 
     return {
       id,
@@ -1170,7 +1205,16 @@ export class DashboardService {
       };
     }
 
-    const stopWords = new Set(["what", "when", "where", "which", "have", "does", "with", "from", "your", "that", "this", "there", "their", "about", "would", "could", "should", "please", "tell"]);
+    const stopWords = new Set([
+      "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+      "have", "has", "had", "does", "did", "doing", "done", "do",
+      "with", "from", "your", "that", "this", "there", "their", "theirs", "they", "them",
+      "about", "would", "could", "should", "shall", "will", "can", "may", "might", "must",
+      "please", "tell", "give", "know", "want", "like", "just",
+      "the", "and", "for", "are", "but", "not", "you", "all", "any", "been",
+      "her", "was", "one", "our", "out", "day", "get", "him", "his",
+      "new", "now", "old", "see", "two", "way", "its", "let", "put", "say", "she", "too", "use"
+    ]);
     const baseTokens = lowerQuery
       .split(/\W+/)
       .filter((w) => w.length >= 3 && !stopWords.has(w));
@@ -1205,7 +1249,7 @@ export class DashboardService {
     for (const q of approvedQ) {
       const qLower = String(q.question).toLowerCase();
       const matchWords = qLower.split(/\W+/).filter((w) => w.length >= 3 && !stopWords.has(w));
-      const isMatch = qLower === lowerQuery || matchWords.some((w) => lowerQuery.includes(w));
+      const isMatch = qLower === lowerQuery || (matchWords.length > 0 && matchWords.every((w) => lowerQuery.includes(w)));
       if (isMatch) {
         return {
           answer: String(q.approved_answer),
@@ -1235,7 +1279,7 @@ export class DashboardService {
           }
           return { chunk, score };
         })
-        .filter((item) => item.score > 0)
+        .filter((item) => item.score >= 3)
         .sort((a, b) => b.score - a.score);
 
       if (scored.length > 0) {
@@ -1490,13 +1534,17 @@ export class DashboardService {
     let convId = params.conversationId;
     const clientMsgId = "msg_" + randomBytes(6).toString("hex");
 
-    // Verify if conversation exists in DB
+    // Verify if conversation exists in DB and belongs to this organization
     const existingConv = convId
-      ? (db.prepare(`SELECT id, visitor_name, is_ai_muted FROM conversations WHERE id = ?`).get(convId) as any)
+      ? (db.prepare(`SELECT id, visitor_name, is_ai_muted FROM conversations WHERE id = ? AND organization_id = ?`).get(convId, orgId) as any)
       : null;
 
+    if (convId && !existingConv) {
+      throw new NotFoundError("Conversation not found for this organization.");
+    }
+
     // 1. Create conversation if new
-    if (!convId || !existingConv) {
+    if (!convId) {
       convId = "conv_" + randomBytes(6).toString("hex");
       const visitorName = params.visitorName || "Website Visitor";
       const visitorContact = params.visitorContact || "+61 400 " + Math.floor(100000 + Math.random() * 900000);
@@ -1582,7 +1630,7 @@ export class DashboardService {
           conversationId: convId,
           clientMsgId,
           aiMsgId: "",
-          replyText: "",
+          replyText: "Your message has been received by clinic staff. A team member will reply directly shortly.",
           chips: [],
           isEscalated: true,
         };

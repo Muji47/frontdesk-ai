@@ -6,8 +6,12 @@ import { handleApiError, ValidationError } from "@/server/errors";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    if (!body.message || typeof body.message !== "string") {
+    const msg = String(body.message || "").trim();
+    if (!msg) {
       throw new ValidationError("Valid message text is required.");
+    }
+    if (msg.length > 2000) {
+      throw new ValidationError("Message cannot exceed 2,000 characters.");
     }
 
     // Default to the active organization from session if available, or demo organization

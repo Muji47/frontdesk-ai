@@ -21,22 +21,32 @@ export async function POST(request: Request) {
     const lsSecret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
     const lsSignature = request.headers.get("x-signature");
 
-    // Verify HMAC-SHA256 signature if a live Lemon Squeezy webhook secret is configured
-    if (lsSecret && lsSignature) {
+    let verifiedOrgId: string | null = null;
+
+    if (lsSignature) {
+      if (!lsSecret) {
+        return NextResponse.json({ error: "Webhook secret not configured on server" }, { status: 500 });
+      }
       const valid = verifyLemonSqueezySignature(rawBody, lsSignature, lsSecret);
       if (!valid) {
         return NextResponse.json({ error: "Invalid webhook HMAC signature" }, { status: 401 });
       }
-    }
-
-    // Also allow authenticated dashboard session for local/sandbox webhook simulation
-    let sessionOrgId: string | undefined;
-    if (!lsSignature) {
-      const user = await getCurrentUser();
-      if (!user && lsSecret) {
-        return NextResponse.json({ error: "Missing webhook signature" }, { status: 401 });
+      const customData =
+        payload?.meta?.custom_data ||
+        payload?.data?.custom_data ||
+        payload?.customData;
+      verifiedOrgId = customData?.organization_id || customData?.orgId || null;
+      if (!verifiedOrgId) {
+        return NextResponse.json({ error: "Missing organization_id in verified webhook payload" }, { status: 400 });
       }
-      sessionOrgId = user?.orgId;
+    } else {
+      // No webhook signature: strictly require an authenticated dashboard user session
+      const user = await getCurrentUser();
+      if (!user) {
+        return NextResponse.json({ error: "Unauthorized: Webhook signature or active session required" }, { status: 401 });
+      }
+      // Strictly bind to the authenticated user's organization — prohibit cross-tenant hijacking
+      verifiedOrgId = user.orgId;
     }
 
     // Parse Lemon Squeezy, Paddle, or unified MoR payload structure
@@ -52,7 +62,7 @@ export async function POST(request: Request) {
       payload?.customData ||
       payload;
 
-    const orgId = String(customData?.organization_id || customData?.orgId || sessionOrgId || "org_demo_101");
+    const orgId = verifiedOrgId;
     const rawPlan = String(customData?.plan || "growth").toLowerCase();
     const plan: "starter" | "growth" | "scale" =
       rawPlan === "starter" ? "starter" : rawPlan === "scale" ? "scale" : "growth";

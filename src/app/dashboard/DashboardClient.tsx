@@ -690,11 +690,14 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
     setIsAddingFaq(true);
     try {
+      const q = newFaqQ.trim();
+      const a = newFaqA.trim();
       const addRes = await fetch("/api/dashboard/knowledge/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: `FAQ: ${newFaqQ.trim().slice(0, 40)}...`,
+          title: q,
+          content: a,
           sourceType: "manual_qa",
           pageCount: 1,
         }),
@@ -707,10 +710,10 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       setUnanswered((prev) => [
         {
           id: "unq_" + Date.now(),
-          question: newFaqQ.trim(),
+          question: q,
           frequencyCount: 1,
           status: "approved",
-          approvedAnswer: newFaqA.trim(),
+          approvedAnswer: a,
           lastAskedAt: new Date().toISOString(),
         },
         ...prev,

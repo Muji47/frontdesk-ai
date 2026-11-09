@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { db, withTransaction } from "@/lib/db";
+import { ValidationError } from "@/server/errors";
 
 export interface ExtractedChunk {
   title: string;
@@ -7,13 +8,76 @@ export interface ExtractedChunk {
   tokenCount: number;
 }
 
+function isPrivateOrInternalIp(ip: string): boolean {
+  if (ip === "::1" || ip === "0.0.0.0" || ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) {
+    return true;
+  }
+  const parts = ip.split(".").map(Number);
+  if (parts.length === 4 && parts.every((p) => !isNaN(p) && p >= 0 && p <= 255)) {
+    // 127.0.0.0/8 (loopback)
+    if (parts[0] === 127) return true;
+    // 10.0.0.0/8 (private)
+    if (parts[0] === 10) return true;
+    // 172.16.0.0/12 (private: 172.16.x.x - 172.31.x.x)
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    // 192.168.0.0/16 (private)
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    // 169.254.0.0/16 (link-local & AWS/GCP metadata)
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    // 0.0.0.0/8
+    if (parts[0] === 0) return true;
+  }
+  return false;
+}
+
 export class CrawlerService {
+  /**
+   * Validates that a target URL does not resolve to private, loopback, or cloud metadata IP ranges (SSRF defense).
+   */
+  public static async validateUrlSafety(url: string): Promise<URL> {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url.startsWith("http") ? url : `https://${url}`);
+    } catch {
+      throw new ValidationError("Please provide a valid website URL.");
+    }
+
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      throw new ValidationError("Only HTTP and HTTPS protocols are supported.");
+    }
+
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname === "127.0.0.1" ||
+      hostname === "0.0.0.0" ||
+      hostname === "::1"
+    ) {
+      throw new ValidationError("Crawling localhost or internal network targets is prohibited.");
+    }
+
+    try {
+      const dns = await import("node:dns/promises");
+      const { address } = await dns.lookup(hostname);
+      if (isPrivateOrInternalIp(address)) {
+        throw new ValidationError(`Target IP address (${address}) is in a private or restricted network range.`);
+      }
+    } catch (err: any) {
+      if (err instanceof ValidationError) throw err;
+      throw new ValidationError(`Could not resolve website hostname "${hostname}".`);
+    }
+
+    return parsedUrl;
+  }
+
   /**
    * Fetches and crawls a real website URL, extracting actual text parameters and semantic sections.
    */
   public static async crawlUrl(url: string): Promise<ExtractedChunk[]> {
+    const parsedUrl = await this.validateUrlSafety(url);
+
     try {
-      const parsedUrl = new URL(url.startsWith("http") ? url : `https://${url}`);
       const res = await fetch(parsedUrl.toString(), {
         headers: {
           "User-Agent":
@@ -90,18 +154,22 @@ export class CrawlerService {
     sourceId: string,
     orgId: string,
     title: string,
-    sourceType: string
+    sourceType: string,
+    content?: string
   ): Promise<ExtractedChunk[]> {
     let chunks: ExtractedChunk[] = [];
 
     if (sourceType === "url") {
       chunks = await this.crawlUrl(title);
     } else if (sourceType === "manual_qa") {
+      const qaContent = content?.trim()
+        ? `Question: ${title}\nAnswer: ${content.trim()}`
+        : title;
       chunks = [
         {
-          title: "Verified Response Directive",
-          content: title,
-          tokenCount: Math.round(title.length / 4),
+          title: title.startsWith("FAQ:") ? title : `FAQ: ${title}`,
+          content: qaContent,
+          tokenCount: Math.max(1, Math.round(qaContent.length / 4)),
         },
       ];
     } else {

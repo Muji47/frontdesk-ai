@@ -24,7 +24,8 @@ export async function POST(req: NextRequest) {
       body.title,
       sourceType,
       body.sourceUrl,
-      body.pageCount || (sourceType === "url" ? 12 : 4)
+      body.pageCount || (sourceType === "url" ? 12 : 1),
+      typeof body.content === "string" ? body.content : typeof body.answer === "string" ? body.answer : undefined
     );
 
     return NextResponse.json({ success: true, source }, { status: 201 });

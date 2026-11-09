@@ -2850,7 +2850,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
         {/* ===================== TAB: BILLING ===================== */}
         {activeTab === "billing" && (() => {
-          const currConfig = CURRENCY_CONFIGS[selectedCurrency] || CURRENCY_CONFIGS.AUD;
           const planCatalog: Array<{
             id: "starter" | "growth" | "scale";
             name: string;
@@ -2864,7 +2863,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               id: "starter",
               name: "Starter",
               tagline: "Solo practitioners & single-site front desks",
-              baseMonthly: currConfig.monthlyBase.starter,
+              baseMonthly: 49,
               convLimit: 500,
               seatsLimit: 1,
               features: ["500 AI conversations / mo", "1 Staff seat", "Website embed widget", "Email & live inbox handover"],
@@ -2873,7 +2872,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               id: "growth",
               name: "Growth",
               tagline: "Multi-practitioner clinics & high-volume reception",
-              baseMonthly: currConfig.monthlyBase.growth,
+              baseMonthly: 99,
               convLimit: 2000,
               seatsLimit: 3,
               features: ["2,000 AI conversations / mo", "3 Staff seats", "Cliniko & Shopify 2-way sync", "Self-learning Q&A approval queue"],
@@ -2882,7 +2881,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               id: "scale",
               name: "Scale",
               tagline: "Multi-location clinic groups & enterprise SLAs",
-              baseMonthly: currConfig.monthlyBase.scale,
+              baseMonthly: 249,
               convLimit: 10000,
               seatsLimit: 10,
               features: ["10,000 AI conversations / mo", "10 Staff seats", "Priority SLA & custom webhooks", "Dedicated multi-site analytics"],
@@ -2914,43 +2913,17 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           const activePlanMeta = planCatalog.find((p) => p.id === billingState.plan) || planCatalog[1];
           const activePricing = getCyclePricing(activePlanMeta.baseMonthly, billingState.billingCycle);
           const defaultCard = billingState.paymentMethods.find((pm) => pm.isDefault);
-          const providerLabel = selectedProvider === "paddle" ? "Paddle MoR" : "Lemon Squeezy MoR";
 
           return (
             <div className="space-y-6 max-w-5xl">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900">Billing & Worldwide Subscription Management</h2>
+                  <h2 className="text-lg font-bold text-slate-900">Billing & Subscription Management</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Global Merchant of Record billing (Cards, PayPal, Apple Pay, Google Pay) with Monthly, Bi-Annual, and Annual cycles.
+                    Upgrade or downgrade plans, switch between Monthly, Bi-Annual, and Annual billing cycles, manage payment methods, and review invoices.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Global Currency Selector */}
-                  <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5 text-[11px] font-bold shadow-2xs">
-                    {(["USD", "AUD", "GBP", "EUR"] as BillingCurrency[]).map((curr) => (
-                      <button
-                        key={curr}
-                        type="button"
-                        onClick={() => handleUpdateBillingPreferences(curr, selectedProvider)}
-                        className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                          selectedCurrency === curr
-                            ? "bg-indigo-600 text-white"
-                            : "text-slate-600 hover:text-slate-900"
-                        }`}
-                      >
-                        {CURRENCY_CONFIGS[curr].symbol} {curr}
-                      </button>
-                    ))}
-                  </div>
-
-                  <button
-                    onClick={() => handleOpenMoRCheckout(billingState.plan, selectedCycle)}
-                    className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
-                  >
-                    🌐 Pay with PayPal / Apple Pay (MoR)
-                  </button>
-
                   <button
                     onClick={() => handleUpdateSubscription(billingState.plan, selectedCycle, true)}
                     disabled={Boolean(isUpdatingPlan)}
@@ -2959,53 +2932,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   >
                     ⚡ Test Failed Charge
                   </button>
-                </div>
-              </div>
-
-              {/* Worldwide Merchant of Record Banner (Option 1 — Pakistan Founder Global Payouts) */}
-              <div className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50/80 via-white to-indigo-50/50 p-4 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-white">
-                      🌐 Worldwide MoR Active ({providerLabel})
-                    </span>
-                    <span className="text-[11px] font-bold text-slate-700">
-                      Customer Checkout: <span className="text-indigo-700">PayPal • Apple Pay • Google Pay • Visa • Mastercard • Amex</span>
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-600">
-                    <b>{providerLabel}</b> processes global cards & PayPal on their US/UK merchant entity, handles automatic{" "}
-                    <b>{currConfig.taxLabel}</b> compliance, and settles payouts directly to Pakistan via{" "}
-                    <b>Payoneer, Elevate Pay, or Pakistani Bank IBAN (SWIFT)</b>.
-                  </p>
-                </div>
-
-                {/* Switch MoR Provider: Lemon Squeezy vs Paddle */}
-                <div className="flex items-center gap-2 shrink-0">
-                  <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 text-[11px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => handleUpdateBillingPreferences(selectedCurrency, "lemonsqueezy")}
-                      className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                        selectedProvider === "lemonsqueezy"
-                          ? "bg-white text-indigo-700 shadow-2xs"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      🍋 Lemon Squeezy
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleUpdateBillingPreferences(selectedCurrency, "paddle")}
-                      className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                        selectedProvider === "paddle"
-                          ? "bg-white text-indigo-700 shadow-2xs"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      🛶 Paddle
-                    </button>
-                  </div>
                 </div>
               </div>
 
@@ -3041,9 +2967,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
                         {activePricing.cycleLabel}
                       </span>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-full">
-                        {providerLabel}
-                      </span>
                     </div>
                     <h3 className="text-2xl font-black text-slate-900 mt-1.5 capitalize">
                       {activePlanMeta.name} Plan
@@ -3052,11 +2975,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   </div>
                   <div className="sm:text-right">
                     <div className="text-2xl font-black text-slate-900">
-                      {currConfig.symbol}{activePricing.totalCharge.toLocaleString()} {selectedCurrency}
+                      ${activePricing.totalCharge.toLocaleString()}
                       <span className="text-xs font-normal text-slate-500"> {activePricing.cycleShort}</span>
                     </div>
                     <span className="text-[11px] text-slate-500 block mt-0.5">
-                      Effective rate: <b>{currConfig.symbol}{activePricing.perMonth}/mo</b> •{" "}
+                      Effective rate: <b>${activePricing.perMonth}/mo</b> •{" "}
                       {defaultCard
                         ? defaultCard.brand === "PAYPAL"
                           ? `Charged via PayPal (${defaultCard.cardholderName})`
@@ -3123,7 +3046,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">Upgrade, Downgrade & Billing Cycle</h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Select a billing cycle and plan tier below. Switching immediately charges the selected cycle amount in <b>{selectedCurrency}</b>.
+                      Select a billing cycle and plan tier below. Switching immediately charges the selected cycle amount to your default payment method.
                     </p>
                   </div>
 
@@ -3186,11 +3109,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           : selectedCycle === "annual"
                           ? "Annual"
                           : "Monthly"
-                      } (${currConfig.symbol}${pricing.totalCharge.toLocaleString()} ${selectedCurrency})`;
+                      } ($${pricing.totalCharge.toLocaleString()})`;
                     } else if (isUpgrade) {
-                      ctaLabel = `Upgrade to ${tier.name} (${currConfig.symbol}${pricing.totalCharge.toLocaleString()} ${selectedCurrency})`;
+                      ctaLabel = `Upgrade to ${tier.name} ($${pricing.totalCharge.toLocaleString()})`;
                     } else if (isDowngrade) {
-                      ctaLabel = `Downgrade to ${tier.name} (${currConfig.symbol}${pricing.totalCharge.toLocaleString()} ${selectedCurrency})`;
+                      ctaLabel = `Downgrade to ${tier.name} ($${pricing.totalCharge.toLocaleString()})`;
                     }
 
                     return (
@@ -3216,18 +3139,18 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           <div className="mt-4 pt-4 border-t border-slate-100">
                             <div className="flex items-baseline gap-1">
                               <span className="text-2xl font-black text-slate-900">
-                                {currConfig.symbol}{pricing.perMonth}
+                                ${pricing.perMonth}
                               </span>
                               <span className="text-xs text-slate-500 font-medium">
-                                {selectedCurrency} / month
+                                / month
                               </span>
                             </div>
                             <div className="text-[11px] font-semibold text-indigo-700 mt-0.5">
                               {selectedCycle === "monthly"
-                                ? `Billed monthly (${currConfig.symbol}${pricing.totalCharge}.00 ${selectedCurrency})`
+                                ? `Billed monthly ($${pricing.totalCharge}.00)`
                                 : selectedCycle === "biannual"
-                                ? `Billed every 6 months (${currConfig.symbol}${pricing.totalCharge.toLocaleString()}.00 ${selectedCurrency})`
-                                : `Billed annually (${currConfig.symbol}${pricing.totalCharge.toLocaleString()}.00 ${selectedCurrency})`}
+                                ? `Billed every 6 months ($${pricing.totalCharge.toLocaleString()}.00)`
+                                : `Billed annually ($${pricing.totalCharge.toLocaleString()}.00)`}
                             </div>
                           </div>
 
@@ -3263,7 +3186,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                               onClick={() => handleOpenMoRCheckout(tier.id, selectedCycle)}
                               className="w-full rounded-lg border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-indigo-700 transition cursor-pointer"
                             >
-                              Checkout via {providerLabel} (PayPal / Apple Pay) →
+                              Pay with PayPal / Apple Pay / Google Pay →
                             </button>
                           )}
                         </div>
@@ -3289,17 +3212,17 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       </button>
                     </div>
                     <p className="text-xs text-slate-500 mb-4">
-                      Add credit/debit cards or global wallets (PayPal, Apple Pay, Google Pay via {providerLabel}).
+                      Default payment method is charged automatically on plan updates and renewal cycles.
                     </p>
 
-                    {/* Add Card / Global Wallet Inline Form */}
+                    {/* Add Card / Wallet Inline Form */}
                     {showAddCardModal && (
                       <form
                         onSubmit={handleAddPaymentMethod}
                         className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3 text-xs"
                       >
                         <div className="font-bold text-slate-900">
-                          Add Card or Global Wallet (PayPal / Apple Pay)
+                          Add Payment Method
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                           <div>
@@ -3311,12 +3234,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                               onChange={(e) => setCardBrand(e.target.value as PaymentMethodBrand)}
                               className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
                             >
-                              <option value="VISA">VISA Card</option>
+                              <option value="VISA">VISA</option>
                               <option value="MASTERCARD">MASTERCARD</option>
-                              <option value="AMEX">AMEX Card</option>
-                              <option value="PAYPAL">PayPal (via MoR)</option>
-                              <option value="APPLE_PAY">Apple Pay (via MoR)</option>
-                              <option value="GOOGLE_PAY">Google Pay (via MoR)</option>
+                              <option value="AMEX">AMEX</option>
+                              <option value="PAYPAL">PayPal</option>
+                              <option value="APPLE_PAY">Apple Pay</option>
+                              <option value="GOOGLE_PAY">Google Pay</option>
                             </select>
                           </div>
                           <div className="sm:col-span-2">
@@ -3337,13 +3260,13 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         {cardBrand === "PAYPAL" ? (
                           <div>
                             <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                              PayPal Email Address (processed via {providerLabel})
+                              PayPal Email Address
                             </label>
                             <input
                               type="email"
                               value={cardNumber}
                               onChange={(e) => setCardNumber(e.target.value)}
-                              placeholder="billing@healinghands.com.au"
+                              placeholder="billing@clinic.com"
                               required
                               className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
                             />
@@ -3416,7 +3339,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     {/* Saved Payment Methods List */}
                     {billingState.paymentMethods.length === 0 ? (
                       <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">
-                        No payment methods on file. Click <b>+ Add Payment Method</b> above to add a card or PayPal wallet.
+                        No payment methods on file. Click <b>+ Add Payment Method</b> above to add a card or PayPal account.
                       </div>
                     ) : (
                       <div className="space-y-2.5">
@@ -3453,7 +3376,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                 <div className="flex items-center gap-2">
                                   <b className="text-xs text-slate-900 font-bold truncate">
                                     {pm.brand === "PAYPAL"
-                                      ? `PayPal Wallet (${pm.cardholderName})`
+                                      ? `PayPal (${pm.cardholderName})`
                                       : `${pm.brand} ending in ${pm.last4}`}
                                   </b>
                                   {pm.isDefault && (
@@ -3464,7 +3387,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                 </div>
                                 <span className="text-[11px] text-slate-500 block truncate">
                                   {pm.brand === "PAYPAL"
-                                    ? `Connected via ${providerLabel} • Active`
+                                    ? `Verified PayPal Account`
                                     : `${pm.cardholderName} • Expires ${pm.expMonth}/${pm.expYear}`}
                                 </span>
                               </div>
@@ -3579,7 +3502,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
 
-              {/* Merchant of Record (Lemon Squeezy / Paddle) Global Overlay Checkout Modal */}
+              {/* Clean Customer-Facing Express Checkout Modal (PayPal / Apple Pay / Google Pay / Cards) */}
               {morCheckoutModal && morCheckoutModal.open && (() => {
                 const modalPlanMeta = planCatalog.find((p) => p.id === morCheckoutModal.plan) || planCatalog[1];
                 const modalPricing = getCyclePricing(modalPlanMeta.baseMonthly, morCheckoutModal.billingCycle);
@@ -3595,13 +3518,13 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <div className="flex items-start justify-between border-b border-slate-100 pb-3">
                         <div>
                           <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-indigo-700">
-                            {providerLabel} • Global Hosted Checkout
+                            Secure Subscription Checkout
                           </span>
                           <h4 className="text-base font-extrabold text-slate-900 mt-1.5">
                             {modalPlanMeta.name} Plan ({modalPricing.cycleLabel})
                           </h4>
                           <p className="text-[11px] text-slate-500">
-                            Merchant of Record processes PayPal, Apple Pay & Cards globally and settles to Pakistan via Payoneer / Bank Wire.
+                            Complete your subscription using PayPal, Apple Pay, Google Pay, or Credit/Debit Card.
                           </p>
                         </div>
                         <button
@@ -3613,20 +3536,20 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         </button>
                       </div>
 
-                      {/* Choose Customer Payment Gateway */}
+                      {/* Choose Payment Method */}
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
-                          Select Customer Payment Gateway:
+                          Payment Method:
                         </label>
                         <div className="grid grid-cols-3 gap-2">
                           {(
                             [
-                              { id: "PAYPAL", label: "🅿️ PayPal Wallet" },
+                              { id: "PAYPAL", label: "🅿️ PayPal" },
                               { id: "APPLE_PAY", label: "🍎 Apple Pay" },
                               { id: "GOOGLE_PAY", label: "🇬 Google Pay" },
-                              { id: "VISA", label: "💳 Visa Card" },
+                              { id: "VISA", label: "💳 Visa" },
                               { id: "MASTERCARD", label: "💳 Mastercard" },
-                              { id: "AMEX", label: "💳 Amex Card" },
+                              { id: "AMEX", label: "💳 Amex" },
                             ] as const
                           ).map((gw) => (
                             <button
@@ -3647,7 +3570,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Customer Billing Email (PayPal / Receipt Email):
+                          Billing Email:
                         </label>
                         <input
                           type="email"
@@ -3666,47 +3589,30 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                             {modalPlanMeta.name} • {modalPricing.cycleLabel}
                           </b>
                         </div>
-                        <div className="flex justify-between text-slate-600">
-                          <span>Tax Compliance ({currConfig.taxLabel})</span>
-                          <span className="text-emerald-700 font-semibold">Handled by {providerLabel}</span>
-                        </div>
                         <div className="flex justify-between font-extrabold text-slate-900 text-sm pt-1.5 border-t border-slate-200">
                           <span>Total Due Today</span>
-                          <span>
-                            {currConfig.symbol}
-                            {modalPricing.totalCharge.toLocaleString()}.00 {selectedCurrency}
-                          </span>
+                          <span>${modalPricing.totalCharge.toLocaleString()}.00</span>
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setMorCheckoutModal(null)}
+                          className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                        >
+                          Cancel
+                        </button>
                         <button
                           type="button"
                           disabled={morCheckoutModal.isProcessing}
-                          onClick={() => handleCompleteMoRCheckout(true)}
-                          className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 font-bold text-red-700 hover:bg-red-100 transition cursor-pointer"
+                          onClick={() => handleCompleteMoRCheckout(false)}
+                          className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition cursor-pointer"
                         >
-                          Simulate Failed Webhook
+                          {morCheckoutModal.isProcessing
+                            ? "Processing..."
+                            : `Pay $${modalPricing.totalCharge.toLocaleString()}.00`}
                         </button>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setMorCheckoutModal(null)}
-                            className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            disabled={morCheckoutModal.isProcessing}
-                            onClick={() => handleCompleteMoRCheckout(false)}
-                            className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition cursor-pointer"
-                          >
-                            {morCheckoutModal.isProcessing
-                              ? "Processing Webhook..."
-                              : `Pay ${currConfig.symbol}${modalPricing.totalCharge.toLocaleString()} ${selectedCurrency} via ${morCheckoutModal.gateway}`}
-                          </button>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -3715,9 +3621,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
               {/* Tax Invoice / Receipt Modal (Only accessible for Paid invoices) */}
               {viewingInvoice && viewingInvoice.status === "Paid" && (() => {
-                const invCurr = CURRENCY_CONFIGS[viewingInvoice.currency || "AUD"] || CURRENCY_CONFIGS.AUD;
                 const totalNum = viewingInvoice.amountCents / 100;
-                const taxPart = totalNum - totalNum / (1 + invCurr.taxRate);
+                const taxPart = totalNum - totalNum / 1.1;
                 const subPart = totalNum - taxPart;
                 return (
                   <div
@@ -3731,7 +3636,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <div className="flex items-start justify-between border-b border-slate-100 pb-3">
                         <div>
                           <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                            Paid Tax Invoice • {providerLabel}
+                            Paid Tax Invoice
                           </span>
                           <h4 className="text-base font-extrabold text-slate-900 mt-1">{viewingInvoice.id}</h4>
                           <span className="text-[11px] text-slate-500">Issued on {viewingInvoice.invoiceDate}</span>
@@ -3760,22 +3665,18 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         </div>
                         <div className="flex justify-between">
                           <span>Payment Method:</span>
-                          <b className="text-slate-900">{viewingInvoice.cardSummary || "Card / PayPal on file"}</b>
+                          <b className="text-slate-900">{viewingInvoice.cardSummary || "Card on file"}</b>
                         </div>
                       </div>
 
                       <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-100 space-y-1.5">
                         <div className="flex justify-between text-slate-600">
                           <span>Subtotal (excl. tax)</span>
-                          <span>
-                            {invCurr.symbol}{subPart.toFixed(2)} {invCurr.code}
-                          </span>
+                          <span>${subPart.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between text-slate-600">
-                          <span>{invCurr.taxLabel}</span>
-                          <span>
-                            {invCurr.symbol}{taxPart.toFixed(2)} {invCurr.code}
-                          </span>
+                          <span>Tax (10%)</span>
+                          <span>${taxPart.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between font-extrabold text-slate-900 text-sm pt-1.5 border-t border-slate-200">
                           <span>Total Paid</span>

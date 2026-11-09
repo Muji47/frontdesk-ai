@@ -137,7 +137,6 @@ export async function POST(request: Request) {
       checkoutUrl: fallbackCheckoutUrl,
       charge,
       supportedGateways: morStatus.supportedGateways,
-      payoutRails: morStatus.payoutRails,
     });
   } catch (err: any) {
     return NextResponse.json(

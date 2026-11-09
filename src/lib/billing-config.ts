@@ -17,20 +17,20 @@ export const CURRENCY_CONFIGS: Record<BillingCurrency, CurrencyConfig> = {
   USD: {
     code: "USD",
     symbol: "$",
-    label: "USD ($) • Global / US",
-    taxLabel: "Sales Tax / VAT (Included via MoR)",
-    taxRate: 0.08,
+    label: "USD ($)",
+    taxLabel: "Tax (10%)",
+    taxRate: 0.1,
     monthlyBase: {
-      starter: 39,
-      growth: 79,
-      scale: 199,
+      starter: 49,
+      growth: 99,
+      scale: 249,
     },
   },
   AUD: {
     code: "AUD",
     symbol: "$",
-    label: "AUD ($) • Australia",
-    taxLabel: "GST (10%)",
+    label: "USD ($)",
+    taxLabel: "Tax (10%)",
     taxRate: 0.1,
     monthlyBase: {
       starter: 49,
@@ -40,34 +40,30 @@ export const CURRENCY_CONFIGS: Record<BillingCurrency, CurrencyConfig> = {
   },
   GBP: {
     code: "GBP",
-    symbol: "£",
-    label: "GBP (£) • United Kingdom",
-    taxLabel: "UK VAT (20%)",
-    taxRate: 0.2,
+    symbol: "$",
+    label: "USD ($)",
+    taxLabel: "Tax (10%)",
+    taxRate: 0.1,
     monthlyBase: {
-      starter: 32,
-      growth: 65,
-      scale: 165,
+      starter: 49,
+      growth: 99,
+      scale: 249,
     },
   },
   EUR: {
     code: "EUR",
-    symbol: "€",
-    label: "EUR (€) • Europe",
-    taxLabel: "EU VAT (20%)",
-    taxRate: 0.2,
+    symbol: "$",
+    label: "USD ($)",
+    taxLabel: "Tax (10%)",
+    taxRate: 0.1,
     monthlyBase: {
-      starter: 36,
-      growth: 75,
-      scale: 189,
+      starter: 49,
+      growth: 99,
+      scale: 249,
     },
   },
 };
 
-/**
- * Maps each (plan, billingCycle) pair to Lemon Squeezy Variant IDs and Paddle Price IDs.
- * Founders in Pakistan can configure these in .env from their Lemon Squeezy or Paddle dashboard.
- */
 export function getProviderVariantIds(plan: BillingPlanTier, cycle: BillingCycleType) {
   const keySuffix = `${plan.toUpperCase()}_${cycle.toUpperCase()}`;
   const lemonSqueezyVariantId =
@@ -84,9 +80,9 @@ export function getProviderVariantIds(plan: BillingPlanTier, cycle: BillingCycle
 export function calculatePlanCharge(
   plan: BillingPlanTier,
   cycle: BillingCycleType,
-  currency: BillingCurrency = "AUD"
+  _currency: BillingCurrency = "USD"
 ) {
-  const curr = CURRENCY_CONFIGS[currency] || CURRENCY_CONFIGS.AUD;
+  const curr = CURRENCY_CONFIGS.USD;
   const base = curr.monthlyBase[plan] || curr.monthlyBase.growth;
 
   // Monthly = 1x base, Bi-Annual (6 months) = 10% off * 6, Annual (12 months) = 20% off * 12
@@ -100,10 +96,10 @@ export function calculatePlanCharge(
   const monthsMultiplier = cycle === "biannual" ? 6 : cycle === "annual" ? 12 : 1;
   const totalAmount = perMonthEffective * monthsMultiplier;
   const amountCents = totalAmount * 100;
-  const amountFormatted = `${curr.symbol}${totalAmount.toLocaleString("en-US", {
+  const amountFormatted = `$${totalAmount.toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  })} ${curr.code}`;
+  })}`;
 
   const planLabel =
     plan === "starter" ? "Starter Plan" : plan === "scale" ? "Scale Plan" : "Growth Plan";
@@ -119,8 +115,8 @@ export function calculatePlanCharge(
   return {
     plan,
     cycle,
-    currency: curr.code,
-    symbol: curr.symbol,
+    currency: "USD" as BillingCurrency,
+    symbol: "$",
     taxLabel: curr.taxLabel,
     taxRate: curr.taxRate,
     baseMonthly: base,
@@ -151,6 +147,5 @@ export function getMerchantOfRecordStatus() {
     isLiveConfigured,
     mode: isLiveConfigured ? ("live" as const) : ("sandbox" as const),
     supportedGateways: ["VISA", "MASTERCARD", "AMEX", "PAYPAL", "APPLE_PAY", "GOOGLE_PAY"] as PaymentMethodBrand[],
-    payoutRails: ["Payoneer", "Elevate Pay", "Pakistani Bank IBAN (SWIFT)"],
   };
 }

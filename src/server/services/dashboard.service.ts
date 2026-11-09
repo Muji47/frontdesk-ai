@@ -556,7 +556,10 @@ export class DashboardService {
       .all(orgId) as any[];
 
     const invoices: DashboardBillingInvoice[] = invRows.map((inv) => {
-      const invCurr = String(inv.currency || "AUD").toUpperCase();
+      const cleanAmount = String(inv.amount_formatted).replace(/\s*(AUD|USD|GBP|EUR)$/i, "");
+      const cleanSummary = inv.card_summary
+        ? String(inv.card_summary).replace(/\s*•\s*(Lemon Squeezy|Paddle)\s*MoR/gi, "")
+        : null;
       return {
         id: String(inv.id).replace(/-[a-zA-Z0-9]{3}$/, ""),
         planName: String(inv.plan_name),
@@ -564,10 +567,10 @@ export class DashboardService {
           ? inv.billing_cycle
           : "monthly") as "monthly" | "biannual" | "annual",
         amountCents: Number(inv.amount_cents),
-        amountFormatted: String(inv.amount_formatted),
-        currency: (invCurr === "USD" || invCurr === "GBP" || invCurr === "EUR" ? invCurr : "AUD") as BillingCurrency,
+        amountFormatted: cleanAmount,
+        currency: "USD" as BillingCurrency,
         status: inv.status === "Failed" ? "Failed" : "Paid",
-        cardSummary: inv.card_summary ? String(inv.card_summary) : null,
+        cardSummary: cleanSummary,
         failureReason: inv.failure_reason ? String(inv.failure_reason) : null,
         invoiceDate: String(inv.invoice_date),
       };
@@ -727,19 +730,18 @@ export class DashboardService {
       failureReason,
     } = params;
 
-    const charge = calculatePlanCharge(plan, billingCycle, currency);
+    const charge = calculatePlanCharge(plan, billingCycle, "USD");
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
     const invId = `INV-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${randomBytes(2).toString("hex").toUpperCase()}`;
-    const providerLabel = provider === "paddle" ? "Paddle MoR" : "Lemon Squeezy MoR";
     const summaryLabel =
       paymentGateway === "PAYPAL"
-        ? `PayPal (${payerEmail}) • ${providerLabel}`
+        ? `PayPal (${payerEmail})`
         : paymentGateway === "APPLE_PAY"
-        ? `Apple Pay •••• ${cardLast4} • ${providerLabel}`
+        ? `Apple Pay •••• ${cardLast4}`
         : paymentGateway === "GOOGLE_PAY"
-        ? `Google Pay •••• ${cardLast4} • ${providerLabel}`
-        : `${paymentGateway} •••• ${cardLast4} • ${providerLabel}`;
+        ? `Google Pay •••• ${cardLast4}`
+        : `${paymentGateway} •••• ${cardLast4}`;
 
     withTransaction(() => {
       if (
@@ -749,14 +751,13 @@ export class DashboardService {
       ) {
         db.prepare(
           `UPDATE organizations
-           SET plan = ?, billing_cycle = ?, billing_currency = ?, billing_provider = ?,
+           SET plan = ?, billing_cycle = ?, billing_currency = 'USD', billing_provider = ?,
                external_subscription_id = COALESCE(?, external_subscription_id),
                customer_portal_url = COALESCE(?, customer_portal_url)
            WHERE id = ?`
         ).run(
           plan,
           billingCycle,
-          currency,
           provider,
           externalSubscriptionId || `sub_${provider}_${randomBytes(3).toString("hex")}`,
           customerPortalUrl || null,
@@ -768,7 +769,7 @@ export class DashboardService {
         db.prepare(`
           INSERT INTO billing_invoices (
             id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Paid', ?, NULL, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, 'USD', 'Paid', ?, NULL, ?, ?)
         `).run(
           invId,
           orgId,
@@ -776,7 +777,6 @@ export class DashboardService {
           billingCycle,
           charge.amountCents,
           charge.amountFormatted,
-          currency,
           summaryLabel,
           dateStr,
           now.toISOString()
@@ -785,7 +785,7 @@ export class DashboardService {
         db.prepare(`
           INSERT INTO billing_invoices (
             id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Failed', ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, 'USD', 'Failed', ?, ?, ?, ?)
         `).run(
           invId,
           orgId,
@@ -793,9 +793,8 @@ export class DashboardService {
           billingCycle,
           charge.amountCents,
           charge.amountFormatted,
-          currency,
           summaryLabel,
-          failureReason || `${providerLabel}: Payment declined by customer bank / PayPal wallet`,
+          failureReason || `Payment declined by customer bank / wallet`,
           dateStr,
           now.toISOString()
         );
@@ -808,8 +807,8 @@ export class DashboardService {
       eventProcessed: eventName,
       message:
         eventName === "subscription_payment_failed"
-          ? `Webhook [${eventName}] processed: Recorded failed invoice ${invId} (${charge.amountFormatted}).`
-          : `Webhook [${eventName}] processed via ${providerLabel}: Active plan synced to ${charge.planLabel} (${charge.cycleLabel}) • ${charge.amountFormatted} (${summaryLabel}).`,
+          ? `Payment failed (${charge.amountFormatted}) — Failed invoice ${invId} recorded.`
+          : `Subscription updated to ${charge.planLabel} (${charge.cycleLabel}) — Charged ${charge.amountFormatted} via ${summaryLabel}.`,
     };
   }
 

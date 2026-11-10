@@ -692,7 +692,24 @@ export class DashboardService {
       maximumFractionDigits: 2,
     })}`;
 
-    const isDeclinedCard = defaultCard && (defaultCard.last4 === "0000" || defaultCard.last4 === "9999");
+    const STRIPE_DECLINE_CODES: Record<string, string> = {
+      "0341": "Your card was declined by the issuer (test card 0341: attach succeeds, charge fails)",
+      "0002": "Your card was declined (generic decline)",
+      "0005": "Your card was declined (do not honor)",
+      "0054": "Your card has insufficient funds",
+      "9995": "Your card has insufficient funds",
+      "0069": "Your card has expired",
+      "0127": "Your card's security code is incorrect",
+      "0119": "An error occurred while processing your card",
+      "6975": "Card velocity limit exceeded",
+      "9987": "The card has been reported lost",
+      "9979": "The card has been reported stolen",
+      "0000": "Payment declined by issuer during subscription charge",
+      "9999": "Payment declined by issuer during subscription charge",
+    };
+
+    const stripeDeclineReason = defaultCard ? STRIPE_DECLINE_CODES[defaultCard.last4] : null;
+    const isDeclinedCard = Boolean(stripeDeclineReason);
     const formatMethodSummary = (m: { brand: string; last4: string; cardholder_name: string }) => {
       const brand = m.brand === "MASTERCARD" ? "Mastercard" : m.brand === "AMEX" ? "Amex" : "Visa";
       return `${brand} •••• ${m.last4}`;
@@ -701,7 +718,7 @@ export class DashboardService {
     if (!defaultCard || isDeclinedCard || simulateFailedCharge) {
       const failReason = !defaultCard
         ? "No default payment method on file"
-        : "Payment declined by issuer during subscription charge";
+        : stripeDeclineReason || "Payment declined by issuer during subscription charge";
       const cardSummary = defaultCard ? formatMethodSummary(defaultCard) : "No Payment Method";
 
       db.prepare(`

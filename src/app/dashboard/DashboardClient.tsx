@@ -3333,7 +3333,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
                     {/* Saved Payment Methods List */}
                     {billingState.paymentMethods.length > 0 && !showInlineCardForm && !pendingPlanSelection && (
-                      <div className="space-y-2.5">
+                      <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1 custom-scrollbar">
                         {billingState.paymentMethods.map((pm) => {
                           const brandTitle = pm.brand === "MASTERCARD" ? "Mastercard" : pm.brand === "AMEX" ? "Amex" : "Visa";
                           return (
@@ -3540,19 +3540,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         ? `Auto-billing active (${defaultCard.brand === "MASTERCARD" ? "Mastercard" : defaultCard.brand === "AMEX" ? "Amex" : "Visa"} •••• ${defaultCard.last4})`
                         : "Auto-billing paused (no default method)"}
                     </span>
-                    {billingState.paymentMethods.length > 0 && !showInlineCardForm && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPendingPlanSelection(null);
-                          setShowInlineCardForm(true);
-                          setTimeout(() => addCardInputRef.current?.focus(), 150);
-                        }}
-                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 transition cursor-pointer"
-                      >
-                        + Add New Card
-                      </button>
-                    )}
                   </div>
                 </div>
 

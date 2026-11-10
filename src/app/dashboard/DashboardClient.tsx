@@ -10,6 +10,8 @@ import type {
   DashboardConversation,
   DashboardUnansweredQuestion,
   DashboardKnowledgeSource,
+  DashboardAppointment,
+  DashboardLead,
   DashboardBillingData,
   DashboardBillingInvoice,
   ConversationMessage,
@@ -220,6 +222,10 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [exportingCsv, setExportingCsv] = useState<boolean>(false);
   const [copiedEmbed, setCopiedEmbed] = useState<boolean>(false);
 
+  // Appointments & Leads Real-Time Pipeline State
+  const [appointments, setAppointments] = useState<DashboardAppointment[]>(initialData.appointments || []);
+  const [leads, setLeads] = useState<DashboardLead[]>(initialData.leads || []);
+
   // Billing, Subscription Cycles, Payment Methods & Invoice Modal State
   const [billingState, setBillingState] = useState<DashboardBillingData>(
     initialData.billing || {
@@ -356,8 +362,23 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             return c;
           })
         );
-      } else if (payload.type === "new_appointment") {
-        router.refresh();
+      } else if (payload.type === "new_appointment" && payload.data?.appointment) {
+        const apt = payload.data.appointment;
+        setAppointments((prev) => [apt, ...prev.filter((a) => a.id !== apt.id)]);
+        if (payload.data?.lead) {
+          const l = payload.data.lead;
+          setLeads((prev) => [l, ...prev.filter((item) => item.id !== l.id)]);
+        }
+        setMetrics((m) => {
+          const currentCount = parseInt(m.actionMetricValue) || 0;
+          return {
+            ...m,
+            actionMetricValue: isEcom ? m.actionMetricValue : `${currentCount + 1} Bookings`,
+          };
+        });
+      } else if (payload.type === "new_lead" && payload.data?.lead) {
+        const lead = payload.data.lead;
+        setLeads((prev) => [lead, ...prev.filter((l) => l.id !== lead.id)]);
       }
     }
 
@@ -1149,8 +1170,14 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       id: "appointments",
       icon: isEcom ? "📦" : "📅",
       label: isEcom ? "Orders & Tracking" : "Appointments",
+      badge: appointments.length > 0 ? `${appointments.length}` : undefined,
     },
-    { id: "leads", icon: "🎯", label: "Leads" },
+    {
+      id: "leads",
+      icon: "🎯",
+      label: "Leads",
+      badge: leads.length > 0 ? `${leads.length}` : undefined,
+    },
     { id: "analytics", icon: "📈", label: "Analytics" },
     { id: "integrations", icon: "🔌", label: "Integrations" },
     { id: "billing", icon: "💳", label: "Billing" },
@@ -2475,6 +2502,14 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     ))}
                   </tbody>
                 </table>
+              ) : appointments.length === 0 ? (
+                <div className="py-12 text-center">
+                  <div className="text-3xl mb-2">📅</div>
+                  <h4 className="text-sm font-bold text-slate-800">No appointments scheduled yet</h4>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                    Patient bookings scheduled through the autonomous AI receptionist or 2-way Cliniko sync will appear here in real time.
+                  </p>
+                </div>
               ) : (
                 <table className="w-full text-left">
                   <thead>
@@ -2487,22 +2522,39 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {initialData.appointments.map((a, aIdx) => (
-                      <tr key={a.id ? `${a.id}-${aIdx}` : `apt-${aIdx}`}>
-                        <td className="py-2.5 font-bold">{a.patientName}</td>
+                    {appointments.map((a, aIdx) => (
+                      <tr key={a.id ? `${a.id}-${aIdx}` : `apt-${aIdx}`} className="hover:bg-slate-50/50 transition">
+                        <td className="py-3 font-bold text-slate-900">
+                          <div>{a.patientName}</div>
+                          <div className="text-[11px] font-normal text-slate-400">{a.patientContact}</div>
+                        </td>
                         <td>{a.serviceName}</td>
                         <td>{a.practitionerName}</td>
-                        <td>{new Date(a.startTime).toLocaleString()}</td>
                         <td>
-                          <span
-                            className={`rounded px-2 py-0.5 text-[10px] font-bold ${
-                              a.source === "ai_booked"
-                                ? "bg-indigo-50 text-indigo-700"
-                                : "bg-slate-100 text-slate-600"
-                            }`}
-                          >
-                            {a.source === "ai_booked" ? "🤖 AI Booked" : "Staff Booked"}
-                          </span>
+                          <div className="font-semibold">
+                            {new Date(a.startTime).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {new Date(a.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </div>
+                        </td>
+                        <td>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                                a.source === "ai_booked"
+                                  ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                  : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {a.source === "ai_booked" ? "🤖 AI Booked" : "Staff Booked"}
+                            </span>
+                            {a.externalId && (
+                              <span className="text-[10px] font-mono text-slate-400">
+                                #{a.externalId}
+                              </span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -2518,32 +2570,52 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="font-bold text-sm text-slate-900 mb-4">Captured Inbound Leads</h3>
             <div className="overflow-x-auto text-xs">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-slate-100 text-slate-400">
-                    <th className="pb-2 font-semibold">Name</th>
-                    <th className="pb-2 font-semibold">Email</th>
-                    <th className="pb-2 font-semibold">Phone</th>
-                    <th className="pb-2 font-semibold">Inquiry Intent</th>
-                    <th className="pb-2 font-semibold">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {initialData.leads.map((l, lIdx) => (
-                    <tr key={l.id ? `${l.id}-${lIdx}` : `lead-${lIdx}`}>
-                      <td className="py-2.5 font-bold">{l.name}</td>
-                      <td>{l.email || "—"}</td>
-                      <td>{l.phone || "—"}</td>
-                      <td>{l.intent}</td>
-                      <td>
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700 capitalize">
-                          {l.status}
-                        </span>
-                      </td>
+              {leads.length === 0 ? (
+                <div className="py-12 text-center">
+                  <div className="text-3xl mb-2">🎯</div>
+                  <h4 className="text-sm font-bold text-slate-800">No inbound leads captured yet</h4>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                    High-intent patient inquiries and consultation requests captured through website chat will appear here in real time.
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-slate-400">
+                      <th className="pb-2 font-semibold">Name</th>
+                      <th className="pb-2 font-semibold">Email</th>
+                      <th className="pb-2 font-semibold">Phone</th>
+                      <th className="pb-2 font-semibold">Inquiry Intent</th>
+                      <th className="pb-2 font-semibold">Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    {leads.map((l, lIdx) => (
+                      <tr key={l.id ? `${l.id}-${lIdx}` : `lead-${lIdx}`} className="hover:bg-slate-50/50 transition">
+                        <td className="py-3 font-bold text-slate-900">{l.name}</td>
+                        <td>{l.email || "—"}</td>
+                        <td>{l.phone || "—"}</td>
+                        <td>
+                          <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 capitalize">
+                            {l.intent}
+                          </span>
+                        </td>
+                        <td>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${
+                              l.status === "converted"
+                                ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                : "bg-amber-100 text-amber-800 border border-amber-200"
+                            }`}
+                          >
+                            {l.status === "converted" ? "✓ Booked / Converted" : "Warm Inquiry"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         )}

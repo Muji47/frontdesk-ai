@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { db, withTransaction, seedOrganizationData } from "@/lib/db";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { CrawlerService } from "./crawler.service";
+import { AppointmentService } from "./appointment.service";
 import { dashboardEventBus } from "@/lib/events";
 import {
   calculatePlanCharge,
@@ -1744,38 +1745,121 @@ export class DashboardService {
       }
     }
 
+    // 3. Process Booking Intent & Appointment Scheduling
+    const history = db
+      .prepare(`SELECT sender, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`)
+      .all(convId) as Array<{ sender: string; content: string }>;
+
+    const bookingParsed = AppointmentService.parseBookingIntentAndEntities(
+      text,
+      history,
+      params.visitorName || existingConv?.visitor_name,
+      params.visitorContact || existingConv?.visitor_contact
+    );
+
     let aiReplyText = "";
     let isEscalated = false;
-    const chips: string[] = ["Book Appointment", "Consultation Fees", "HICAPS Health Funds", "Opening Hours"];
+    let chips: string[] = ["Book Appointment", "Consultation Fees", "HICAPS Health Funds", "Opening Hours"];
+    let isAiBooked = false;
 
-    // Query knowledge base
-    const testResult = this.testKnowledgeQuery(orgId, text);
-    aiReplyText = testResult.answer;
+    if (bookingParsed.isBookingIntent) {
+      if (bookingParsed.hasTimeSlot && bookingParsed.targetTime) {
+        // Check for double booking conflict
+        const avail = AppointmentService.checkSlotAvailability(
+          orgId,
+          bookingParsed.practitionerName,
+          bookingParsed.targetTime
+        );
 
-    // Check if user is explicitly asking for a human staff member
-    const lower = text.toLowerCase();
-    if (/(talk to a human|speak to a person|real person|human agent|staff member|speak to staff|transfer me)/.test(lower)) {
-      isEscalated = true;
-      aiReplyText = "I've flagged this thread for our clinic front desk team. A staff member has been alerted and will assist you directly.";
-      db.prepare(`
-        UPDATE conversations
-        SET status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', escalation_reason = 'Visitor requested human staff'
-        WHERE id = ?
-      `).run(convId);
-    } else if (testResult.confidence < 0.5) {
-      isEscalated = true;
-      db.prepare(`
-        UPDATE conversations
-        SET status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', escalation_reason = 'Unverified topic escalated to staff'
-        WHERE id = ?
-      `).run(convId);
+        if (!avail.isAvailable) {
+          // Double-booking prevented! Find nearest alternative slots
+          const alternatives = AppointmentService.findAlternativeSlots(
+            orgId,
+            bookingParsed.practitionerName,
+            bookingParsed.targetTime
+          );
+
+          const slotFormatted = `${AppointmentService.formatSlotDay(bookingParsed.targetTime)} at ${AppointmentService.formatSlotTime(bookingParsed.targetTime)}`;
+
+          aiReplyText = `${bookingParsed.practitionerName} is already fully booked on ${slotFormatted}.\n\nThe closest available openings with ${bookingParsed.practitionerName} are:\n` +
+            alternatives.map((alt) => `• ${alt.label}`).join("\n") +
+            `\n\nWould any of these alternative times work for you?`;
+
+          chips = alternatives.map((alt) => alt.chip);
+
+          // Save warm inbound lead so clinic never loses the patient
+          if (bookingParsed.patientName || bookingParsed.patientContact) {
+            AppointmentService.recordInquiryLead({
+              orgId,
+              conversationId: convId,
+              patientName: bookingParsed.patientName || "Interested Patient",
+              patientContact: bookingParsed.patientContact || "Inquiry from website chat",
+              note: `Requested ${slotFormatted} (conflicted) - offered alternatives`,
+            });
+          }
+        } else {
+          // Slot is open! Check if patient provided contact
+          if (!bookingParsed.patientContact) {
+            aiReplyText = `I have held ${bookingParsed.formattedSlot} with ${bookingParsed.practitionerName} for you! What is your mobile phone number so we can register your appointment and send confirmation?`;
+            chips = ["Enter Mobile Number", "Change Time"];
+          } else {
+            // Confirm booking and write to SQLite appointments & leads
+            const booked = AppointmentService.bookAppointment({
+              orgId,
+              conversationId: convId,
+              patientName: bookingParsed.patientName || "Patient",
+              patientContact: bookingParsed.patientContact,
+              practitionerName: bookingParsed.practitionerName,
+              serviceName: bookingParsed.serviceName,
+              startTime: bookingParsed.targetTime,
+            });
+
+            isAiBooked = true;
+            aiReplyText = `You're all booked, ${booked.appointment.patientName}! 🎉\n\n🗓️ ${AppointmentService.formatSlotDay(bookingParsed.targetTime)} at ${AppointmentService.formatSlotTime(bookingParsed.targetTime)}\n👨‍⚕️ ${booked.appointment.practitionerName} — ${booked.appointment.serviceName}\n🏷️ Reference: #${booked.externalRef}\n\nWe've confirmed your reservation and dispatched details to ${booked.appointment.patientContact}. See you at the clinic!`;
+            chips = ["Add to Calendar", "Reschedule", "Clinic Directions"];
+          }
+        }
+      } else {
+        // Expressed booking intent but didn't pick a slot
+        aiReplyText = `I would be delighted to help you schedule an appointment with ${bookingParsed.practitionerName}! We have openings this week for Initial Assessments, Musculoskeletal Physio, and Follow-up consultations. What day and time suits you best, and what is your name and mobile number?`;
+        chips = ["Tomorrow 10:00 AM", "Friday 2:00 PM", "Monday 11:00 AM", "View Fees"];
+      }
     } else {
-      db.prepare(`
-        UPDATE conversations
-        SET status = 'RESOLVED', resolution_badge = 'AI Resolved'
-        WHERE id = ?
-      `).run(convId);
+      // Normal knowledge base query & escalation check
+      const testResult = this.testKnowledgeQuery(orgId, text);
+      aiReplyText = testResult.answer;
+
+      // Check if user is explicitly asking for a human staff member
+      const lower = text.toLowerCase();
+      if (/(talk to a human|speak to a person|real person|human agent|staff member|speak to staff|transfer me)/.test(lower)) {
+        isEscalated = true;
+        aiReplyText = "I've flagged this thread for our clinic front desk team. A staff member has been alerted and will assist you directly.";
+      } else if (testResult.confidence < 0.5) {
+        isEscalated = true;
+      }
     }
+
+    const updatedStatus = isEscalated ? "WAITING_FOR_HUMAN" : "RESOLVED";
+    const updatedBadge = isEscalated
+      ? "Human needed"
+      : isAiBooked
+      ? "AI Booked"
+      : "AI Resolved";
+
+    db.prepare(`
+      UPDATE conversations
+      SET status = ?, resolution_badge = ?, escalation_reason = ?
+      WHERE id = ?
+    `).run(
+      updatedStatus,
+      updatedBadge,
+      isEscalated
+        ? text.toLowerCase().includes("human")
+          ? "Visitor requested human staff"
+          : "Unverified topic escalated to staff"
+        : null,
+      convId
+    );
 
     // 4. Save AI Response Message
     const aiMsgId = "msg_" + randomBytes(6).toString("hex");
@@ -1790,9 +1874,6 @@ export class DashboardService {
       SET last_message = ?, last_activity_at = ?
       WHERE id = ?
     `).run(aiReplyText, aiNowIso, convId);
-
-    const updatedStatus = isEscalated ? "WAITING_FOR_HUMAN" : "RESOLVED";
-    const updatedBadge = isEscalated ? "Human needed" : "AI Resolved";
 
     // Broadcast AI response to dashboard
     dashboardEventBus.emitToOrg(orgId, {

@@ -3491,6 +3491,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                 {inv.invoiceDate}
                                 {inv.cardSummary ? ` • ${inv.cardSummary}` : ""}
                               </span>
+                              {inv.prorationNote && (
+                                <span className="text-[11px] text-emerald-600 font-medium block mt-0.5">
+                                  {inv.prorationNote}
+                                </span>
+                              )}
                               {isFailed && inv.failureReason && (
                                 <span className="text-[11px] text-red-600 font-medium block mt-0.5">
                                   {inv.failureReason}
@@ -3588,6 +3593,17 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           <span>Tax (10%)</span>
                           <span>${taxPart.toFixed(2)}</span>
                         </div>
+                        {viewingInvoice.prorationCreditCents && viewingInvoice.prorationCreditCents > 0 ? (
+                          <div className="flex justify-between text-emerald-600 font-semibold pt-1 border-t border-slate-200/60">
+                            <span>Proration Credit Applied</span>
+                            <span>-${(viewingInvoice.prorationCreditCents / 100).toFixed(2)}</span>
+                          </div>
+                        ) : null}
+                        {viewingInvoice.prorationNote && (
+                          <div className="text-[11px] text-slate-500 pt-0.5 italic">
+                            {viewingInvoice.prorationNote}
+                          </div>
+                        )}
                         <div className="flex justify-between font-extrabold text-slate-900 text-sm pt-1.5 border-t border-slate-200">
                           <span>Total Paid</span>
                           <span>{viewingInvoice.amountFormatted}</span>

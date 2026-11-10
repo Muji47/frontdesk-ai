@@ -126,6 +126,8 @@ export interface DashboardBillingInvoice {
   cardSummary: string | null;
   failureReason: string | null;
   invoiceDate: string;
+  prorationCreditCents?: number;
+  prorationNote?: string | null;
 }
 
 export interface DashboardBillingData {
@@ -548,7 +550,7 @@ export class DashboardService {
 
     const invRows = db
       .prepare(`
-        SELECT id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date
+        SELECT id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, proration_credit_cents, proration_note
         FROM billing_invoices
         WHERE organization_id = ?
         ORDER BY created_at DESC
@@ -573,6 +575,8 @@ export class DashboardService {
         cardSummary: cleanSummary,
         failureReason: inv.failure_reason ? String(inv.failure_reason) : null,
         invoiceDate: String(inv.invoice_date),
+        prorationCreditCents: Number(inv.proration_credit_cents || 0),
+        prorationNote: inv.proration_note ? String(inv.proration_note) : null,
       };
     });
 
@@ -610,7 +614,8 @@ export class DashboardService {
   }
 
   /**
-   * Upgrades, downgrades, or switches billing cycle (monthly, biannual, annual) and charges the default payment method.
+   * Upgrades, downgrades, or switches billing cycle (monthly, biannual, annual) with automatic subscription proration.
+   * Any unused days paid on the previous plan are credited towards the new plan invoice.
    */
   public static updateSubscription(
     orgId: string,
@@ -620,15 +625,18 @@ export class DashboardService {
     overrideCurrency?: BillingCurrency
   ): { billing: DashboardBillingData; chargedInvoice: DashboardBillingInvoice; chargeSucceeded: boolean; message: string } {
     const orgRow = db
-      .prepare("SELECT billing_currency, billing_provider FROM organizations WHERE id = ?")
-      .get(orgId) as { billing_currency?: string; billing_provider?: string } | undefined;
+      .prepare("SELECT plan, billing_cycle, billing_currency, billing_provider FROM organizations WHERE id = ?")
+      .get(orgId) as { plan?: string; billing_cycle?: string; billing_currency?: string; billing_provider?: string } | undefined;
+
+    const currentPlan = (orgRow?.plan || "growth").toLowerCase() as "starter" | "growth" | "scale";
+    const currentCycle = (orgRow?.billing_cycle || "monthly").toLowerCase() as "monthly" | "biannual" | "annual";
 
     const rawCurr = (overrideCurrency || orgRow?.billing_currency || "AUD").toUpperCase();
     const currency: BillingCurrency =
       rawCurr === "USD" || rawCurr === "GBP" || rawCurr === "EUR" ? rawCurr : "AUD";
 
     const charge = calculatePlanCharge(targetPlan, targetCycle, currency);
-    const { amountCents, amountFormatted, planLabel, cycleLabel } = charge;
+    const { amountCents: fullTargetCents, planLabel, cycleLabel } = charge;
 
     // Check default payment method
     const defaultCard = db
@@ -642,6 +650,47 @@ export class DashboardService {
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
     const invId = `INV-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${randomBytes(2).toString("hex").toUpperCase()}`;
+
+    // 1. Calculate Proration & Unused Credit from previous active plan
+    const getCycleDays = (cycle: string) => (cycle === "annual" ? 365 : cycle === "biannual" ? 180 : 30);
+
+    const lastPaid = db
+      .prepare(`
+        SELECT id, plan_name, billing_cycle, amount_cents, amount_formatted, created_at
+        FROM billing_invoices
+        WHERE organization_id = ? AND status = 'Paid'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `)
+      .get(orgId) as { id: string; plan_name: string; billing_cycle: string; amount_cents: number; amount_formatted: string; created_at: string } | undefined;
+
+    let unusedCreditCents = 0;
+    let daysRemaining = 0;
+    let prorationNote: string | null = null;
+    const oldPlanLabel = currentPlan === "starter" ? "Starter Plan" : currentPlan === "scale" ? "Scale Plan" : "Growth Plan";
+
+    if (lastPaid && lastPaid.amount_cents > 0 && (targetPlan !== currentPlan || targetCycle !== currentCycle)) {
+      const oldCycleDays = getCycleDays(lastPaid.billing_cycle || currentCycle);
+      const paidDate = new Date(lastPaid.created_at);
+      const msDiff = Math.max(0, now.getTime() - paidDate.getTime());
+      const daysElapsed = Math.min(oldCycleDays, msDiff / (1000 * 60 * 60 * 24));
+      daysRemaining = Math.max(0, oldCycleDays - daysElapsed);
+
+      if (daysRemaining > 0) {
+        const fractionRemaining = daysRemaining / oldCycleDays;
+        unusedCreditCents = Math.round(lastPaid.amount_cents * fractionRemaining);
+        const creditFormatted = `$${(unusedCreditCents / 100).toFixed(2)}`;
+        const daysRemInt = Math.max(1, Math.round(daysRemaining));
+        prorationNote = `Prorated: Credited ${creditFormatted} for ${daysRemInt} unused day${daysRemInt === 1 ? "" : "s"} of ${oldPlanLabel} (${lastPaid.billing_cycle || currentCycle})`;
+      }
+    }
+
+    // 2. Net amount charged today
+    const netAmountCents = Math.max(0, fullTargetCents - unusedCreditCents);
+    const netAmountFormatted = `$${(netAmountCents / 100).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
 
     const isDeclinedCard = defaultCard && (defaultCard.last4 === "0000" || defaultCard.last4 === "9999");
     const formatMethodSummary = (m: { brand: string; last4: string; cardholder_name: string }) => {
@@ -657,16 +706,30 @@ export class DashboardService {
 
       db.prepare(`
         INSERT INTO billing_invoices (
-          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Failed', ?, ?, ?, ?)
-      `).run(invId, orgId, `${planLabel} (${cycleLabel})`, targetCycle, amountCents, amountFormatted, currency, cardSummary, failReason, dateStr, now.toISOString());
+          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at, proration_credit_cents, proration_note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Failed', ?, ?, ?, ?, ?, ?)
+      `).run(
+        invId,
+        orgId,
+        `${planLabel} (${cycleLabel})`,
+        targetCycle,
+        netAmountCents,
+        netAmountFormatted,
+        currency,
+        cardSummary,
+        failReason,
+        dateStr,
+        now.toISOString(),
+        unusedCreditCents,
+        prorationNote
+      );
 
       const billing = this.getBillingData(orgId);
       return {
         billing,
         chargedInvoice: billing.invoices[0],
         chargeSucceeded: false,
-        message: `Payment failed (${amountFormatted}): ${failReason}. Failed invoice ${invId} recorded.`,
+        message: `Payment failed (${netAmountFormatted}): ${failReason}. Failed invoice ${invId} recorded.`,
       };
     }
 
@@ -681,17 +744,44 @@ export class DashboardService {
 
       db.prepare(`
         INSERT INTO billing_invoices (
-          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Paid', ?, NULL, ?, ?)
-      `).run(invId, orgId, `${planLabel} (${cycleLabel})`, targetCycle, amountCents, amountFormatted, currency, cardSummary, dateStr, now.toISOString());
+          id, organization_id, plan_name, billing_cycle, amount_cents, amount_formatted, currency, status, card_summary, failure_reason, invoice_date, created_at, proration_credit_cents, proration_note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Paid', ?, NULL, ?, ?, ?, ?)
+      `).run(
+        invId,
+        orgId,
+        `${planLabel} (${cycleLabel})`,
+        targetCycle,
+        netAmountCents,
+        netAmountFormatted,
+        currency,
+        cardSummary,
+        dateStr,
+        now.toISOString(),
+        unusedCreditCents,
+        prorationNote
+      );
     });
 
     const billing = this.getBillingData(orgId);
+    let successMessage: string;
+    if (unusedCreditCents > 0) {
+      const creditFormatted = `$${(unusedCreditCents / 100).toFixed(2)}`;
+      const daysRemInt = Math.max(1, Math.round(daysRemaining));
+      if (netAmountCents > 0) {
+        successMessage = `Subscription updated to ${planLabel} (${cycleLabel}) — Charged ${netAmountFormatted} via ${cardSummary} (credited ${creditFormatted} for ${daysRemInt} unused day${daysRemInt === 1 ? "" : "s"} of ${oldPlanLabel}).`;
+      } else {
+        const remainingCredit = (unusedCreditCents - fullTargetCents) / 100;
+        successMessage = `Subscription updated to ${planLabel} (${cycleLabel}) — Charged $0.00 via ${cardSummary} (fully covered by ${creditFormatted} credit from ${oldPlanLabel}${remainingCredit > 0 ? `; $${remainingCredit.toFixed(2)} balance remaining` : ""}).`;
+      }
+    } else {
+      successMessage = `Subscription updated to ${planLabel} (${cycleLabel}) — Charged ${netAmountFormatted} via ${cardSummary}.`;
+    }
+
     return {
       billing,
       chargedInvoice: billing.invoices[0],
       chargeSucceeded: true,
-      message: `Subscription updated to ${planLabel} (${cycleLabel}) — Charged ${amountFormatted} via ${cardSummary}.`,
+      message: successMessage,
     };
   }
 

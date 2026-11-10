@@ -320,6 +320,12 @@ try {
   if (!invColNames.has("external_invoice_id")) {
     db.exec("ALTER TABLE billing_invoices ADD COLUMN external_invoice_id TEXT");
   }
+  if (!invColNames.has("proration_credit_cents")) {
+    db.exec("ALTER TABLE billing_invoices ADD COLUMN proration_credit_cents INTEGER DEFAULT 0");
+  }
+  if (!invColNames.has("proration_note")) {
+    db.exec("ALTER TABLE billing_invoices ADD COLUMN proration_note TEXT");
+  }
 } catch (err) {
   console.error("Billing schema migration warning:", err);
 }

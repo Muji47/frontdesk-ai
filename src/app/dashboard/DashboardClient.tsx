@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { EchoLogo } from "@/components/EchoLogo";
@@ -92,9 +92,10 @@ interface RealtimeToast {
   title: string;
   message: string;
   icon?: string;
-  targetTab: string;
+  targetTab?: string;
   targetId?: string;
-  timestamp: number;
+  timestamp?: number;
+  type?: "success" | "error" | "info";
 }
 
 function playNotificationChime() {
@@ -181,6 +182,39 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [isSocketConnected, setIsSocketConnected] = useState<boolean>(false);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
+  const showToast = useCallback(
+    ({
+      type = "info",
+      title,
+      message,
+      icon,
+    }: {
+      type?: "success" | "error" | "info";
+      title: string;
+      message: string;
+      icon?: string;
+    }) => {
+      const id = "toast_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+      const newToast: RealtimeToast = {
+        id,
+        type,
+        title,
+        message,
+        icon: icon || (type === "error" ? "🛑" : type === "success" ? "✅" : "💬"),
+        timestamp: Date.now(),
+      };
+      setToasts((prev) => [newToast, ...prev.slice(0, 3)]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 5000);
+    },
+    []
+  );
+
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   // Performance & Deflection Analytics State
   const [analyticsTimeframe, setAnalyticsTimeframe] = useState<"24h" | "7d" | "30d" | "all">("7d");
   const [exportingCsv, setExportingCsv] = useState<boolean>(false);
@@ -210,7 +244,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     initialData.billing?.provider || "lemonsqueezy"
   );
   const [isUpdatingPlan, setIsUpdatingPlan] = useState<string | null>(null);
-  const [billingNotice, setBillingNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showInlineCardForm, setShowInlineCardForm] = useState<boolean>(false);
   const [cardHolder, setCardHolder] = useState<string>(user.name || "Dr. Sarah Lee");
   const [cardNumber, setCardNumber] = useState<string>("");
@@ -421,13 +454,14 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   }, [router, user.orgId]);
 
   function handleToastClick(toast: RealtimeToast) {
-    const tab = toast.targetTab === "inbox" ? "conversations" : toast.targetTab;
-    setActiveTab(tab);
+    if (toast.targetTab) {
+      const tab = toast.targetTab === "inbox" ? "conversations" : toast.targetTab;
+      setActiveTab(tab);
 
-    if (toast.targetId && tab === "conversations") {
-      setSelectedConvId(toast.targetId);
+      if (toast.targetId && tab === "conversations") {
+        setSelectedConvId(toast.targetId);
+      }
     }
-
     setToasts((prev) => prev.filter((t) => t.id !== toast.id));
   }
 
@@ -441,7 +475,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       });
       if (!res.ok) throw new Error("Simulation failed");
     } catch (err: any) {
-      alert("Simulation failed: " + err.message);
+      showToast({ type: "error", title: "Simulation Failed", message: err.message || "Failed to trigger simulated event." });
     } finally {
       setIsSimulating(false);
     }
@@ -456,7 +490,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   async function handleApproveQuestion(questionId: string) {
     const text = answersInput[questionId]?.trim();
     if (!text) {
-      alert("Please enter an answer before approving.");
+      showToast({ type: "error", title: "Missing Answer", message: "Please enter an answer before approving." });
       return;
     }
 
@@ -475,8 +509,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           q.id === questionId ? { ...q, status: "approved", approvedAnswer: text } : q
         )
       );
+      showToast({ type: "success", title: "Question Approved", message: "Answer approved and indexed into verified knowledge base." });
     } catch (err: any) {
-      alert(err.message || "Failed to approve question");
+      showToast({ type: "error", title: "Approval Failed", message: err.message || "Failed to approve question." });
     } finally {
       setApprovingId(null);
     }
@@ -500,8 +535,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       if (!res.ok) throw new Error("Failed to update agent");
       setAgentSaveSuccess(true);
       setTimeout(() => setAgentSaveSuccess(false), 3000);
+      showToast({ type: "success", title: "Settings Saved", message: "AI Receptionist configuration updated." });
     } catch (err: any) {
-      alert(err.message || "Failed to save agent settings");
+      showToast({ type: "error", title: "Save Failed", message: err.message || "Failed to save agent settings." });
     } finally {
       setIsSavingAgent(false);
     }
@@ -541,8 +577,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         })
       );
       setReplyText("");
+      showToast({ type: "success", title: "Reply Sent", message: "Staff message delivered to visitor." });
     } catch (err: any) {
-      alert(err.message || "Failed to send staff reply");
+      showToast({ type: "error", title: "Failed to Send Reply", message: err.message || "Failed to send staff reply." });
     } finally {
       setIsSendingReply(false);
     }
@@ -571,8 +608,13 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             : c
         )
       );
+      showToast({
+        type: mute ? "info" : "success",
+        title: mute ? "AI Receptionist Muted" : "AI Receptionist Active",
+        message: mute ? "Staff has taken over this conversation." : "AI Receptionist will answer incoming visitor queries.",
+      });
     } catch (err: any) {
-      alert(err.message || "Failed to toggle AI handover");
+      showToast({ type: "error", title: "Handover Failed", message: err.message || "Failed to toggle AI handover." });
     } finally {
       setIsTogglingAi(false);
     }
@@ -604,7 +646,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         )
       );
     } catch (err: any) {
-      alert(err.message || "Failed to simulate customer reply");
+      showToast({ type: "error", title: "Simulation Failed", message: err.message || "Failed to simulate customer reply." });
     } finally {
       setIsSimulatingReply(false);
     }
@@ -633,8 +675,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       setKnowledgeSources((prev) => [data.source, ...prev]);
       setNewSourceTitle("");
       setShowAddSource(false);
+      showToast({ type: "success", title: "Knowledge Added", message: `Source "${data.source?.title || newSourceTitle}" indexed into parameter store.` });
     } catch (err: any) {
-      alert(err.message || "Failed to add knowledge source");
+      showToast({ type: "error", title: "Failed to Add Source", message: err.message || "Failed to add knowledge source." });
     } finally {
       setIsAddingSource(false);
     }
@@ -654,8 +697,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       if (!res.ok) throw new Error("Failed to delete source");
 
       setKnowledgeSources((prev) => prev.filter((s) => s.id !== sourceId));
+      showToast({ type: "success", title: "Source Removed", message: "Knowledge source and extracted chunks removed." });
     } catch (err: any) {
-      alert(err.message || "Failed to delete knowledge source");
+      showToast({ type: "error", title: "Failed to Delete", message: err.message || "Failed to delete knowledge source." });
     } finally {
       setDeletingSourceId(null);
     }
@@ -678,7 +722,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
       setTestResult(data.result);
     } catch (err: any) {
-      alert(err.message || "Failed to test query");
+      showToast({ type: "error", title: "Test Query Failed", message: err.message || "Failed to test query." });
     } finally {
       setIsTesting(false);
     }
@@ -722,8 +766,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       setNewFaqQ("");
       setNewFaqA("");
       setShowAddFaq(false);
+      showToast({ type: "success", title: "FAQ Added", message: `New FAQ "${q.slice(0, 45)}..." added to verified directives.` });
     } catch (err: any) {
-      alert(err.message || "Failed to add FAQ");
+      showToast({ type: "error", title: "Failed to Add FAQ", message: err.message || "Failed to add FAQ." });
     } finally {
       setIsAddingFaq(false);
     }
@@ -847,6 +892,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       const data = await res.json();
       if (res.ok && data.billing) {
         setBillingState(data.billing);
+        showToast({
+          type: "success",
+          title: "Preferences Saved",
+          message: `Billing currency set to ${nextCurrency}.`,
+        });
       }
     } catch {
       // Keep optimistic UI selection
@@ -900,9 +950,10 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           : "Monthly";
       setPendingPlanSelection({ plan: targetPlan, cycle: targetCycle });
       setShowInlineCardForm(true);
-      setBillingNotice({
+      showToast({
         type: "error",
-        text: `No card on file — enter your card below to complete your switch to ${planLabel} (${cycleLabel}).`,
+        title: "Payment Method Required",
+        message: `No card on file — enter your card below to complete your switch to ${planLabel} (${cycleLabel}).`,
       });
       setTimeout(() => {
         paymentMethodsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -912,7 +963,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
 
     setIsUpdatingPlan(`${targetPlan}_${targetCycle}`);
-    setBillingNotice(null);
     try {
       const res = await fetch("/api/dashboard/billing", {
         method: "POST",
@@ -933,12 +983,25 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         setSelectedCycle(data.billing.billingCycle);
       }
       setPendingPlanSelection(null);
-      setBillingNotice({
-        type: data.chargeSucceeded ? "success" : "error",
-        text: data.message || (data.chargeSucceeded ? "Plan updated." : "Payment failed."),
-      });
+      if (data.chargeSucceeded) {
+        showToast({
+          type: "success",
+          title: "Subscription Updated",
+          message: data.message || "Your subscription has been updated successfully.",
+        });
+      } else {
+        showToast({
+          type: "error",
+          title: "Payment Declined",
+          message: data.message || "Card charge was declined by the issuer.",
+        });
+      }
     } catch (err: any) {
-      setBillingNotice({ type: "error", text: err.message || "Unable to update subscription." });
+      showToast({
+        type: "error",
+        title: "Update Failed",
+        message: err.message || "Unable to update subscription.",
+      });
     } finally {
       setIsUpdatingPlan(null);
     }
@@ -948,11 +1011,10 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     e.preventDefault();
     const cleanNum = cardNumber.replace(/\D/g, "");
     if (!cleanNum || cleanNum.length < 4) {
-      setBillingNotice({ type: "error", text: "Please enter a valid card number." });
+      showToast({ type: "error", title: "Invalid Card", message: "Please enter a valid card number." });
       return;
     }
     setIsSavingCard(true);
-    setBillingNotice(null);
     try {
       const brand = getDetectedBrand(cleanNum);
       const parts = cardExpiry.split("/");
@@ -999,17 +1061,26 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         if (subRes.ok && subData.billing) {
           setBillingState(subData.billing);
           setSelectedCycle(subData.billing.billingCycle);
-          setBillingNotice({
-            type: subData.chargeSucceeded ? "success" : "error",
-            text: subData.message || "Payment method added and subscription updated.",
-          });
+          if (subData.chargeSucceeded) {
+            showToast({
+              type: "success",
+              title: "Card Added & Subscription Updated",
+              message: subData.message || "Payment method added and subscription updated.",
+            });
+          } else {
+            showToast({
+              type: "error",
+              title: "Payment Declined",
+              message: subData.message || "Card attached, but plan charge was declined.",
+            });
+          }
           return;
         }
       }
 
-      setBillingNotice({ type: "success", text: "New card saved securely." });
+      showToast({ type: "success", title: "Card Added", message: "New payment method saved securely." });
     } catch (err: any) {
-      setBillingNotice({ type: "error", text: err.message || "Failed to save card." });
+      showToast({ type: "error", title: "Failed to Save Card", message: err.message || "Failed to save card." });
     } finally {
       setIsSavingCard(false);
     }
@@ -1017,7 +1088,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   async function handleSetDefaultCard(paymentMethodId: string) {
     setBusyCardId(paymentMethodId);
-    setBillingNotice(null);
     try {
       const res = await fetch("/api/dashboard/billing", {
         method: "POST",
@@ -1030,9 +1100,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to set default card");
       if (data.billing) setBillingState(data.billing);
-      setBillingNotice({ type: "success", text: "Default payment method updated." });
+      showToast({ type: "success", title: "Default Card Updated", message: "Default payment method updated." });
     } catch (err: any) {
-      setBillingNotice({ type: "error", text: err.message || "Failed to update default card." });
+      showToast({ type: "error", title: "Update Failed", message: err.message || "Failed to update default card." });
     } finally {
       setBusyCardId(null);
     }
@@ -1040,7 +1110,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   async function handleDeleteCard(paymentMethodId: string) {
     setBusyCardId(paymentMethodId);
-    setBillingNotice(null);
     try {
       const res = await fetch("/api/dashboard/billing", {
         method: "POST",
@@ -1053,9 +1122,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to delete card");
       if (data.billing) setBillingState(data.billing);
-      setBillingNotice({ type: "success", text: "Payment method removed." });
+      showToast({ type: "success", title: "Payment Method Removed", message: "Card removed from account." });
     } catch (err: any) {
-      setBillingNotice({ type: "error", text: err.message || "Failed to delete card." });
+      showToast({ type: "error", title: "Failed to Remove Card", message: err.message || "Failed to delete card." });
     } finally {
       setBusyCardId(null);
     }
@@ -1175,41 +1244,85 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       <main className="ml-64 flex-1 min-w-0 h-dvh overflow-y-auto p-6 md:p-8 relative custom-scrollbar">
         {/* Top-Right Real-Time Notification Stack */}
         <div className="fixed top-5 right-5 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
-          {toasts.map((toast) => (
-            <div
-              key={toast.id}
-              onClick={() => handleToastClick(toast)}
-              className="pointer-events-auto bg-slate-950/95 border border-indigo-500/50 text-white rounded-2xl p-4 shadow-2xl backdrop-blur cursor-pointer hover:border-indigo-400 hover:scale-[1.02] transition-all transform animate-in slide-in-from-top-3 duration-300 relative overflow-hidden group"
-            >
-              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400"></div>
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-xl shrink-0">
-                  {toast.icon || "💬"}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-white tracking-wide truncate">{toast.title}</span>
-                    <span className="text-[10px] text-indigo-300 font-mono">Just now</span>
+          {toasts.map((toast) => {
+            const isError = toast.type === "error";
+            const isSuccess = toast.type === "success";
+
+            const borderClass = isError
+              ? "border-red-500/70 hover:border-red-400 shadow-red-950/40"
+              : isSuccess
+              ? "border-emerald-500/70 hover:border-emerald-400 shadow-emerald-950/40"
+              : "border-indigo-500/50 hover:border-indigo-400 shadow-slate-950/50";
+
+            const accentBar = isError
+              ? "from-red-500 via-rose-500 to-amber-500"
+              : isSuccess
+              ? "from-emerald-500 via-teal-400 to-cyan-400"
+              : "from-indigo-500 via-sky-400 to-emerald-400";
+
+            const iconBoxClass = isError
+              ? "bg-red-500/20 border-red-500/40 text-red-300"
+              : isSuccess
+              ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+              : "bg-indigo-600/20 border-indigo-500/30 text-indigo-300";
+
+            const titleClass = isError
+              ? "text-red-200"
+              : isSuccess
+              ? "text-emerald-200"
+              : "text-white";
+
+            const badgeText = isError ? "Declined / Error" : isSuccess ? "Success" : "Just now";
+            const badgeClass = isError
+              ? "text-red-400"
+              : isSuccess
+              ? "text-emerald-400"
+              : "text-indigo-300";
+
+            return (
+              <div
+                key={toast.id}
+                onClick={() => handleToastClick(toast)}
+                className={`pointer-events-auto bg-slate-950/95 border ${borderClass} text-white rounded-2xl p-4 shadow-2xl backdrop-blur cursor-pointer hover:scale-[1.02] transition-all transform animate-in slide-in-from-top-3 duration-300 relative overflow-hidden group`}
+              >
+                <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${accentBar}`} />
+                <div className="flex items-start gap-3">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl border text-xl shrink-0 ${iconBoxClass}`}>
+                    {toast.icon || (isError ? "🛑" : isSuccess ? "✅" : "💬")}
                   </div>
-                  <p className="text-xs text-slate-300 mt-1 line-clamp-2 leading-relaxed">{toast.message}</p>
-                  <div className="mt-2.5 flex items-center gap-1 text-[11px] font-bold text-sky-400 group-hover:text-sky-300">
-                    <span>Click to open in {toast.targetTab}</span>
-                    <span>→</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`text-xs font-bold tracking-wide truncate ${titleClass}`}>
+                        {toast.title}
+                      </span>
+                      <span className={`text-[10px] font-mono shrink-0 ${badgeClass}`}>
+                        {badgeText}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-1 line-clamp-3 leading-relaxed">
+                      {toast.message}
+                    </p>
+                    {toast.targetTab && (
+                      <div className="mt-2.5 flex items-center gap-1 text-[11px] font-bold text-sky-400 group-hover:text-sky-300">
+                        <span>Click to open in {toast.targetTab}</span>
+                        <span>→</span>
+                      </div>
+                    )}
                   </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeToast(toast.id);
+                    }}
+                    className="text-slate-500 hover:text-white p-1 rounded-lg transition shrink-0"
+                    title="Dismiss notification"
+                  >
+                    ✕
+                  </button>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setToasts((prev) => prev.filter((t) => t.id !== toast.id));
-                  }}
-                  className="text-slate-500 hover:text-white p-1 rounded-lg transition"
-                  title="Dismiss notification"
-                >
-                  ✕
-                </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Top Header */}
@@ -2932,27 +3045,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </p>
               </div>
 
-              {billingNotice && (
-                <div
-                  className={`rounded-xl border p-3.5 text-xs font-semibold flex items-center justify-between gap-3 ${
-                    billingNotice.type === "success"
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                      : "border-red-200 bg-red-50 text-red-900"
-                  }`}
-                >
-                  <span>
-                    {billingNotice.type === "success" ? "✓ " : "⚠️ "}
-                    {billingNotice.text}
-                  </span>
-                  <button
-                    onClick={() => setBillingNotice(null)}
-                    className="text-slate-400 hover:text-slate-700 font-bold px-1.5"
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
-
               {/* Current Plan Summary Card */}
               <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/60 via-white to-slate-50 p-6 shadow-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -3491,16 +3583,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                 {inv.invoiceDate}
                                 {inv.cardSummary ? ` • ${inv.cardSummary}` : ""}
                               </span>
-                              {inv.prorationNote && (
-                                <span className="text-[11px] text-emerald-600 font-medium block mt-0.5">
-                                  {inv.prorationNote}
-                                </span>
-                              )}
-                              {isFailed && inv.failureReason && (
-                                <span className="text-[11px] text-red-600 font-medium block mt-0.5">
-                                  {inv.failureReason}
-                                </span>
-                              )}
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0">

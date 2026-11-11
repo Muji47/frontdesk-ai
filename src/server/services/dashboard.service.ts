@@ -3,6 +3,7 @@ import { db, withTransaction, seedOrganizationData } from "@/lib/db";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { CrawlerService } from "./crawler.service";
 import { AppointmentService } from "./appointment.service";
+import { IntegrationService, type DeliveryLogRecord } from "./integration.service";
 import { dashboardEventBus } from "@/lib/events";
 import {
   calculatePlanCharge,
@@ -103,6 +104,7 @@ export interface DashboardIntegration {
   id: string;
   provider: string;
   status: string;
+  config?: Record<string, any>;
   lastSyncAt: string;
 }
 
@@ -152,6 +154,7 @@ export interface DashboardData {
   orders: DashboardOrder[];
   leads: DashboardLead[];
   integrations: DashboardIntegration[];
+  deliveryLogs?: DeliveryLogRecord[];
   billing: DashboardBillingData;
   agent: {
     id: string;
@@ -367,9 +370,9 @@ export class DashboardService {
       createdAt: String(l.created_at),
     }));
 
-    // 8. Fetch Integrations
+    // 8. Fetch Integrations & Delivery Logs
     const integrationRows = db.prepare(`
-      SELECT id, provider, status, last_sync_at
+      SELECT id, provider, status, config_json, last_sync_at
       FROM integrations
       WHERE organization_id = ?
     `).all(orgId) as any[];
@@ -378,8 +381,11 @@ export class DashboardService {
       id: String(i.id),
       provider: String(i.provider),
       status: String(i.status),
+      config: i.config_json ? JSON.parse(i.config_json) : {},
       lastSyncAt: String(i.last_sync_at),
     }));
+
+    const deliveryLogs = IntegrationService.getDeliveryLogs(orgId, 25);
 
     // 9. Compute Metrics Aggregation
     const totalConversations = conversations.length;
@@ -411,6 +417,7 @@ export class DashboardService {
       orders,
       leads,
       integrations,
+      deliveryLogs,
       billing,
       agent,
     };
@@ -1526,6 +1533,15 @@ export class DashboardService {
       },
     });
 
+    if (mute) {
+      IntegrationService.dispatchOutboundEvent(orgId, "conversation.escalated", {
+        conversationId,
+        visitorName: conv.visitor_name,
+        visitorContact: conv.visitor_contact,
+        reason: "Staff takeover activated by practitioner",
+      }).catch((err) => console.error("[DashboardService] Escalation dispatch error:", err));
+    }
+
     return { isAiMuted: mute, status: newStatus, badge: newBadge };
   }
 
@@ -1868,6 +1884,17 @@ export class DashboardService {
         : null,
       convId
     );
+
+    if (isEscalated) {
+      IntegrationService.dispatchOutboundEvent(orgId, "conversation.escalated", {
+        conversationId: convId,
+        visitorName: params.visitorName || existingConv?.visitor_name || "Website Visitor",
+        visitorContact: params.visitorContact || existingConv?.visitor_contact || "",
+        reason: text.toLowerCase().includes("human")
+          ? "Visitor requested human staff"
+          : "Unverified topic escalated to staff",
+      }).catch((err) => console.error("[DashboardService] Escalation dispatch error:", err));
+    }
 
     // 4. Save AI Response Message
     const aiMsgId = "msg_" + randomBytes(6).toString("hex");

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { db, withTransaction } from "@/lib/db";
 import { dashboardEventBus } from "@/lib/events";
+import { IntegrationService } from "@/server/services/integration.service";
 
 export interface BookingParsedIntent {
   isBookingIntent: boolean;
@@ -509,6 +510,12 @@ export class AppointmentService {
       },
     });
 
+    // Step 4: Dispatch real-time outbound webhooks & Cliniko 2-way sync
+    IntegrationService.dispatchOutboundEvent(params.orgId, "appointment.created", {
+      appointment: appointmentObj,
+      lead: leadObj,
+    }).catch((err) => console.error("[AppointmentService] Outbound dispatch error:", err));
+
     return {
       appointment: appointmentObj,
       lead: leadObj,
@@ -582,5 +589,10 @@ export class AppointmentService {
       targetId: leadId,
       data: { lead: createdLead },
     });
+
+    // Step 4: Dispatch outbound webhook event
+    IntegrationService.dispatchOutboundEvent(params.orgId, "lead.created", {
+      lead: createdLead,
+    }).catch((err) => console.error("[AppointmentService] Lead outbound dispatch error:", err));
   }
 }

@@ -12,6 +12,7 @@ import type {
   DashboardKnowledgeSource,
   DashboardAppointment,
   DashboardLead,
+  DashboardIntegration,
   DashboardBillingData,
   DashboardBillingInvoice,
   ConversationMessage,
@@ -270,6 +271,123 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   } | null>(null);
   const paymentMethodsSectionRef = useRef<HTMLDivElement | null>(null);
   const addCardInputRef = useRef<HTMLInputElement | null>(null);
+
+  // ===================== STEP 4: INTEGRATIONS & WEBHOOKS STATE =====================
+  const [integrationsList, setIntegrationsList] = useState<DashboardIntegration[]>(initialData.integrations || []);
+  const [deliveryLogsList, setDeliveryLogsList] = useState<any[]>(initialData.deliveryLogs || []);
+  const [testingProvider, setTestingProvider] = useState<string | null>(null);
+  const [savingProvider, setSavingProvider] = useState<string | null>(null);
+  const [activeIntegrationModal, setActiveIntegrationModal] = useState<"cliniko" | "webhook" | "sms" | null>(null);
+  const [inspectingLog, setInspectingLog] = useState<any | null>(null);
+
+  const clinikoExisting = integrationsList.find((i) => i.provider === "cliniko");
+  const [clinikoForm, setClinikoForm] = useState({
+    apiKey: clinikoExisting?.config?.apiKey || "test_cliniko_key_au9812",
+    shard: clinikoExisting?.config?.shard || "au1",
+    clinicName: clinikoExisting?.config?.clinicName || "Melbourne Wellness Clinic",
+  });
+
+  const webhookExisting = integrationsList.find((i) => i.provider === "webhook");
+  const [webhookForm, setWebhookForm] = useState({
+    url: webhookExisting?.config?.url || "https://hooks.zapier.com/hooks/catch/91823/echo_ai_sync",
+    secret: webhookExisting?.config?.secret || "whsec_echo_live_" + (user.orgId ? user.orgId.slice(4) : "secret"),
+    events: webhookExisting?.config?.events || ["appointment.created", "lead.created", "conversation.escalated"],
+  });
+
+  const smsExisting = integrationsList.find((i) => i.provider === "sms");
+  const [smsForm, setSmsForm] = useState({
+    alertPhone: smsExisting?.config?.alertPhone || "+61412884921",
+    accountSid: smsExisting?.config?.accountSid || "AC_twilio_prod_clinic",
+    authToken: smsExisting?.config?.authToken || "••••••••••••••••••••••••",
+    fromPhone: smsExisting?.config?.fromPhone || "+61480019283",
+  });
+
+  const refreshIntegrations = useCallback(async () => {
+    try {
+      const res = await fetch("/api/dashboard/integrations");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.integrations) setIntegrationsList(data.integrations);
+        if (data.deliveryLogs) setDeliveryLogsList(data.deliveryLogs);
+      }
+    } catch (err) {
+      console.error("Failed to refresh integrations:", err);
+    }
+  }, []);
+
+  const handleTestIntegration = useCallback(
+    async (provider: string, configOverride?: any) => {
+      setTestingProvider(provider);
+      try {
+        const config =
+          configOverride ||
+          (provider === "cliniko"
+            ? clinikoForm
+            : provider === "webhook"
+            ? webhookForm
+            : provider === "sms"
+            ? smsForm
+            : {});
+        const res = await fetch("/api/dashboard/integrations/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider, config }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.result?.message || data.error || "Integration test failed");
+        }
+        showToast({
+          type: "success",
+          title: `${provider.toUpperCase()} Connected`,
+          message: `${data.result.message} (${data.result.durationMs}ms latency)`,
+        });
+        await refreshIntegrations();
+      } catch (err: any) {
+        showToast({
+          type: "error",
+          title: `${provider.toUpperCase()} Test Failed`,
+          message: err.message || "Could not connect to external service.",
+        });
+      } finally {
+        setTestingProvider(null);
+      }
+    },
+    [clinikoForm, webhookForm, smsForm, refreshIntegrations, showToast]
+  );
+
+  const handleSaveIntegration = useCallback(
+    async (provider: string, config: any) => {
+      setSavingProvider(provider);
+      try {
+        const res = await fetch("/api/dashboard/integrations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider, config, status: "connected" }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || "Failed to save integration");
+        }
+        showToast({
+          type: "success",
+          title: "Integration Saved",
+          message: `${provider.toUpperCase()} configuration successfully saved.`,
+        });
+        setActiveIntegrationModal(null);
+        await refreshIntegrations();
+      } catch (err: any) {
+        showToast({
+          type: "error",
+          title: "Save Failed",
+          message: err.message || "Could not save integration.",
+        });
+      } finally {
+        setSavingProvider(null);
+      }
+    },
+    [refreshIntegrations, showToast]
+  );
 
   // Connect to SSE real-time socket stream with Multi-Tab Leader Election via BroadcastChannel
   // Ensures ONLY 1 browser tab maintains the server SSE connection, while broadcasting events locally to all tabs.
@@ -3034,32 +3152,293 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               </div>
             </div>
 
-            {/* Existing Integrations Grid */}
+            {/* Interactive Connected Integrations Grid */}
             <div className="grid gap-4 md:grid-cols-2">
-              {initialData.integrations.map((int, iIdx) => (
-                <div key={int.id ? `${int.id}-${iIdx}` : `int-${iIdx}`} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+              {/* Cliniko Practice Management Card */}
+              {(() => {
+                const cliniko = integrationsList.find((i) => i.provider === "cliniko");
+                const isConnected = cliniko?.status === "connected";
+                const isTesting = testingProvider === "cliniko";
+                return (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">🏥</span>
+                          <b className="text-sm font-bold text-slate-900">Cliniko Practice Management</b>
+                        </div>
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            isConnected
+                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                              : "bg-slate-100 text-slate-600 border border-slate-200"
+                          }`}
+                        >
+                          {isConnected ? "✓ Connected & Synced" : "Not Configured"}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-600">
+                        Live calendar availability and 2-way patient appointment sync active. Appointments booked autonomously are dispatched to your Cliniko schedule.
+                      </p>
+                      <div className="mt-2.5 flex items-center gap-2 text-[11px] text-slate-400">
+                        <span>Shard: <strong className="text-slate-600">{clinikoForm.shard.toUpperCase()}</strong></span>
+                        <span>•</span>
+                        <span>Last sync: {cliniko?.lastSyncAt || "Just now"}</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveIntegrationModal("cliniko")}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                      >
+                        ⚙️ Configure API
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTestIntegration("cliniko")}
+                        disabled={isTesting}
+                        className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {isTesting ? "⏳ Testing Sync..." : "⚡ Test & Sync Now"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Custom Outbound Webhooks (Zapier / CRM) Card */}
+              {(() => {
+                const webhook = integrationsList.find((i) => i.provider === "webhook");
+                const isConnected = webhook?.status === "connected";
+                const isTesting = testingProvider === "webhook";
+                return (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">⚡</span>
+                          <b className="text-sm font-bold text-slate-900">Custom Outbound Webhooks</b>
+                        </div>
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            isConnected
+                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                              : "bg-slate-100 text-slate-600 border border-slate-200"
+                          }`}
+                        >
+                          {isConnected ? "✓ Live Webhook Active" : "Not Configured"}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-600">
+                        Dispatches real-time HMAC-SHA256 signed payloads to Zapier, Make, Slack, or your custom EHR/CRM on new bookings, leads, and escalations.
+                      </p>
+                      <div className="mt-2.5 flex items-center gap-2 text-[11px] text-slate-400">
+                        <span>Events: <strong className="text-slate-600">3 Subscribed</strong></span>
+                        <span>•</span>
+                        <span>Signature: <strong className="text-slate-600">HMAC-SHA256</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveIntegrationModal("webhook")}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                      >
+                        ⚙️ Configure Webhook
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTestIntegration("webhook")}
+                        disabled={isTesting}
+                        className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {isTesting ? "⏳ Sending Ping..." : "🚀 Send Test Ping"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Urgent SMS Escalations (Twilio) Card */}
+              {(() => {
+                const sms = integrationsList.find((i) => i.provider === "sms");
+                const isConnected = sms?.status === "connected";
+                const isTesting = testingProvider === "sms";
+                return (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">📱</span>
+                          <b className="text-sm font-bold text-slate-900">Urgent SMS Alerts (Twilio)</b>
+                        </div>
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            isConnected
+                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                              : "bg-slate-100 text-slate-600 border border-slate-200"
+                          }`}
+                        >
+                          {isConnected ? "✓ SMS Active" : "Not Configured"}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-600">
+                        Sends immediate SMS notifications to on-duty practitioners when patients report emergency symptoms or request clinical staff handover.
+                      </p>
+                      <div className="mt-2.5 flex items-center gap-2 text-[11px] text-slate-400">
+                        <span>Alert to: <strong className="text-slate-600">{smsForm.alertPhone}</strong></span>
+                        <span>•</span>
+                        <span>Gateway: <strong className="text-slate-600">Twilio SMS</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveIntegrationModal("sms")}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                      >
+                        ⚙️ Configure SMS
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTestIntegration("sms")}
+                        disabled={isTesting}
+                        className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {isTesting ? "⏳ Sending SMS..." : "📲 Send Test Alert"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Google Calendar / PMS Calendar Card */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
+                <div>
                   <div className="flex justify-between items-center">
-                    <b className="text-sm font-bold text-slate-900 capitalize">
-                      {int.provider === "cliniko"
-                        ? "Cliniko Practice Management"
-                        : int.provider === "shopify"
-                        ? "Shopify Store Sync"
-                        : "Website Chat Widget"}
-                    </b>
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                      {int.status}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">📅</span>
+                      <b className="text-sm font-bold text-slate-900">Google Calendar & iCal Feed</b>
+                    </div>
+                    <span className="rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-bold">
+                      ✓ Feed Active
                     </span>
                   </div>
                   <p className="mt-2 text-xs text-slate-600">
-                    {int.provider === "cliniko"
-                      ? "Live calendar availability and 2-way patient appointment sync active."
-                      : int.provider === "shopify"
-                      ? "Live order lookup, return handling, and inventory checking active."
-                      : "JavaScript embed tag active and listening for website visitors."}
+                    Subscribe your personal smartphone or practice calendar to live appointment feeds with zero manual export required.
                   </p>
-                  <div className="mt-3 text-[11px] text-slate-400">Last sync: {int.lastSyncAt}</div>
+                  <div className="mt-2.5 flex items-center gap-2 text-[11px] text-slate-400">
+                    <span>Protocol: <strong className="text-slate-600">RFC 5545 iCalendar</strong></span>
+                    <span>•</span>
+                    <span>Sync: <strong className="text-slate-600">Real-Time</strong></span>
+                  </div>
                 </div>
-              ))}
+
+                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/api/calendar/feed?orgId=${user.orgId}`);
+                      showToast({ type: "success", title: "Feed Copied", message: "iCal calendar feed URL copied to clipboard!" });
+                    }}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                  >
+                    📋 Copy iCal Feed URL
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Outbound Webhooks & Practice Sync Audit Trail */}
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Practice Sync & Webhook Audit Trail</h3>
+                  <p className="text-xs text-slate-500">Live delivery history, response status codes, latencies, and payload payloads.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={refreshIntegrations}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs flex items-center gap-1"
+                >
+                  🔄 Refresh Logs
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-xs overflow-hidden">
+                {deliveryLogsList.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-500">
+                    No integration events or webhooks recorded yet. Book an appointment or send a test ping to see live logs.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-600">
+                      <thead className="bg-slate-50/70 border-b border-slate-200 text-slate-700 font-bold">
+                        <tr>
+                          <th className="py-2.5 px-4">Event Type</th>
+                          <th className="py-2.5 px-4">Provider</th>
+                          <th className="py-2.5 px-4">Delivery Status</th>
+                          <th className="py-2.5 px-4">Latency</th>
+                          <th className="py-2.5 px-4">Timestamp</th>
+                          <th className="py-2.5 px-4 text-right">Payload</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {deliveryLogsList.map((log) => {
+                          const isSuccess = log.status === "success";
+                          return (
+                            <tr key={log.id} className="hover:bg-slate-50/50 transition">
+                              <td className="py-2.5 px-4 font-mono font-semibold text-slate-800">
+                                <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold ${
+                                  log.eventType.includes("appointment")
+                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                    : log.eventType.includes("escalat")
+                                    ? "bg-rose-50 text-rose-700 border border-rose-200"
+                                    : log.eventType.includes("lead")
+                                    ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                    : "bg-slate-100 text-slate-700 border border-slate-200"
+                                }`}>
+                                  {log.eventType}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-4 font-bold text-slate-800 uppercase tracking-wider text-[10px]">
+                                {log.provider}
+                              </td>
+                              <td className="py-2.5 px-4">
+                                <span className={`inline-flex items-center gap-1 font-bold ${
+                                  isSuccess ? "text-emerald-700" : "text-rose-700"
+                                }`}>
+                                  <span>{isSuccess ? "✓" : "✗"}</span>
+                                  <span>{log.statusCode ? `HTTP ${log.statusCode}` : log.status}</span>
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-4 font-mono text-slate-500">
+                                {log.durationMs}ms
+                              </td>
+                              <td className="py-2.5 px-4 text-slate-400">
+                                {log.createdAt ? new Date(log.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "Just now"}
+                              </td>
+                              <td className="py-2.5 px-4 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => setInspectingLog(log)}
+                                  className="text-indigo-600 hover:text-indigo-800 font-bold hover:underline"
+                                >
+                                  Inspect JSON
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -4093,6 +4472,384 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             </div>
           );
         })()}
+
+        {/* ===================== STEP 4: INTEGRATION MODALS ===================== */}
+
+        {/* 1. Cliniko Configuration Modal */}
+        {activeIntegrationModal === "cliniko" && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">🏥</span>
+                  <div>
+                    <h4 className="text-base font-extrabold text-slate-900">Cliniko Practice Sync</h4>
+                    <span className="text-[11px] text-slate-500">2-way calendar availability & patient booking</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveIntegrationModal(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-3.5 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Clinic Shard / Region</label>
+                  <select
+                    value={clinikoForm.shard}
+                    onChange={(e) => setClinikoForm({ ...clinikoForm, shard: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 p-2 text-xs font-semibold text-slate-900 bg-white"
+                  >
+                    <option value="au1">au1 (Australia & New Zealand)</option>
+                    <option value="uk1">uk1 (United Kingdom & Europe)</option>
+                    <option value="us1">us1 (United States & Americas)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Cliniko API Key</label>
+                  <input
+                    type="text"
+                    value={clinikoForm.apiKey}
+                    onChange={(e) => setClinikoForm({ ...clinikoForm, apiKey: e.target.value })}
+                    placeholder="e.g. MS0x-live-cliniko-..."
+                    className="w-full rounded-xl border border-slate-300 p-2 font-mono text-xs text-slate-900"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Find in Cliniko under Settings &gt; Integrations &gt; API Keys.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Clinic Name (Display)</label>
+                  <input
+                    type="text"
+                    value={clinikoForm.clinicName}
+                    onChange={(e) => setClinikoForm({ ...clinikoForm, clinicName: e.target.value })}
+                    placeholder="Melbourne Wellness & Physiotherapy"
+                    className="w-full rounded-xl border border-slate-300 p-2 text-xs text-slate-900 font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => handleTestIntegration("cliniko", clinikoForm)}
+                  disabled={testingProvider === "cliniko"}
+                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs shadow-xs disabled:opacity-50"
+                >
+                  {testingProvider === "cliniko" ? "Testing..." : "⚡ Test Connection"}
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveIntegrationModal(null)}
+                    className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveIntegration("cliniko", clinikoForm)}
+                    disabled={savingProvider === "cliniko"}
+                    className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs disabled:opacity-50"
+                  >
+                    {savingProvider === "cliniko" ? "Saving..." : "Save Cliniko"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 2. Custom Webhook Configuration Modal */}
+        {activeIntegrationModal === "webhook" && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">⚡</span>
+                  <div>
+                    <h4 className="text-base font-extrabold text-slate-900">Outbound Webhook Settings</h4>
+                    <span className="text-[11px] text-slate-500">Live HTTP POST dispatch with HMAC-SHA256 signature</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveIntegrationModal(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-3.5 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Webhook Endpoint URL</label>
+                  <input
+                    type="url"
+                    value={webhookForm.url}
+                    onChange={(e) => setWebhookForm({ ...webhookForm, url: e.target.value })}
+                    placeholder="https://hooks.zapier.com/hooks/catch/..."
+                    className="w-full rounded-xl border border-slate-300 p-2 font-mono text-xs text-slate-900"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Target Zapier, Make, Slack webhook, or your clinic&apos;s custom backend URL.
+                  </p>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="font-bold text-slate-700">HMAC-SHA256 Secret</label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setWebhookForm({
+                          ...webhookForm,
+                          secret: "whsec_echo_" + Math.random().toString(36).slice(2, 14),
+                        })
+                      }
+                      className="text-indigo-600 hover:text-indigo-800 font-bold text-[11px]"
+                    >
+                      ↻ Regenerate Secret
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={webhookForm.secret}
+                    onChange={(e) => setWebhookForm({ ...webhookForm, secret: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 p-2 font-mono text-xs text-slate-900"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Verify payloads using the <code>X-Echo-Signature</code> HTTP header.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-2">Subscribed Event Triggers</label>
+                  <div className="space-y-2">
+                    {[
+                      { id: "appointment.created", label: "appointment.created — New patient appointment booked" },
+                      { id: "lead.created", label: "lead.created — Inbound contact details & warm inquiry captured" },
+                      { id: "conversation.escalated", label: "conversation.escalated — Human staff takeover or acute escalation" },
+                    ].map((evt) => (
+                      <label key={evt.id} className="flex items-center gap-2 cursor-pointer font-medium text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={webhookForm.events.includes(evt.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setWebhookForm({ ...webhookForm, events: [...webhookForm.events, evt.id] });
+                            } else {
+                              setWebhookForm({
+                                ...webhookForm,
+                                events: webhookForm.events.filter((id: string) => id !== evt.id),
+                              });
+                            }
+                          }}
+                          className="rounded text-indigo-600"
+                        />
+                        <span>{evt.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => handleTestIntegration("webhook", webhookForm)}
+                  disabled={testingProvider === "webhook"}
+                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs shadow-xs disabled:opacity-50"
+                >
+                  {testingProvider === "webhook" ? "Sending..." : "🚀 Send Test Ping"}
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveIntegrationModal(null)}
+                    className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveIntegration("webhook", webhookForm)}
+                    disabled={savingProvider === "webhook"}
+                    className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white hover:bg-slate-800 transition text-xs shadow-xs disabled:opacity-50"
+                  >
+                    {savingProvider === "webhook" ? "Saving..." : "Save Webhook"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 3. Urgent SMS Escalation Modal */}
+        {activeIntegrationModal === "sms" && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">📱</span>
+                  <div>
+                    <h4 className="text-base font-extrabold text-slate-900">Urgent SMS Alerts (Twilio)</h4>
+                    <span className="text-[11px] text-slate-500">Instant practitioner notifications for clinical escalations</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveIntegrationModal(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-3.5 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">On-Duty Alert Mobile Number</label>
+                  <input
+                    type="tel"
+                    value={smsForm.alertPhone}
+                    onChange={(e) => setSmsForm({ ...smsForm, alertPhone: e.target.value })}
+                    placeholder="+61 412 884 921"
+                    className="w-full rounded-xl border border-slate-300 p-2 font-semibold text-xs text-slate-900"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Receives SMS notifications when acute symptoms or urgent staff attention is requested.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Twilio Account SID</label>
+                  <input
+                    type="text"
+                    value={smsForm.accountSid}
+                    onChange={(e) => setSmsForm({ ...smsForm, accountSid: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 p-2 font-mono text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Twilio Auth Token</label>
+                  <input
+                    type="password"
+                    value={smsForm.authToken}
+                    onChange={(e) => setSmsForm({ ...smsForm, authToken: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 p-2 font-mono text-xs text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => handleTestIntegration("sms", smsForm)}
+                  disabled={testingProvider === "sms"}
+                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs shadow-xs disabled:opacity-50"
+                >
+                  {testingProvider === "sms" ? "Sending..." : "📲 Send Test Alert"}
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveIntegrationModal(null)}
+                    className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveIntegration("sms", smsForm)}
+                    disabled={savingProvider === "sms"}
+                    className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white hover:bg-slate-800 transition text-xs shadow-xs disabled:opacity-50"
+                  >
+                    {savingProvider === "sms" ? "Saving..." : "Save SMS Alert"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 4. Delivery Log Inspection Modal */}
+        {inspectingLog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-bold text-slate-900">{inspectingLog.eventType}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">
+                      {inspectingLog.provider}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      inspectingLog.status === "success" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                    }`}>
+                      {inspectingLog.statusCode ? `HTTP ${inspectingLog.statusCode}` : inspectingLog.status}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Duration: {inspectingLog.durationMs}ms • Recorded on {new Date(inspectingLog.createdAt).toLocaleString()}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setInspectingLog(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <b className="text-slate-700 block mb-1">Dispatched Request Payload:</b>
+                  <pre className="rounded-xl bg-slate-950 p-3.5 text-[11px] text-emerald-400 font-mono overflow-x-auto max-h-48 border border-slate-800 select-all">
+                    {(() => {
+                      try {
+                        return JSON.stringify(JSON.parse(inspectingLog.payloadJson), null, 2);
+                      } catch {
+                        return inspectingLog.payloadJson;
+                      }
+                    })()}
+                  </pre>
+                </div>
+
+                <div>
+                  <b className="text-slate-700 block mb-1">Server Response Body:</b>
+                  <pre className="rounded-xl bg-slate-950 p-3.5 text-[11px] text-sky-400 font-mono overflow-x-auto max-h-48 border border-slate-800 select-all">
+                    {(() => {
+                      try {
+                        return JSON.stringify(JSON.parse(inspectingLog.responseJson), null, 2);
+                      } catch {
+                        return inspectingLog.responseJson;
+                      }
+                    })()}
+                  </pre>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setInspectingLog(null)}
+                  className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white hover:bg-slate-800 transition text-xs shadow-xs"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

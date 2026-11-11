@@ -326,6 +326,25 @@ try {
   if (!invColNames.has("proration_note")) {
     db.exec("ALTER TABLE billing_invoices ADD COLUMN proration_note TEXT");
   }
+
+  // Ensure Integration Delivery Logs table exists for Step 4
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS integration_logs (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      status_code INTEGER,
+      payload_json TEXT,
+      response_json TEXT,
+      duration_ms INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_integration_logs_org ON integration_logs(organization_id, created_at DESC);
+  `);
 } catch (err) {
   console.error("Billing schema migration warning:", err);
 }

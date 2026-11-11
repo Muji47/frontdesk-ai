@@ -69,12 +69,23 @@ export class AppointmentService {
     const currentLower = currentMessage.toLowerCase();
     const combinedLower = combinedText.toLowerCase();
 
-    // 1. Booking intent keywords
-    const isBookingIntent =
-      /\b(book|appointment|booking|schedule|reserve|slot|see doctor|see a doctor|consultation|physio|visit|available times?|check in)\b/i.test(
-        combinedLower
-      ) ||
-      /\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)|morning|afternoon)\b/i.test(currentLower);
+    // 1. Check if this is a general pricing, fee, or info inquiry rather than an intent to book
+    const isPriceOrInfoInquiry =
+      /\b(how much|what (?:is|are) (?:the |your )?(?:fee|fees|cost|price|pricing|rate|rates)|what do you charge|cancellation policy|refund policy|where are you located|opening hours|business hours)\b/i.test(
+        currentLower
+      );
+
+    // 2. Booking intent keywords
+    let isBookingIntent = false;
+    if (isPriceOrInfoInquiry && !/\b(book|booking|schedule|reserve|lock in|make an appointment)\b/i.test(currentLower)) {
+      isBookingIntent = false;
+    } else {
+      isBookingIntent =
+        /\b(book|appointment|booking|schedule|reserve|slot|see doctor|see a doctor|physio|available times?|check in)\b/i.test(
+          combinedLower
+        ) ||
+        /\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)|morning|afternoon)\b/i.test(currentLower);
+    }
 
     // 2. Extract Phone Number
     const phoneMatch = combinedText.match(

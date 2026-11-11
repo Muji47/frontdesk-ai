@@ -137,6 +137,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [showAddSource, setShowAddSource] = useState(false);
   const [newSourceTitle, setNewSourceTitle] = useState("");
   const [newSourceType, setNewSourceType] = useState<"url" | "pdf" | "document">("url");
+  const [newSourceFile, setNewSourceFile] = useState<File | null>(null);
+  const [newSourceContent, setNewSourceContent] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isAddingSource, setIsAddingSource] = useState(false);
   const [deletingSourceId, setDeletingSourceId] = useState<string | null>(null);
 
@@ -182,6 +185,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   // Real-time Socket & Toast Notification State
   const [toasts, setToasts] = useState<RealtimeToast[]>([]);
   const [isSocketConnected, setIsSocketConnected] = useState<boolean>(false);
+  const [sseRole, setSseRole] = useState<"leader" | "follower" | "connecting">("connecting");
+  const tabIdRef = useRef<string>("");
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
   const showToast = useCallback(
@@ -266,12 +271,22 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const paymentMethodsSectionRef = useRef<HTMLDivElement | null>(null);
   const addCardInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Connect to SSE real-time socket stream (multiplexed across tabs via BroadcastChannel to prevent HTTP/1.1 connection pool exhaustion)
+  // Connect to SSE real-time socket stream with Multi-Tab Leader Election via BroadcastChannel
+  // Ensures ONLY 1 browser tab maintains the server SSE connection, while broadcasting events locally to all tabs.
   useEffect(() => {
     let es: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    let heartbeatTimer: ReturnType<typeof setInterval>;
+    let leaderCheckTimer: ReturnType<typeof setInterval>;
+    let electionTimeout: ReturnType<typeof setTimeout>;
     let bc: BroadcastChannel | null = null;
     const processedEvents = new Set<string>();
+
+    const tabId = "tab_" + Math.random().toString(36).slice(2, 9) + "_" + Date.now();
+    tabIdRef.current = tabId;
+
+    let isLeader = false;
+    let lastLeaderHeartbeat = 0;
 
     function handleIncomingPayload(payload: any, fromBroadcast = false) {
       if (!payload) return;
@@ -288,9 +303,10 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         if (oldest) processedEvents.delete(oldest);
       }
 
-      if (!fromBroadcast && bc) {
+      // If Leader received from server SSE, relay to all follower tabs via BroadcastChannel
+      if (!fromBroadcast && isLeader && bc) {
         try {
-          bc.postMessage(payload);
+          bc.postMessage({ type: "SSE_EVENT", payload });
         } catch {}
       }
 
@@ -410,30 +426,56 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       }
     }
 
-    if (typeof BroadcastChannel !== "undefined") {
-      bc = new BroadcastChannel(`echo_dashboard_sse_${user.orgId}`);
-      bc.onmessage = (ev) => handleIncomingPayload(ev.data, true);
-    }
+    function becomeLeader() {
+      if (isLeader) return;
+      isLeader = true;
+      console.log("[LeaderElection] Becoming Leader for tab:", tabId);
+      setSseRole("leader");
+      setIsSocketConnected(true);
 
-    function disconnect() {
-      clearTimeout(reconnectTimer);
-      if (es) {
-        es.close();
-        es = null;
+      if (bc) {
+        try {
+          bc.postMessage({ type: "I_AM_LEADER", leaderId: tabId, timestamp: Date.now() });
+        } catch {}
       }
-      setIsSocketConnected(false);
+
+      connectSse();
+
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = setInterval(() => {
+        if (bc && isLeader) {
+          try {
+            bc.postMessage({ type: "LEADER_HEARTBEAT", leaderId: tabId, timestamp: Date.now() });
+          } catch {}
+        }
+      }, 1200);
     }
 
-    function connect() {
+    function becomeFollower(leaderId: string) {
+      if (isLeader) {
+        isLeader = false;
+        disconnectSse();
+        clearInterval(heartbeatTimer);
+      }
+      console.log("[LeaderElection] Becoming Follower under leader:", leaderId);
+      setSseRole("follower");
+      setIsSocketConnected(true);
+      lastLeaderHeartbeat = Date.now();
+    }
+
+    function connectSse() {
       if (es) return;
+      console.log("[connectSse] Opening EventSource /api/dashboard/events");
       es = new EventSource("/api/dashboard/events");
 
       es.onopen = () => {
+        console.log("[connectSse] EventSource onopen fired");
         setIsSocketConnected(true);
         reconcileConversations();
       };
 
       es.onmessage = (event) => {
+        console.log("[connectSse] EventSource onmessage:", event.data?.slice(0, 50));
         try {
           const payload = JSON.parse(event.data);
           handleIncomingPayload(payload, false);
@@ -442,37 +484,114 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         }
       };
 
-      es.onerror = () => {
-        disconnect();
-        if (!document.hidden) {
-          reconnectTimer = setTimeout(connect, 3000);
+      es.onerror = (err) => {
+        console.log("[connectSse] EventSource onerror:", err);
+        disconnectSse();
+        if (!document.hidden && isLeader) {
+          reconnectTimer = setTimeout(connectSse, 3000);
         }
       };
     }
 
+    function disconnectSse() {
+      clearTimeout(reconnectTimer);
+      if (es) {
+        es.close();
+        es = null;
+      }
+    }
+
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`echo_dashboard_sse_${user.orgId}`);
+
+      bc.onmessage = (ev) => {
+        const msg = ev.data;
+        if (!msg || typeof msg !== "object") return;
+
+        if (msg.type === "SSE_EVENT" && msg.payload) {
+          handleIncomingPayload(msg.payload, true);
+        } else if (msg.type === "WHO_IS_LEADER") {
+          if (isLeader && bc) {
+            bc.postMessage({ type: "I_AM_LEADER", leaderId: tabId, timestamp: Date.now() });
+          }
+        } else if (msg.type === "I_AM_LEADER" || msg.type === "LEADER_HEARTBEAT") {
+          lastLeaderHeartbeat = Date.now();
+          if (!isLeader) {
+            becomeFollower(msg.leaderId);
+          } else if (msg.leaderId !== tabId && msg.timestamp < (Number(tabId.split("_")[2]) || 0)) {
+            // Older tab has seniority, yield leadership
+            becomeFollower(msg.leaderId);
+          }
+        } else if (msg.type === "LEADER_RESIGNED") {
+          if (!isLeader) {
+            const jitter = 50 + Math.floor(Math.random() * 200);
+            setTimeout(() => {
+              if (!isLeader && Date.now() - lastLeaderHeartbeat > 800) {
+                becomeLeader();
+              }
+            }, jitter);
+          }
+        }
+      };
+
+      // Query if an active leader is present
+      try {
+        bc.postMessage({ type: "WHO_IS_LEADER", candidateId: tabId });
+      } catch {}
+
+      // If no leader responds within 350ms, assume leadership
+      electionTimeout = setTimeout(() => {
+        if (!isLeader && Date.now() - lastLeaderHeartbeat > 400) {
+          becomeLeader();
+        }
+      }, 350);
+
+      // Heartbeat watchdog for followers (promotes if leader misses heartbeats)
+      leaderCheckTimer = setInterval(() => {
+        if (!isLeader && Date.now() - lastLeaderHeartbeat > 3200) {
+          becomeLeader();
+        }
+      }, 1500);
+    } else {
+      // Single-tab direct fallback
+      becomeLeader();
+    }
+
     function handleVisibilityChange() {
       if (!document.hidden) {
-        if (!es) {
-          connect();
+        if (isLeader && !es) {
+          connectSse();
         } else {
           reconcileConversations();
         }
       }
     }
 
-    connect();
+    function handleUnload() {
+      if (isLeader && bc) {
+        try {
+          bc.postMessage({ type: "LEADER_RESIGNED", leaderId: tabId });
+        } catch {}
+      }
+      disconnectSse();
+      bc?.close();
+    }
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("pagehide", disconnect);
-    window.addEventListener("beforeunload", disconnect);
+    window.addEventListener("pagehide", handleUnload);
+    window.addEventListener("beforeunload", handleUnload);
 
     return () => {
+      clearTimeout(electionTimeout);
+      clearTimeout(reconnectTimer);
+      clearInterval(heartbeatTimer);
+      clearInterval(leaderCheckTimer);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("pagehide", disconnect);
-      window.removeEventListener("beforeunload", disconnect);
-      disconnect();
-      bc?.close();
+      window.removeEventListener("pagehide", handleUnload);
+      window.removeEventListener("beforeunload", handleUnload);
+      handleUnload();
     };
-  }, [router, user.orgId]);
+  }, [user.orgId]);
 
   function handleToastClick(toast: RealtimeToast) {
     if (toast.targetTab) {
@@ -675,30 +794,57 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   async function handleAddSource(e: React.FormEvent) {
     e.preventDefault();
-    if (!newSourceTitle.trim()) return;
+    if (!newSourceTitle.trim() && !newSourceFile) return;
 
     setIsAddingSource(true);
     try {
-      const res = await fetch("/api/dashboard/knowledge/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: newSourceTitle.trim(),
-          sourceType: newSourceType,
-          sourceUrl: newSourceType === "url" ? newSourceTitle.trim() : null,
-          pageCount: newSourceType === "url" ? 18 : 6,
-        }),
-      });
+      let res: Response;
+      if (newSourceFile) {
+        const formData = new FormData();
+        formData.append("file", newSourceFile);
+        formData.append("title", newSourceTitle.trim() || newSourceFile.name);
+        formData.append("sourceType", newSourceType);
+        if (newSourceContent.trim()) {
+          formData.append("content", newSourceContent.trim());
+        }
+        res = await fetch("/api/dashboard/knowledge/add", {
+          method: "POST",
+          body: formData,
+        });
+      } else {
+        res = await fetch("/api/dashboard/knowledge/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: newSourceTitle.trim(),
+            sourceType: newSourceType,
+            sourceUrl: newSourceType === "url" ? newSourceTitle.trim() : null,
+            content: newSourceContent.trim() || undefined,
+            pageCount: newSourceType === "url" ? 18 : 6,
+          }),
+        });
+      }
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to add source");
 
       setKnowledgeSources((prev) => [data.source, ...prev]);
       setNewSourceTitle("");
+      setNewSourceFile(null);
+      setNewSourceContent("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
       setShowAddSource(false);
-      showToast({ type: "success", title: "Knowledge Added", message: `Source "${data.source?.title || newSourceTitle}" indexed into parameter store.` });
+      showToast({
+        type: "success",
+        title: "Knowledge Indexed",
+        message: `Parsed "${data.source?.title || newSourceTitle}" — ${data.source?.pageCount || data.source?.chunks?.length || 1} chunks active.`,
+      });
     } catch (err: any) {
-      showToast({ type: "error", title: "Failed to Add Source", message: err.message || "Failed to add knowledge source." });
+      showToast({
+        type: "error",
+        title: "Failed to Add Source",
+        message: err.message || "Failed to add knowledge source.",
+      });
     } finally {
       setIsAddingSource(false);
     }
@@ -1360,9 +1506,49 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               <h1 className="text-2xl font-bold text-slate-900 capitalize">
                 {navItems.find((n) => n.id === activeTab)?.label}
               </h1>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Workspace: <b className="text-slate-700">{user.orgName}</b> · ID: <code className="font-mono text-indigo-600">{user.orgId}</code>
-              </p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <p className="text-xs text-slate-500">
+                  Workspace: <b className="text-slate-700">{user.orgName}</b> · ID: <code className="font-mono text-indigo-600">{user.orgId}</code>
+                </p>
+                <span
+                  title={
+                    sseRole === "leader"
+                      ? "Primary Leader tab: directly holding server SSE stream"
+                      : "Follower tab: synchronized via BroadcastChannel"
+                  }
+                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
+                    isSocketConnected
+                      ? sseRole === "leader"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : "bg-indigo-50 text-indigo-700 border-indigo-200"
+                      : "bg-amber-50 text-amber-700 border-amber-200"
+                  }`}
+                >
+                  <span className="relative flex h-1.5 w-1.5">
+                    {isSocketConnected && (
+                      <span
+                        className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                          sseRole === "leader" ? "bg-emerald-400" : "bg-indigo-400"
+                        }`}
+                      ></span>
+                    )}
+                    <span
+                      className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
+                        isSocketConnected
+                          ? sseRole === "leader"
+                            ? "bg-emerald-500"
+                            : "bg-indigo-500"
+                          : "bg-amber-500"
+                      }`}
+                    ></span>
+                  </span>
+                  {isSocketConnected
+                    ? sseRole === "leader"
+                      ? "Live Stream (Leader)"
+                      : "Live Synced (Multi-Tab)"
+                    : "Connecting..."}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1751,7 +1937,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="sm:col-span-2">
                     <label className="block font-semibold text-slate-700 mb-1">
-                      {newSourceType === "url" ? "Website URL to Crawl" : "Document Title / Filename"}
+                      {newSourceType === "url"
+                        ? "Website URL to Crawl"
+                        : newSourceType === "pdf"
+                        ? "PDF Document Name / Title"
+                        : "Document Title"}
                     </label>
                     <input
                       required
@@ -1760,7 +1950,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       placeholder={
                         newSourceType === "url"
                           ? "https://yourclinic.com.au/services"
-                          : "Clinic_Price_Schedule_2026.pdf"
+                          : newSourceType === "pdf"
+                          ? "Clinic_Fee_Schedule_2026.pdf"
+                          : "Intake_and_Cancellation_Policy.txt"
                       }
                       className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600"
                     />
@@ -1769,20 +1961,147 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     <label className="block font-semibold text-slate-700 mb-1">Source Format</label>
                     <select
                       value={newSourceType}
-                      onChange={(e) => setNewSourceType(e.target.value as any)}
+                      onChange={(e) => {
+                        const nextType = e.target.value as any;
+                        setNewSourceType(nextType);
+                        setNewSourceFile(null);
+                        setNewSourceContent("");
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }}
                       className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600"
                     >
                       <option value="url">Website URL Crawl</option>
-                      <option value="pdf">PDF Document</option>
-                      <option value="document">Text Document</option>
+                      <option value="pdf">PDF Document (.pdf)</option>
+                      <option value="document">Text Document (.txt / .md / .csv)</option>
                     </select>
                   </div>
                 </div>
 
+                {/* PDF File Upload Zone */}
+                {newSourceType === "pdf" && (
+                  <div className="space-y-2">
+                    <label className="block font-semibold text-slate-700">
+                      Upload PDF File (Fee Schedule, Services, Patient Intake Policy)
+                    </label>
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="cursor-pointer border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-white rounded-xl p-4 text-center transition group"
+                    >
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        accept=".pdf,application/pdf"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            setNewSourceFile(f);
+                            if (!newSourceTitle || newSourceTitle.includes(".pdf")) {
+                              setNewSourceTitle(f.name);
+                            }
+                          }
+                        }}
+                      />
+                      {newSourceFile ? (
+                        <div className="flex items-center justify-center gap-2 text-indigo-700 font-bold">
+                          <span className="text-xl">📄</span>
+                          <span>{newSourceFile.name}</span>
+                          <span className="text-slate-400 font-normal text-[11px]">
+                            ({(newSourceFile.size / 1024).toFixed(1)} KB)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              setNewSourceFile(null);
+                              if (fileInputRef.current) fileInputRef.current.value = "";
+                            }}
+                            className="text-red-500 hover:text-red-700 text-xs ml-2 underline"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <div className="text-2xl group-hover:scale-110 transition">📄</div>
+                          <p className="font-semibold text-slate-700">Click to choose or drop your PDF document here</p>
+                          <p className="text-[11px] text-slate-400">
+                            Real text will be extracted with pdf-parse and converted into live vector chunks
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Text Document Upload or Direct Paste */}
+                {newSourceType === "document" && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="block font-semibold text-slate-700">
+                        Document Content (Paste text or upload file)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-[11px] font-bold text-indigo-600 hover:underline"
+                      >
+                        {newSourceFile ? `Replace File (${newSourceFile.name})` : "📁 Choose File Instead"}
+                      </button>
+                    </div>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept=".txt,.md,.csv,.json,.doc,.docx"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) {
+                          setNewSourceFile(f);
+                          if (!newSourceTitle) setNewSourceTitle(f.name);
+                        }
+                      }}
+                    />
+                    {newSourceFile ? (
+                      <div className="p-3 bg-white rounded-xl border border-indigo-200 flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-indigo-700 font-bold">
+                          <span className="text-lg">📝</span>
+                          <span>{newSourceFile.name}</span>
+                          <span className="text-slate-400 font-normal text-[11px]">
+                            ({(newSourceFile.size / 1024).toFixed(1)} KB)
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewSourceFile(null);
+                            if (fileInputRef.current) fileInputRef.current.value = "";
+                          }}
+                          className="text-red-500 hover:text-red-700 text-xs font-semibold"
+                        >
+                          ✕ Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <textarea
+                        rows={3}
+                        value={newSourceContent}
+                        onChange={(e) => setNewSourceContent(e.target.value)}
+                        placeholder="Paste service consultation fees, doctor bios, clinic guidelines, or policy rules here..."
+                        className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600 font-mono text-[11px]"
+                      />
+                    )}
+                  </div>
+                )}
+
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowAddSource(false)}
+                    onClick={() => {
+                      setShowAddSource(false);
+                      setNewSourceFile(null);
+                      setNewSourceContent("");
+                    }}
                     className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600"
                   >
                     Cancel
@@ -1792,7 +2111,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     disabled={isAddingSource}
                     className="rounded-xl bg-indigo-600 px-4 py-1.5 font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
                   >
-                    {isAddingSource ? "Indexing..." : "Index Source"}
+                    {isAddingSource ? "Indexing Chunks..." : "Index Source"}
                   </button>
                 </div>
               </form>

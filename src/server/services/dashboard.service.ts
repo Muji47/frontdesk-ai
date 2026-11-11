@@ -1224,7 +1224,8 @@ export class DashboardService {
     sourceType: "url" | "pdf" | "document" | "manual_qa",
     sourceUrl?: string,
     pageCount: number = 1,
-    content?: string
+    content?: string,
+    fileBuffer?: Buffer
   ): Promise<DashboardKnowledgeSource> {
     if (!title || title.trim().length === 0) {
       throw new ValidationError("Source title or URL is required.");
@@ -1256,7 +1257,14 @@ export class DashboardService {
     }
 
     // Extract real parameter chunks from the website or document
-    const extractedChunks = await CrawlerService.processAndSaveChunks(id, orgId, title.trim(), sourceType, content);
+    const extractedChunks = await CrawlerService.processAndSaveChunks(
+      id,
+      orgId,
+      title.trim(),
+      sourceType,
+      content,
+      fileBuffer
+    );
 
     return {
       id,

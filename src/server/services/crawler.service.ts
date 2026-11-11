@@ -148,6 +148,133 @@ export class CrawlerService {
   }
 
   /**
+   * Parses a PDF file buffer into clean plain text and page count.
+   * Utilizes pdf-parse in-memory with automatic fallback to system pdftotext.
+   */
+  public static async parsePdfBuffer(buffer: Buffer): Promise<{ text: string; numPages: number }> {
+    try {
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: buffer });
+      const res = await parser.getText();
+      const text = (res?.text || "").trim();
+      await parser.destroy();
+      if (text.length > 0) {
+        const pageMatches = text.match(/--\s*\d+\s*of\s*(\d+)\s*--/);
+        const numPages = pageMatches ? parseInt(pageMatches[1], 10) : 1;
+        return { text, numPages: Math.max(1, numPages) };
+      }
+    } catch (err: any) {
+      console.warn("[CrawlerService] pdf-parse in-memory parser failed, attempting system pdftotext:", err.message);
+    }
+
+    try {
+      const { execSync } = await import("node:child_process");
+      const { writeFileSync, unlinkSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tempPath = join(tmpdir(), `echo_pdf_${randomBytes(6).toString("hex")}.pdf`);
+      writeFileSync(tempPath, buffer);
+      const stdout = execSync(`pdftotext "${tempPath}" -`, { encoding: "utf-8", timeout: 8000 });
+      try {
+        unlinkSync(tempPath);
+      } catch {}
+      const text = (stdout || "").trim();
+      if (text.length > 0) {
+        const numPages = Math.max(1, (text.match(/\x0c/g) || []).length + 1);
+        return { text, numPages };
+      }
+    } catch (fallbackErr: any) {
+      console.warn("[CrawlerService] pdftotext fallback failed:", fallbackErr.message);
+    }
+
+    return { text: "", numPages: 1 };
+  }
+
+  /**
+   * Splits raw document text into meaningful semantic chunks with titles and token counts.
+   */
+  public static chunkDocumentText(rawText: string, documentTitle: string): ExtractedChunk[] {
+    const normalized = rawText
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/\t/g, " ")
+      .trim();
+
+    if (!normalized) {
+      return [
+        {
+          title: documentTitle || "Document Overview",
+          content: `Document: ${documentTitle}. Ingested into parameter store for verified company presence.`,
+          tokenCount: 20,
+        },
+      ];
+    }
+
+    // Split on double line breaks (paragraphs)
+    const paragraphs = normalized
+      .split(/\n\s*\n/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+
+    const chunks: ExtractedChunk[] = [];
+    let currentBuffer: string[] = [];
+    let currentTitle = "";
+
+    const flushChunk = () => {
+      if (currentBuffer.length === 0) return;
+      const combined = currentBuffer.join("\n\n").trim();
+      if (!combined) return;
+
+      const firstLine = currentBuffer[0].split("\n")[0].trim().replace(/^[-*#•\d.]+\s*/, "");
+      const title =
+        currentTitle ||
+        (firstLine.length > 5 && firstLine.length <= 60 && !firstLine.includes(". ")
+          ? firstLine
+          : `${documentTitle} - Section #${chunks.length + 1}`);
+
+      chunks.push({
+        title,
+        content: combined,
+        tokenCount: Math.max(1, Math.round(combined.length / 4)),
+      });
+
+      currentBuffer = [];
+      currentTitle = "";
+    };
+
+    for (const para of paragraphs) {
+      // If paragraph looks like a heading
+      if (para.length < 70 && (!para.includes(".") || para.endsWith(":"))) {
+        if (currentBuffer.length > 0) {
+          flushChunk();
+        }
+        currentTitle = para.replace(/^[-*#•\d.]+\s*/, "").replace(/:$/, "").trim();
+        continue;
+      }
+
+      currentBuffer.push(para);
+      const curLength = currentBuffer.join("\n\n").length;
+      if (curLength >= 400) {
+        flushChunk();
+      }
+    }
+
+    if (currentBuffer.length > 0) {
+      flushChunk();
+    }
+
+    return chunks.length > 0
+      ? chunks
+      : [
+          {
+            title: documentTitle,
+            content: normalized.slice(0, 500),
+            tokenCount: Math.max(1, Math.round(normalized.slice(0, 500).length / 4)),
+          },
+        ];
+  }
+
+  /**
    * Ingests real extracted parameter chunks into the knowledge_chunks table.
    */
   public static async processAndSaveChunks(
@@ -155,9 +282,11 @@ export class CrawlerService {
     orgId: string,
     title: string,
     sourceType: string,
-    content?: string
+    content?: string,
+    fileBuffer?: Buffer
   ): Promise<ExtractedChunk[]> {
     let chunks: ExtractedChunk[] = [];
+    let detectedPages = 1;
 
     if (sourceType === "url") {
       chunks = await this.crawlUrl(title);
@@ -172,14 +301,57 @@ export class CrawlerService {
           tokenCount: Math.max(1, Math.round(qaContent.length / 4)),
         },
       ];
+    } else if (sourceType === "pdf" || title.toLowerCase().endsWith(".pdf")) {
+      let pdfBuffer = fileBuffer;
+      if (!pdfBuffer && content) {
+        if (content.startsWith("data:application/pdf;base64,")) {
+          pdfBuffer = Buffer.from(content.split(",")[1], "base64");
+        } else if (/^[A-Za-z0-9+/=\s]+$/.test(content.slice(0, 100)) && content.length > 200) {
+          try {
+            pdfBuffer = Buffer.from(content, "base64");
+          } catch {}
+        }
+      }
+
+      if (pdfBuffer && pdfBuffer.length > 0) {
+        const { text, numPages } = await this.parsePdfBuffer(pdfBuffer);
+        detectedPages = numPages;
+        if (text) {
+          chunks = this.chunkDocumentText(text, title);
+        }
+      } else if (content && content.trim().length > 0) {
+        chunks = this.chunkDocumentText(content.trim(), title);
+      }
+
+      if (chunks.length === 0) {
+        chunks = [
+          {
+            title: title,
+            content: `Uploaded PDF: ${title}. Operating parameters strictly bounded by the uploaded document contents.`,
+            tokenCount: 40,
+          },
+        ];
+      }
     } else {
-      chunks = [
-        {
-          title: "Verified Document Parameters",
-          content: `Document: ${title}. Operating parameters strictly bounded by the uploaded document contents.`,
-          tokenCount: 40,
-        },
-      ];
+      let docText = "";
+      if (fileBuffer) {
+        docText = fileBuffer.toString("utf-8");
+      } else if (content) {
+        docText = content;
+      }
+
+      if (docText.trim().length > 0) {
+        chunks = this.chunkDocumentText(docText.trim(), title);
+        detectedPages = Math.max(1, Math.ceil(docText.length / 2000));
+      } else {
+        chunks = [
+          {
+            title: title,
+            content: `Document: ${title}. Operating parameters strictly bounded by the uploaded document contents.`,
+            tokenCount: 40,
+          },
+        ];
+      }
     }
 
     // Save to knowledge_chunks database table
@@ -202,7 +374,7 @@ export class CrawlerService {
         UPDATE knowledge_sources
         SET page_count = ?, status = 'indexed', last_synced_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(chunks.length, sourceId);
+      `).run(Math.max(detectedPages, chunks.length), sourceId);
     });
 
     return chunks;

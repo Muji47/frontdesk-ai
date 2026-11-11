@@ -169,10 +169,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [isSavingAgent, setIsSavingAgent] = useState(false);
   const [agentSaveSuccess, setAgentSaveSuccess] = useState(false);
 
-  // Staff live reply & simulation state
+  // Staff live reply state
   const [replyText, setReplyText] = useState("");
   const [isSendingReply, setIsSendingReply] = useState(false);
-  const [isSimulatingReply, setIsSimulatingReply] = useState(false);
   const [isTogglingAi, setIsTogglingAi] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -188,7 +187,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [isSocketConnected, setIsSocketConnected] = useState<boolean>(false);
   const [sseRole, setSseRole] = useState<"leader" | "follower" | "connecting">("connecting");
   const tabIdRef = useRef<string>("");
-  const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
   const showToast = useCallback(
     ({
@@ -275,31 +273,30 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   // ===================== STEP 4: INTEGRATIONS & WEBHOOKS STATE =====================
   const [integrationsList, setIntegrationsList] = useState<DashboardIntegration[]>(initialData.integrations || []);
   const [deliveryLogsList, setDeliveryLogsList] = useState<any[]>(initialData.deliveryLogs || []);
-  const [testingProvider, setTestingProvider] = useState<string | null>(null);
   const [savingProvider, setSavingProvider] = useState<string | null>(null);
   const [activeIntegrationModal, setActiveIntegrationModal] = useState<"cliniko" | "webhook" | "sms" | null>(null);
   const [inspectingLog, setInspectingLog] = useState<any | null>(null);
 
   const clinikoExisting = integrationsList.find((i) => i.provider === "cliniko");
   const [clinikoForm, setClinikoForm] = useState({
-    apiKey: clinikoExisting?.config?.apiKey || "test_cliniko_key_au9812",
+    apiKey: clinikoExisting?.config?.apiKey || "",
     shard: clinikoExisting?.config?.shard || "au1",
     clinicName: clinikoExisting?.config?.clinicName || "Melbourne Wellness Clinic",
   });
 
   const webhookExisting = integrationsList.find((i) => i.provider === "webhook");
   const [webhookForm, setWebhookForm] = useState({
-    url: webhookExisting?.config?.url || "https://hooks.zapier.com/hooks/catch/91823/echo_ai_sync",
+    url: webhookExisting?.config?.url || "",
     secret: webhookExisting?.config?.secret || "whsec_echo_live_" + (user.orgId ? user.orgId.slice(4) : "secret"),
     events: webhookExisting?.config?.events || ["appointment.created", "lead.created", "conversation.escalated"],
   });
 
   const smsExisting = integrationsList.find((i) => i.provider === "sms");
   const [smsForm, setSmsForm] = useState({
-    alertPhone: smsExisting?.config?.alertPhone || "+61412884921",
-    accountSid: smsExisting?.config?.accountSid || "AC_twilio_prod_clinic",
-    authToken: smsExisting?.config?.authToken || "••••••••••••••••••••••••",
-    fromPhone: smsExisting?.config?.fromPhone || "+61480019283",
+    alertPhone: smsExisting?.config?.alertPhone || "",
+    accountSid: smsExisting?.config?.accountSid || "",
+    authToken: smsExisting?.config?.authToken || "",
+    fromPhone: smsExisting?.config?.fromPhone || "",
   });
 
   const refreshIntegrations = useCallback(async () => {
@@ -314,47 +311,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       console.error("Failed to refresh integrations:", err);
     }
   }, []);
-
-  const handleTestIntegration = useCallback(
-    async (provider: string, configOverride?: any) => {
-      setTestingProvider(provider);
-      try {
-        const config =
-          configOverride ||
-          (provider === "cliniko"
-            ? clinikoForm
-            : provider === "webhook"
-            ? webhookForm
-            : provider === "sms"
-            ? smsForm
-            : {});
-        const res = await fetch("/api/dashboard/integrations/test", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, config }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.result?.message || data.error || "Integration test failed");
-        }
-        showToast({
-          type: "success",
-          title: `${provider.toUpperCase()} Connected`,
-          message: `${data.result.message} (${data.result.durationMs}ms latency)`,
-        });
-        await refreshIntegrations();
-      } catch (err: any) {
-        showToast({
-          type: "error",
-          title: `${provider.toUpperCase()} Test Failed`,
-          message: err.message || "Could not connect to external service.",
-        });
-      } finally {
-        setTestingProvider(null);
-      }
-    },
-    [clinikoForm, webhookForm, smsForm, refreshIntegrations, showToast]
-  );
 
   const handleSaveIntegration = useCallback(
     async (provider: string, config: any) => {
@@ -723,22 +679,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     setToasts((prev) => prev.filter((t) => t.id !== toast.id));
   }
 
-  async function handleSimulateIncoming(type?: string) {
-    setIsSimulating(true);
-    try {
-      const res = await fetch("/api/dashboard/events/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ eventType: type }),
-      });
-      if (!res.ok) throw new Error("Simulation failed");
-    } catch (err: any) {
-      showToast({ type: "error", title: "Simulation Failed", message: err.message || "Failed to trigger simulated event." });
-    } finally {
-      setIsSimulating(false);
-    }
-  }
-
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
@@ -875,38 +815,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       showToast({ type: "error", title: "Handover Failed", message: err.message || "Failed to toggle AI handover." });
     } finally {
       setIsTogglingAi(false);
-    }
-  }
-
-  async function handleSimulateCustomerReply() {
-    if (!currentConv || isSimulatingReply) return;
-    setIsSimulatingReply(true);
-    try {
-      const res = await fetch("/api/dashboard/conversations/simulate-reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: currentConv.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to simulate customer reply");
-      const newMsg: ConversationMessage = data.message;
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === currentConv.id
-            ? {
-                ...c,
-                status: "WAITING_FOR_HUMAN",
-                badge: "Human needed",
-                lastMessage: newMsg.content,
-                messages: c.messages.some((m) => m.id === newMsg.id) ? c.messages : [...c.messages, newMsg],
-              }
-            : c
-        )
-      );
-    } catch (err: any) {
-      showToast({ type: "error", title: "Simulation Failed", message: err.message || "Failed to simulate customer reply." });
-    } finally {
-      setIsSimulatingReply(false);
     }
   }
 
@@ -1671,15 +1579,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => handleSimulateIncoming()}
-              disabled={isSimulating}
-              className="rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-700 to-sky-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:opacity-95 transition flex items-center gap-1.5 disabled:opacity-50"
-              title="Test real-time socket delivery & top-right alert toast"
-            >
-              <span>{isSimulating ? "⏳" : "⚡"}</span>
-              <span>{isSimulating ? "Simulating..." : "Test Real-Time Inquiry"}</span>
-            </button>
             <Link
               href="/"
               className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-300"
@@ -2635,14 +2534,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   <h3 className="text-xs font-bold text-slate-900">Customer Inbox</h3>
                   <span className="text-[11px] text-slate-500">{conversations.length} total threads</span>
                 </div>
-                <button
-                  onClick={() => handleSimulateIncoming("new_conversation")}
-                  disabled={isSimulating}
-                  className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold transition flex items-center gap-1 border border-indigo-200"
-                  title="Simulate a new incoming patient inquiry"
-                >
-                  <span>+ Test Inquiry</span>
-                </button>
               </div>
 
               <div className="divide-y divide-slate-100 overflow-y-auto max-h-[640px] flex-1 bg-white">
@@ -2776,16 +2667,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         👤 Take Over (Mute AI)
                       </button>
                     )}
-
-                    {/* Simulate Customer Reply */}
-                    <button
-                      onClick={handleSimulateCustomerReply}
-                      disabled={isSimulatingReply}
-                      className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold transition flex items-center gap-1 shadow-xs"
-                      title="Simulate the customer replying back to test two-way dialogue"
-                    >
-                      {isSimulatingReply ? "Simulating..." : "💬 Customer Replies"}
-                    </button>
                   </div>
                 </div>
 
@@ -3158,7 +3039,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               {(() => {
                 const cliniko = integrationsList.find((i) => i.provider === "cliniko");
                 const isConnected = cliniko?.status === "connected";
-                const isTesting = testingProvider === "cliniko";
                 return (
                   <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
                     <div>
@@ -3191,17 +3071,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <button
                         type="button"
                         onClick={() => setActiveIntegrationModal("cliniko")}
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                        className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition shadow-xs"
                       >
                         ⚙️ Configure API
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleTestIntegration("cliniko")}
-                        disabled={isTesting}
-                        className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-                      >
-                        {isTesting ? "⏳ Testing Sync..." : "⚡ Test & Sync Now"}
                       </button>
                     </div>
                   </div>
@@ -3212,7 +3084,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               {(() => {
                 const webhook = integrationsList.find((i) => i.provider === "webhook");
                 const isConnected = webhook?.status === "connected";
-                const isTesting = testingProvider === "webhook";
                 return (
                   <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
                     <div>
@@ -3245,17 +3116,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <button
                         type="button"
                         onClick={() => setActiveIntegrationModal("webhook")}
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                        className="rounded-xl bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition shadow-xs"
                       >
                         ⚙️ Configure Webhook
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleTestIntegration("webhook")}
-                        disabled={isTesting}
-                        className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-                      >
-                        {isTesting ? "⏳ Sending Ping..." : "🚀 Send Test Ping"}
                       </button>
                     </div>
                   </div>
@@ -3266,7 +3129,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               {(() => {
                 const sms = integrationsList.find((i) => i.provider === "sms");
                 const isConnected = sms?.status === "connected";
-                const isTesting = testingProvider === "sms";
                 return (
                   <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
                     <div>
@@ -3299,17 +3161,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <button
                         type="button"
                         onClick={() => setActiveIntegrationModal("sms")}
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                        className="rounded-xl bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition shadow-xs"
                       >
                         ⚙️ Configure SMS
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleTestIntegration("sms")}
-                        disabled={isTesting}
-                        className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-                      >
-                        {isTesting ? "⏳ Sending SMS..." : "📲 Send Test Alert"}
                       </button>
                     </div>
                   </div>
@@ -4536,32 +4390,22 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
 
-              <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => handleTestIntegration("cliniko", clinikoForm)}
-                  disabled={testingProvider === "cliniko"}
-                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs shadow-xs disabled:opacity-50"
+                  onClick={() => setActiveIntegrationModal(null)}
+                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
                 >
-                  {testingProvider === "cliniko" ? "Testing..." : "⚡ Test Connection"}
+                  Cancel
                 </button>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveIntegrationModal(null)}
-                    className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSaveIntegration("cliniko", clinikoForm)}
-                    disabled={savingProvider === "cliniko"}
-                    className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs disabled:opacity-50"
-                  >
-                    {savingProvider === "cliniko" ? "Saving..." : "Save Cliniko"}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSaveIntegration("cliniko", clinikoForm)}
+                  disabled={savingProvider === "cliniko"}
+                  className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs disabled:opacity-50"
+                >
+                  {savingProvider === "cliniko" ? "Saving..." : "Save Cliniko"}
+                </button>
               </div>
             </div>
           </div>
@@ -4661,32 +4505,22 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
 
-              <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => handleTestIntegration("webhook", webhookForm)}
-                  disabled={testingProvider === "webhook"}
-                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs shadow-xs disabled:opacity-50"
+                  onClick={() => setActiveIntegrationModal(null)}
+                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
                 >
-                  {testingProvider === "webhook" ? "Sending..." : "🚀 Send Test Ping"}
+                  Cancel
                 </button>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveIntegrationModal(null)}
-                    className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSaveIntegration("webhook", webhookForm)}
-                    disabled={savingProvider === "webhook"}
-                    className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white hover:bg-slate-800 transition text-xs shadow-xs disabled:opacity-50"
-                  >
-                    {savingProvider === "webhook" ? "Saving..." : "Save Webhook"}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSaveIntegration("webhook", webhookForm)}
+                  disabled={savingProvider === "webhook"}
+                  className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white hover:bg-slate-800 transition text-xs shadow-xs disabled:opacity-50"
+                >
+                  {savingProvider === "webhook" ? "Saving..." : "Save Webhook"}
+                </button>
               </div>
             </div>
           </div>
@@ -4749,32 +4583,22 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
 
-              <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => handleTestIntegration("sms", smsForm)}
-                  disabled={testingProvider === "sms"}
-                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs shadow-xs disabled:opacity-50"
+                  onClick={() => setActiveIntegrationModal(null)}
+                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
                 >
-                  {testingProvider === "sms" ? "Sending..." : "📲 Send Test Alert"}
+                  Cancel
                 </button>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveIntegrationModal(null)}
-                    className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSaveIntegration("sms", smsForm)}
-                    disabled={savingProvider === "sms"}
-                    className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white hover:bg-slate-800 transition text-xs shadow-xs disabled:opacity-50"
-                  >
-                    {savingProvider === "sms" ? "Saving..." : "Save SMS Alert"}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSaveIntegration("sms", smsForm)}
+                  disabled={savingProvider === "sms"}
+                  className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white hover:bg-slate-800 transition text-xs shadow-xs disabled:opacity-50"
+                >
+                  {savingProvider === "sms" ? "Saving..." : "Save SMS Alert"}
+                </button>
               </div>
             </div>
           </div>

@@ -1546,66 +1546,6 @@ export class DashboardService {
   }
 
   /**
-   * Simulates a realistic customer response in a conversation thread for verification & demo testing.
-   */
-  public static simulateCustomerReply(conversationId: string, orgId: string): ConversationMessage {
-    const conv = db.prepare(`
-      SELECT id, visitor_name, visitor_contact FROM conversations WHERE id = ? AND organization_id = ?
-    `).get(conversationId, orgId) as any;
-
-    if (!conv) {
-      throw new NotFoundError("Conversation not found.");
-    }
-
-    const followUps = [
-      "That works great! Please book me in for that time.",
-      "Thank you for the quick reply. Do I need to bring my doctor's referral letter?",
-      "Perfect, I appreciate your help. Will I receive an SMS confirmation before the visit?",
-      "That sounds good. How early should I arrive to fill in the intake paperwork?",
-      "Understood! Thank you so much for arranging this with Dr. Sarah Lee.",
-    ];
-
-    const replyContent = followUps[Math.floor(Math.random() * followUps.length)];
-    const msgId = "msg_" + randomBytes(6).toString("hex");
-    const nowIso = new Date().toISOString();
-
-    withTransaction(() => {
-      db.prepare(`
-        INSERT INTO messages (id, conversation_id, sender, content, created_at)
-        VALUES (?, ?, 'client', ?, ?)
-      `).run(msgId, conversationId, replyContent, nowIso);
-
-      db.prepare(`
-        UPDATE conversations
-        SET last_message = ?, status = 'WAITING_FOR_HUMAN', resolution_badge = 'Human needed', last_activity_at = ?
-        WHERE id = ?
-      `).run(replyContent, nowIso, conversationId);
-    });
-
-    const newMsg: ConversationMessage = {
-      id: msgId,
-      sender: "client",
-      content: replyContent,
-      createdAt: nowIso,
-    };
-
-    dashboardEventBus.emitToOrg(orgId, {
-      type: "new_message",
-      title: `Reply from ${conv.visitor_name}`,
-      message: replyContent,
-      icon: "💬",
-      targetTab: "conversations",
-      targetId: conversationId,
-      data: {
-        conversationId,
-        message: newMsg,
-      },
-    });
-
-    return newMsg;
-  }
-
-  /**
    * Handles visitor chat messages from the public website widget with real RAG retrieval,
    * persistence, and real-time dashboard notification.
    */

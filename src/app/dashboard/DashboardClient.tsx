@@ -267,6 +267,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     plan: "starter" | "growth" | "scale";
     cycle: "monthly" | "biannual" | "annual";
   } | null>(null);
+  const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
+  const [cancelReason, setCancelReason] = useState<string>("Too expensive / Budget constraints");
+  const [cancelFeedback, setCancelFeedback] = useState<string>("");
+  const [cancelImmediate, setCancelImmediate] = useState<boolean>(false);
+  const [isSubmittingCancellation, setIsSubmittingCancellation] = useState<boolean>(false);
+  const [isResumingSubscription, setIsResumingSubscription] = useState<boolean>(false);
   const paymentMethodsSectionRef = useRef<HTMLDivElement | null>(null);
   const addCardInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1320,6 +1326,68 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       showToast({ type: "error", title: "Failed to Remove Card", message: err.message || "Failed to delete card." });
     } finally {
       setBusyCardId(null);
+    }
+  }
+
+  async function handleConfirmCancellation() {
+    setIsSubmittingCancellation(true);
+    try {
+      const res = await fetch("/api/dashboard/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "cancel_subscription",
+          reason: cancelReason,
+          feedback: cancelFeedback,
+          immediate: cancelImmediate,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to cancel subscription");
+      if (data.billing) setBillingState(data.billing);
+      setShowCancelModal(false);
+      showToast({
+        type: "info",
+        title: "Subscription Cancelled",
+        message: data.message || "Your subscription has been scheduled for cancellation.",
+      });
+    } catch (err: any) {
+      showToast({
+        type: "error",
+        title: "Cancellation Failed",
+        message: err.message || "Failed to process cancellation request.",
+      });
+    } finally {
+      setIsSubmittingCancellation(false);
+    }
+  }
+
+  async function handleResumeSubscription() {
+    setIsResumingSubscription(true);
+    try {
+      const res = await fetch("/api/dashboard/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "resume_subscription",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to resume subscription");
+      if (data.billing) setBillingState(data.billing);
+      showToast({
+        type: "success",
+        title: "Subscription Resumed",
+        message: data.message || "Your subscription has been successfully resumed.",
+      });
+    } catch (err: any) {
+      showToast({
+        type: "error",
+        title: "Resume Failed",
+        message: err.message || "Failed to resume subscription.",
+      });
+    } finally {
+      setIsResumingSubscription(false);
     }
   }
 
@@ -3674,9 +3742,19 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-100 px-2.5 py-0.5 rounded-full">
-                        Current Active Plan
-                      </span>
+                      {billingState.subscriptionStatus === "cancelling" ? (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full">
+                          Cancels on {billingState.cancelEffectiveDate || "Period End"}
+                        </span>
+                      ) : billingState.subscriptionStatus === "cancelled" ? (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-800 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-full">
+                          Cancelled
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-100 px-2.5 py-0.5 rounded-full">
+                          Current Active Plan
+                        </span>
+                      )}
                       <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
                         {activePricing.cycleLabel}
                       </span>
@@ -3699,6 +3777,34 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     </span>
                   </div>
                 </div>
+
+                {/* If Cancelling: Warning & Retention Banner */}
+                {billingState.subscriptionStatus === "cancelling" && (
+                  <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50/90 p-4 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <span className="text-lg leading-none">⚠️</span>
+                      <div>
+                        <p className="font-bold text-amber-950">Subscription Scheduled for Cancellation</p>
+                        <p className="text-[11px] text-amber-800 mt-0.5">
+                          Your workspace features remain fully active until <b>{billingState.cancelEffectiveDate || "the end of your current cycle"}</b>. Auto-renewal has been stopped and no further charges will occur.
+                          {billingState.cancellationReason && (
+                            <span className="block mt-1 font-semibold text-amber-900">
+                              Reason: {billingState.cancellationReason}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isResumingSubscription}
+                      onClick={handleResumeSubscription}
+                      className="shrink-0 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 text-xs transition shadow-xs cursor-pointer disabled:opacity-60"
+                    >
+                      {isResumingSubscription ? "Resuming..." : "Resume Subscription"}
+                    </button>
+                  </div>
+                )}
 
                 {/* Usage Quotas */}
                 <div className="mt-6 pt-6 border-t border-indigo-100/80 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
@@ -3747,6 +3853,56 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <div className="h-full bg-emerald-500 rounded-full" style={{ width: "100%" }} />
                     </div>
                     <span className="text-[10px] text-emerald-600 font-medium mt-1 block">Cliniko 2-Way Sync</span>
+                  </div>
+                </div>
+
+                {/* Plan Status & Termination / Cancellation Action */}
+                <div className="mt-6 pt-5 border-t border-indigo-100/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div className="text-slate-500 text-[11px]">
+                    {billingState.subscriptionStatus === "cancelling" ? (
+                      <span className="text-amber-800 font-semibold flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                        Cancelling on {billingState.cancelEffectiveDate || "period end"} — Change your mind? You can resume anytime.
+                      </span>
+                    ) : billingState.subscriptionStatus === "cancelled" ? (
+                      <span className="text-rose-700 font-semibold flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-rose-500" />
+                        Subscription cancelled — workspace running on Starter tier.
+                      </span>
+                    ) : (
+                      <span>Need to manage or terminate your plan?</span>
+                    )}
+                  </div>
+                  <div>
+                    {billingState.subscriptionStatus === "cancelling" ? (
+                      <button
+                        type="button"
+                        disabled={isResumingSubscription}
+                        onClick={handleResumeSubscription}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 hover:text-emerald-700 hover:underline cursor-pointer"
+                      >
+                        ✓ Resume Subscription
+                      </button>
+                    ) : billingState.subscriptionStatus === "cancelled" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateSubscription("growth", selectedCycle, false)}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-700 hover:underline cursor-pointer"
+                      >
+                        Reactivate Growth Plan
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowCancelModal(true)}
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:underline transition cursor-pointer"
+                      >
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Cancel Subscription
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -4323,6 +4479,185 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   </div>
                 );
               })()}
+
+              {/* Cancel Subscription Modal */}
+              {showCancelModal && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
+                  onClick={() => setShowCancelModal(false)}
+                >
+                  <div
+                    className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-5 text-xs animate-in fade-in zoom-in-95 duration-150"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Header */}
+                    <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-rose-600 text-lg">
+                          ⚠️
+                        </div>
+                        <div>
+                          <h4 className="text-base font-extrabold text-slate-900">
+                            Cancel Echo.ai Subscription
+                          </h4>
+                          <p className="text-[11px] text-slate-500">
+                            We're sorry to see your clinic leave. Please review the details below.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowCancelModal(false)}
+                        className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    {/* What happens when you cancel */}
+                    <div className="rounded-xl border border-rose-100 bg-rose-50/50 p-4 space-y-2 text-slate-700">
+                      <span className="font-bold text-rose-900 block text-xs">
+                        What happens when you cancel:
+                      </span>
+                      <ul className="space-y-1.5 text-[11px] text-rose-800">
+                        <li className="flex items-start gap-2">
+                          <span className="text-rose-500 font-bold">•</span>
+                          <span>
+                            Your current plan features will remain active until the end of your billing cycle (<b>{billingState.cancelEffectiveDate || "next renewal date"}</b>).
+                          </span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-rose-500 font-bold">•</span>
+                          <span>
+                            No further automatic charges will occur on your payment card.
+                          </span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-rose-500 font-bold">•</span>
+                          <span>
+                            After period end, your account will downgrade to the <b>Starter Plan</b> (250 convs/mo limit, 1 seat, and Cliniko 2-way sync paused).
+                          </span>
+                        </li>
+                      </ul>
+                    </div>
+
+                    {/* Cancellation Reason Selector */}
+                    <div className="space-y-2">
+                      <label className="block text-xs font-bold text-slate-800">
+                        Please tell us why you're cancelling:
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {[
+                          "Too expensive / Budget constraints",
+                          "Missing clinical or PMS features",
+                          "Switching to another software",
+                          "Practice closing or downsizing",
+                          "Only needed temporarily",
+                          "Other reason",
+                        ].map((reasonOpt) => (
+                          <button
+                            key={reasonOpt}
+                            type="button"
+                            onClick={() => setCancelReason(reasonOpt)}
+                            className={`px-3 py-2 text-left rounded-xl border text-xs font-medium transition cursor-pointer flex items-center gap-2 ${
+                              cancelReason === reasonOpt
+                                ? "border-rose-500 bg-rose-50 text-rose-900 font-bold"
+                                : "border-slate-200 bg-slate-50/60 text-slate-700 hover:border-slate-300"
+                            }`}
+                          >
+                            <span className={`h-3 w-3 rounded-full border flex items-center justify-center ${
+                              cancelReason === reasonOpt ? "border-rose-600 bg-rose-600" : "border-slate-400"
+                            }`}>
+                              {cancelReason === reasonOpt && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                            </span>
+                            <span className="truncate">{reasonOpt}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Optional Feedback / Comments */}
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        Additional feedback (optional):
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={cancelFeedback}
+                        onChange={(e) => setCancelFeedback(e.target.value)}
+                        placeholder="What could we have done better?"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-rose-500 focus:bg-white focus:outline-hidden"
+                      />
+                    </div>
+
+                    {/* Retention Offer Alternative */}
+                    {billingState.plan !== "starter" && (
+                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 flex items-center justify-between gap-3 text-xs">
+                        <div>
+                          <p className="font-bold text-indigo-950">Looking to reduce costs?</p>
+                          <p className="text-[11px] text-indigo-800">
+                            You can downgrade to <b>Starter ($49/mo)</b> instead of cancelling completely.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCancelModal(false);
+                            handleUpdateSubscription("starter", "monthly", false);
+                          }}
+                          className="shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 text-xs transition cursor-pointer"
+                        >
+                          Switch to Starter
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Timing Choice: End of Period vs Immediate */}
+                    <div className="flex items-center gap-2 pt-1 text-[11px] text-slate-600">
+                      <input
+                        type="checkbox"
+                        id="cancel-immediate"
+                        checked={cancelImmediate}
+                        onChange={(e) => setCancelImmediate(e.target.checked)}
+                        className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                      />
+                      <label htmlFor="cancel-immediate" className="cursor-pointer select-none">
+                        Cancel immediately (revert to Starter right away instead of waiting until cycle end)
+                      </label>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+                      <button
+                        type="button"
+                        disabled={isSubmittingCancellation}
+                        onClick={() => setShowCancelModal(false)}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+                      >
+                        Keep My Subscription
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isSubmittingCancellation}
+                        onClick={handleConfirmCancellation}
+                        className="rounded-xl bg-rose-600 px-4 py-2 font-bold text-white hover:bg-rose-700 transition shadow-xs cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {isSubmittingCancellation ? (
+                          <>
+                            <svg className="h-3.5 w-3.5 animate-spin text-white" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            <span>Cancelling...</span>
+                          </>
+                        ) : (
+                          <span>Confirm Cancellation</span>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })()}

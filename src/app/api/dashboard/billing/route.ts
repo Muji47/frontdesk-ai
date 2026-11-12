@@ -79,6 +79,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ billing, message: "Payment method removed." });
     }
 
+    if (action === "cancel_subscription") {
+      const result = DashboardService.cancelSubscription(
+        user.orgId,
+        body.reason ? String(body.reason) : undefined,
+        body.feedback ? String(body.feedback) : undefined,
+        Boolean(body.immediate)
+      );
+      return NextResponse.json(result);
+    }
+
+    if (action === "resume_subscription") {
+      const result = DashboardService.resumeSubscription(user.orgId);
+      return NextResponse.json(result);
+    }
+
     return NextResponse.json({ error: "Invalid billing action" }, { status: 400 });
   } catch (err: any) {
     return NextResponse.json(

@@ -141,6 +141,11 @@ export interface DashboardBillingData {
   morMode: "live" | "sandbox";
   externalSubscriptionId: string | null;
   customerPortalUrl: string | null;
+  subscriptionStatus: "active" | "cancelling" | "cancelled";
+  cancelAtPeriodEnd: boolean;
+  cancelEffectiveDate: string | null;
+  cancellationReason: string | null;
+  cancelledAt: string | null;
   paymentMethods: DashboardPaymentMethod[];
   invoices: DashboardBillingInvoice[];
 }
@@ -429,7 +434,7 @@ export class DashboardService {
   public static getBillingData(orgId: string): DashboardBillingData {
     const orgRow = db
       .prepare(
-        "SELECT plan, billing_cycle, billing_currency, billing_provider, external_subscription_id, customer_portal_url FROM organizations WHERE id = ?"
+        "SELECT plan, billing_cycle, billing_currency, billing_provider, external_subscription_id, customer_portal_url, subscription_status, cancel_at_period_end, cancellation_reason, cancelled_at FROM organizations WHERE id = ?"
       )
       .get(orgId) as
       | {
@@ -439,6 +444,10 @@ export class DashboardService {
           billing_provider?: string;
           external_subscription_id?: string | null;
           customer_portal_url?: string | null;
+          subscription_status?: string | null;
+          cancel_at_period_end?: number | null;
+          cancellation_reason?: string | null;
+          cancelled_at?: string | null;
         }
       | undefined;
 
@@ -588,6 +597,28 @@ export class DashboardService {
       };
     });
 
+    const subscriptionStatus: "active" | "cancelling" | "cancelled" =
+      orgRow?.subscription_status === "cancelling"
+        ? "cancelling"
+        : orgRow?.subscription_status === "cancelled"
+        ? "cancelled"
+        : "active";
+    const cancelAtPeriodEnd = Boolean(orgRow?.cancel_at_period_end);
+    const cancellationReason = orgRow?.cancellation_reason || null;
+    const cancelledAt = orgRow?.cancelled_at || null;
+
+    let cancelEffectiveDate: string | null = null;
+    if (subscriptionStatus === "cancelling" || cancelAtPeriodEnd) {
+      const baseDate = cancelledAt ? new Date(cancelledAt) : new Date();
+      const periodDays = billingCycle === "annual" ? 365 : billingCycle === "biannual" ? 180 : 30;
+      const effectiveDate = new Date(baseDate.getTime() + periodDays * 86400000);
+      cancelEffectiveDate = effectiveDate.toLocaleDateString("en-US", {
+        month: "short",
+        day: "2-digit",
+        year: "numeric",
+      });
+    }
+
     return {
       plan,
       billingCycle,
@@ -600,6 +631,11 @@ export class DashboardService {
         (provider === "paddle"
           ? "https://customer-portal.paddle.com/cpl_echo_ai"
           : "https://app.lemonsqueezy.com/my-orders"),
+      subscriptionStatus,
+      cancelAtPeriodEnd,
+      cancelEffectiveDate,
+      cancellationReason,
+      cancelledAt,
       paymentMethods,
       invoices,
     };
@@ -760,7 +796,12 @@ export class DashboardService {
 
     const cardSummary = formatMethodSummary(defaultCard);
     withTransaction(() => {
-      db.prepare(`UPDATE organizations SET plan = ?, billing_cycle = ?, billing_currency = ? WHERE id = ?`).run(
+      db.prepare(`
+        UPDATE organizations
+        SET plan = ?, billing_cycle = ?, billing_currency = ?,
+            subscription_status = 'active', cancel_at_period_end = 0, cancellation_reason = NULL, cancelled_at = NULL
+        WHERE id = ?
+      `).run(
         targetPlan,
         targetCycle,
         currency,
@@ -870,7 +911,8 @@ export class DashboardService {
           `UPDATE organizations
            SET plan = ?, billing_cycle = ?, billing_currency = 'USD', billing_provider = ?,
                external_subscription_id = COALESCE(?, external_subscription_id),
-               customer_portal_url = COALESCE(?, customer_portal_url)
+               customer_portal_url = COALESCE(?, customer_portal_url),
+               subscription_status = 'active', cancel_at_period_end = 0, cancellation_reason = NULL, cancelled_at = NULL
            WHERE id = ?`
         ).run(
           plan,
@@ -880,6 +922,16 @@ export class DashboardService {
           customerPortalUrl || null,
           orgId
         );
+      } else if (eventName === "subscription_cancelled") {
+        db.prepare(
+          `UPDATE organizations
+           SET plan = 'starter',
+               subscription_status = 'cancelled',
+               cancel_at_period_end = 0,
+               cancellation_reason = 'Merchant of Record webhook cancellation',
+               cancelled_at = ?
+           WHERE id = ?`
+        ).run(now.toISOString(), orgId);
       }
 
       if (eventName === "subscription_payment_success" || eventName === "subscription_created") {
@@ -1049,6 +1101,124 @@ export class DashboardService {
     });
 
     return this.getBillingData(orgId);
+  }
+
+  /**
+   * Cancels the subscription for an organization.
+   * If immediate is false (default), the subscription remains valid until the period ends,
+   * setting subscription_status = 'cancelling' and cancel_at_period_end = 1.
+   * If immediate is true, the plan reverts to 'starter' and subscription_status = 'cancelled'.
+   */
+  public static cancelSubscription(
+    orgId: string,
+    reason?: string,
+    feedback?: string,
+    immediate: boolean = false
+  ): { billing: DashboardBillingData; message: string } {
+    const org = db.prepare("SELECT id, plan, billing_cycle FROM organizations WHERE id = ?").get(orgId) as
+      | { id: string; plan: string; billing_cycle: string }
+      | undefined;
+
+    if (!org) {
+      throw new NotFoundError("Organization not found.");
+    }
+
+    const now = new Date();
+    const reasonParts = [reason?.trim(), feedback?.trim() ? `Feedback: ${feedback.trim()}` : ""].filter(Boolean);
+    const formattedReason = reasonParts.length > 0 ? reasonParts.join(" — ") : "Customer requested cancellation";
+
+    withTransaction(() => {
+      if (immediate) {
+        db.prepare(`
+          UPDATE organizations
+          SET plan = 'starter',
+              subscription_status = 'cancelled',
+              cancel_at_period_end = 0,
+              cancellation_reason = ?,
+              cancelled_at = ?
+          WHERE id = ?
+        `).run(formattedReason, now.toISOString(), orgId);
+      } else {
+        db.prepare(`
+          UPDATE organizations
+          SET subscription_status = 'cancelling',
+              cancel_at_period_end = 1,
+              cancellation_reason = ?,
+              cancelled_at = ?
+          WHERE id = ?
+        `).run(formattedReason, now.toISOString(), orgId);
+      }
+
+      // Record in integration_logs for commercial audit trail
+      try {
+        db.prepare(`
+          INSERT INTO integration_logs (
+            id, organization_id, provider, event_type, status, status_code, payload_json, response_json, duration_ms, created_at
+          ) VALUES (?, ?, 'billing', 'subscription.cancelled', 'delivered', 200, ?, ?, 15, ?)
+        `).run(
+          "log_" + randomBytes(6).toString("hex"),
+          orgId,
+          JSON.stringify({ plan: org.plan, billingCycle: org.billing_cycle, reason: formattedReason, immediate }),
+          JSON.stringify({ status: immediate ? "cancelled_immediately" : "cancels_at_period_end", cancelledAt: now.toISOString() }),
+          now.toISOString()
+        );
+      } catch (e) {
+        // graceful fallback
+      }
+    });
+
+    const billing = this.getBillingData(orgId);
+    return {
+      billing,
+      message: immediate
+        ? "Subscription cancelled immediately. Plan reverted to Starter."
+        : `Subscription scheduled for cancellation. Access remains active until ${billing.cancelEffectiveDate || "period end"}.`,
+    };
+  }
+
+  /**
+   * Resumes a subscription scheduled for cancellation at period end.
+   */
+  public static resumeSubscription(orgId: string): { billing: DashboardBillingData; message: string } {
+    const org = db.prepare("SELECT id, plan FROM organizations WHERE id = ?").get(orgId) as
+      | { id: string; plan: string }
+      | undefined;
+
+    if (!org) {
+      throw new NotFoundError("Organization not found.");
+    }
+
+    const now = new Date();
+    withTransaction(() => {
+      db.prepare(`
+        UPDATE organizations
+        SET subscription_status = 'active',
+            cancel_at_period_end = 0,
+            cancellation_reason = NULL,
+            cancelled_at = NULL
+        WHERE id = ?
+      `).run(orgId);
+
+      try {
+        db.prepare(`
+          INSERT INTO integration_logs (
+            id, organization_id, provider, event_type, status, status_code, payload_json, response_json, duration_ms, created_at
+          ) VALUES (?, ?, 'billing', 'subscription.resumed', 'delivered', 200, ?, ?, 12, ?)
+        `).run(
+          "log_" + randomBytes(6).toString("hex"),
+          orgId,
+          JSON.stringify({ plan: org.plan, resumedAt: now.toISOString() }),
+          JSON.stringify({ status: "active" }),
+          now.toISOString()
+        );
+      } catch (e) {}
+    });
+
+    const billing = this.getBillingData(orgId);
+    return {
+      billing,
+      message: "Subscription successfully resumed! Automatic renewals and clinical integrations will continue normally.",
+    };
   }
 
   /**

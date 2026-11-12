@@ -311,6 +311,18 @@ try {
   if (!orgColNames.has("customer_portal_url")) {
     db.exec("ALTER TABLE organizations ADD COLUMN customer_portal_url TEXT");
   }
+  if (!orgColNames.has("subscription_status")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN subscription_status TEXT NOT NULL DEFAULT 'active'");
+  }
+  if (!orgColNames.has("cancel_at_period_end")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN cancel_at_period_end INTEGER DEFAULT 0");
+  }
+  if (!orgColNames.has("cancellation_reason")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN cancellation_reason TEXT");
+  }
+  if (!orgColNames.has("cancelled_at")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN cancelled_at TEXT");
+  }
 
   const invCols = db.prepare("PRAGMA table_info(billing_invoices)").all() as { name: string }[];
   const invColNames = new Set(invCols.map((c) => c.name));

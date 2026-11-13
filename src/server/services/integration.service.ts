@@ -1,5 +1,6 @@
 import { randomBytes, createHmac } from "node:crypto";
 import { db, withTransaction } from "@/lib/db";
+import { ValidationError } from "@/server/errors";
 
 export interface IntegrationRecord {
   id: string;
@@ -48,6 +49,74 @@ export class IntegrationService {
   }
 
   /**
+   * Validates a destination URL against SSRF and forbidden networks.
+   */
+  public static validateWebhookUrl(rawUrl: string): { valid: boolean; error?: string } {
+    if (!rawUrl || typeof rawUrl !== "string") {
+      return { valid: false, error: "Webhook destination URL is required." };
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl.trim());
+    } catch {
+      return { valid: false, error: "Invalid Webhook destination URL format." };
+    }
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { valid: false, error: "Only HTTP and HTTPS webhook URLs are supported." };
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Block cloud metadata services unconditionally (AWS/GCP/Azure)
+    if (
+      hostname === "169.254.169.254" ||
+      hostname.startsWith("169.254.") ||
+      hostname === "metadata.google.internal" ||
+      hostname.endsWith(".internal") ||
+      hostname === "instance-data"
+    ) {
+      return { valid: false, error: "Forbidden destination: Cloud metadata services are blocked." };
+    }
+
+    const isLocalhost =
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname === "0.0.0.0";
+
+    const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4Match) {
+      const o1 = parseInt(ipv4Match[1], 10);
+      const o2 = parseInt(ipv4Match[2], 10);
+      if (
+        o1 === 127 || // 127.0.0.0/8 loopback
+        o1 === 0 || // 0.0.0.0/8
+        o1 === 10 || // 10.0.0.0/8 private
+        (o1 === 172 && o2 >= 16 && o2 <= 31) || // 172.16.0.0/12 private
+        (o1 === 192 && o2 === 168) || // 192.168.0.0/16 private
+        (o1 === 169 && o2 === 254) // 169.254.0.0/16 link-local
+      ) {
+        if (process.env.ALLOW_LOCAL_WEBHOOKS !== "true") {
+          return {
+            valid: false,
+            error: "Security restriction: Private, loopback, and local network IPs are not permitted as webhook destinations.",
+          };
+        }
+      }
+    } else if (isLocalhost && process.env.ALLOW_LOCAL_WEBHOOKS !== "true") {
+      return {
+        valid: false,
+        error: "Security restriction: Localhost webhooks are not permitted.",
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
    * Saves or updates an integration configuration.
    */
   public static saveIntegration(
@@ -56,6 +125,13 @@ export class IntegrationService {
     config: Record<string, any>,
     status: "connected" | "disconnected" | "error" = "connected"
   ): IntegrationRecord {
+    if (provider === "webhook" && config?.url) {
+      const urlCheck = this.validateWebhookUrl(config.url);
+      if (!urlCheck.valid) {
+        throw new ValidationError(urlCheck.error || "Disallowed webhook URL");
+      }
+    }
+
     const existing = db.prepare(`
       SELECT id FROM integrations WHERE organization_id = ? AND provider = ? LIMIT 1
     `).get(orgId, provider) as any;
@@ -194,6 +270,15 @@ export class IntegrationService {
       const url = config.url?.trim();
       if (!url) {
         return { success: false, durationMs: 0, message: "Webhook URL is required." };
+      }
+
+      const urlCheck = this.validateWebhookUrl(url);
+      if (!urlCheck.valid) {
+        return {
+          success: false,
+          durationMs: 0,
+          message: urlCheck.error || "Disallowed webhook URL.",
+        };
       }
 
       const secret = config.secret || "echo_webhook_secret_default";
@@ -462,6 +547,22 @@ export class IntegrationService {
         const subscribedEvents = Array.isArray(config.events) ? config.events : ["appointment.created", "lead.created", "conversation.escalated"];
 
         if (url && (subscribedEvents.includes(eventType) || subscribedEvents.includes("*"))) {
+          const urlCheck = this.validateWebhookUrl(url);
+          if (!urlCheck.valid) {
+            console.warn(`[IntegrationService] Blocked outbound dispatch to forbidden URL: ${url} (${urlCheck.error})`);
+            IntegrationService.recordLog({
+              orgId,
+              provider: "webhook",
+              eventType,
+              status: "failed",
+              statusCode: 403,
+              payload: { event: eventType, data: payload },
+              response: { error: "SSRF policy violation: " + urlCheck.error },
+              durationMs: 0,
+            });
+            continue;
+          }
+
           const startTime = Date.now();
           const outboundPayload = {
             event: eventType,
@@ -472,7 +573,10 @@ export class IntegrationService {
           const payloadStr = JSON.stringify(outboundPayload);
           const signature = createHmac("sha256", secret).update(payloadStr).digest("hex");
 
-          // Non-blocking fire-and-record
+          // Non-blocking fire-and-record with AbortController timeout
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 6000);
+
           fetch(url, {
             method: "POST",
             headers: {
@@ -483,8 +587,10 @@ export class IntegrationService {
               "User-Agent": "EchoAI-Webhook-Dispatcher/2.0",
             },
             body: payloadStr,
+            signal: controller.signal,
           })
             .then(async (res) => {
+              clearTimeout(timeout);
               const durationMs = Date.now() - startTime;
               let responseBody = "";
               try {
@@ -502,6 +608,7 @@ export class IntegrationService {
               });
             })
             .catch((err) => {
+              clearTimeout(timeout);
               const durationMs = Date.now() - startTime;
               IntegrationService.recordLog({
                 orgId,

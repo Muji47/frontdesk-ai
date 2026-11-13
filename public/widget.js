@@ -486,6 +486,7 @@
   const clinicNameEl = shadow.getElementById("echoClinicName");
 
   let conversationId = sessionStorage.getItem(`echo_conv_${orgId}`) || null;
+  let visitorToken = sessionStorage.getItem(`echo_token_${orgId}`) || null;
   const renderedIds = new Set();
   let isOpen = false;
   let isSending = false;
@@ -657,9 +658,18 @@
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 4000);
     try {
+      const tokenParam = visitorToken ? `&token=${encodeURIComponent(visitorToken)}` : "";
+      const headers = {};
+      if (visitorToken) {
+        headers["X-Visitor-Token"] = visitorToken;
+      }
+
       const res = await fetch(
-        `${hostUrl}/api/widget/messages?conversationId=${encodeURIComponent(conversationId)}&orgId=${encodeURIComponent(orgId)}`,
-        { signal: ctrl.signal }
+        `${hostUrl}/api/widget/messages?conversationId=${encodeURIComponent(conversationId)}&orgId=${encodeURIComponent(orgId)}${tokenParam}`,
+        {
+          signal: ctrl.signal,
+          headers,
+        }
       );
       if (res.ok) {
         const data = await res.json();
@@ -676,10 +686,12 @@
             }
           });
         }
-      } else if (res.status === 404) {
-        // Conversation was cleared/deleted from DB
+      } else if (res.status === 404 || res.status === 401) {
+        // Conversation was cleared/deleted from DB or visitor token is invalid
         sessionStorage.removeItem(`echo_conv_${orgId}`);
+        sessionStorage.removeItem(`echo_token_${orgId}`);
         conversationId = null;
+        visitorToken = null;
       }
     } catch (e) {
       // Silent retry on next interval
@@ -760,6 +772,10 @@
         if (data.conversationId) {
           conversationId = data.conversationId;
           sessionStorage.setItem(`echo_conv_${orgId}`, conversationId);
+        }
+        if (data.visitorToken) {
+          visitorToken = data.visitorToken;
+          sessionStorage.setItem(`echo_token_${orgId}`, visitorToken);
         }
         if (data.clientMsgId) {
           renderedIds.add(data.clientMsgId);

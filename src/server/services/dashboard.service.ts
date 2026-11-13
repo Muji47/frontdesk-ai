@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHmac, timingSafeEqual } from "node:crypto";
 import { db, withTransaction, seedOrganizationData } from "@/lib/db";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { CrawlerService } from "./crawler.service";
@@ -1672,7 +1672,7 @@ export class DashboardService {
     mute: boolean
   ): { isAiMuted: boolean; status: string; badge: string } {
     const conv = db.prepare(`
-      SELECT id, status FROM conversations WHERE id = ? AND organization_id = ?
+      SELECT id, status, visitor_name, visitor_contact FROM conversations WHERE id = ? AND organization_id = ?
     `).get(conversationId, orgId) as any;
 
     if (!conv) {
@@ -1732,6 +1732,7 @@ export class DashboardService {
     } | null;
   }): {
     conversationId: string;
+    visitorToken: string;
     clientMsgId: string;
     aiMsgId: string;
     replyText: string;
@@ -1745,33 +1746,6 @@ export class DashboardService {
     }
 
     const nowIso = new Date().toISOString();
-
-    // Auto-index attached website content if provided by widget.js and not yet indexed
-    if (params.pageContext?.sections && params.pageContext.sections.length > 0) {
-      const hostUrl = params.pageContext.url || "Attached Website";
-      const existingSource = db
-        .prepare(`SELECT id FROM knowledge_sources WHERE organization_id = ? AND (source_url = ? OR title = ?) LIMIT 1`)
-        .get(orgId, hostUrl, hostUrl) as { id: string } | undefined;
-
-      if (!existingSource) {
-        const srcId = "src_" + randomBytes(6).toString("hex");
-        const sections = params.pageContext.sections;
-        withTransaction(() => {
-          db.prepare(`
-            INSERT INTO knowledge_sources (id, organization_id, title, source_type, source_url, status, page_count, last_synced_at)
-            VALUES (?, ?, ?, 'url', ?, 'indexed', ?, ?)
-          `).run(srcId, orgId, params.pageContext?.title || hostUrl, hostUrl, sections.length, nowIso);
-
-          sections.forEach((sec, idx) => {
-            const cId = "chk_" + randomBytes(6).toString("hex");
-            db.prepare(`
-              INSERT INTO knowledge_chunks (id, source_id, organization_id, chunk_index, title, content, token_count)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
-            `).run(cId, srcId, orgId, idx + 1, sec.title, sec.content, sec.content.split(/\s+/).length);
-          });
-        });
-      }
-    }
 
     let convId = params.conversationId;
     const clientMsgId = "msg_" + randomBytes(6).toString("hex");
@@ -1867,9 +1841,15 @@ export class DashboardService {
         },
       });
 
+      const visitorSecret = process.env.SESSION_SECRET || "echo_visitor_secret_default_key";
+      const visitorToken = createHmac("sha256", visitorSecret)
+        .update(`${convId}:${orgId}`)
+        .digest("hex");
+
       if (isAlreadyMuted) {
         return {
           conversationId: convId,
+          visitorToken,
           clientMsgId,
           aiMsgId: "",
           replyText: "Your message has been received by clinic staff. A team member will reply directly shortly.",
@@ -1878,6 +1858,11 @@ export class DashboardService {
         };
       }
     }
+
+    const visitorSecret = process.env.SESSION_SECRET || "echo_visitor_secret_default_key";
+    const visitorToken = createHmac("sha256", visitorSecret)
+      .update(`${convId}:${orgId}`)
+      .digest("hex");
 
     // 3. Process Booking Intent & Appointment Scheduling
     const history = db
@@ -1973,12 +1958,12 @@ export class DashboardService {
       }
     }
 
-    const updatedStatus = isEscalated ? "WAITING_FOR_HUMAN" : "RESOLVED";
+    const updatedStatus = isEscalated ? "WAITING_FOR_HUMAN" : "ACTIVE";
     const updatedBadge = isEscalated
       ? "Human needed"
       : isAiBooked
       ? "AI Booked"
-      : "AI Resolved";
+      : "AI Active";
 
     db.prepare(`
       UPDATE conversations
@@ -2043,11 +2028,26 @@ export class DashboardService {
 
     return {
       conversationId: convId,
+      visitorToken,
       clientMsgId,
       aiMsgId,
       replyText: aiReplyText,
       chips,
       isEscalated,
     };
+  }
+
+  public static verifyVisitorToken(conversationId: string, orgId: string, token: string): boolean {
+    if (!conversationId || !orgId || !token) return false;
+    const visitorSecret = process.env.SESSION_SECRET || "echo_visitor_secret_default_key";
+    const expected = createHmac("sha256", visitorSecret)
+      .update(`${conversationId}:${orgId}`)
+      .digest("hex");
+    if (token.length !== expected.length) return false;
+    try {
+      return timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+    } catch {
+      return false;
+    }
   }
 }

@@ -36,17 +36,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Provider is required" }, { status: 400 });
   }
 
-  const updated = IntegrationService.saveIntegration(
-    user.orgId,
-    provider,
-    config || {},
-    status || "connected"
-  );
+  try {
+    const updated = IntegrationService.saveIntegration(
+      user.orgId,
+      provider,
+      config || {},
+      status || "connected"
+    );
 
-  return NextResponse.json({
-    success: true,
-    integration: updated,
-  });
+    return NextResponse.json({
+      success: true,
+      integration: updated,
+    });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.message || "Failed to save integration" }, { status: 400 });
+  }
 }
 
 export async function DELETE(req: NextRequest) {

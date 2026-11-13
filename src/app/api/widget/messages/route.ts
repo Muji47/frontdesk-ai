@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth";
+import { DashboardService } from "@/server/services/dashboard.service";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Visitor-Token",
 };
 
 export async function OPTIONS() {
@@ -16,11 +18,27 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const conversationId = searchParams.get("conversationId");
     const orgId = searchParams.get("orgId") || "org_demo_101";
+    const token =
+      searchParams.get("token") ||
+      req.headers.get("x-visitor-token") ||
+      req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
 
     if (!conversationId) {
       return NextResponse.json(
         { error: "conversationId is required" },
         { status: 400, headers: CORS_HEADERS }
+      );
+    }
+
+    // Security check: Must have valid signed visitor token OR authenticated staff session
+    const user = await getCurrentUser();
+    const isStaffAuthorized = user && (user.orgId === orgId || user.role === "admin");
+    const isVisitorAuthorized = token ? DashboardService.verifyVisitorToken(conversationId, orgId, token) : false;
+
+    if (!isStaffAuthorized && !isVisitorAuthorized) {
+      return NextResponse.json(
+        { error: "Unauthorized: Invalid or missing visitor access token", messages: [] },
+        { status: 401, headers: CORS_HEADERS }
       );
     }
 

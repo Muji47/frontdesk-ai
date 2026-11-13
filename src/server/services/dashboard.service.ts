@@ -1461,13 +1461,33 @@ export class DashboardService {
 
   /**
    * Deletes a knowledge source and all its associated parameter chunks.
+   * Also cleans up matching manual Q&As in unanswered_questions so deleted facts are never served.
    */
   public static deleteKnowledgeSource(orgId: string, sourceId: string): void {
-    const existing = db.prepare("SELECT id FROM knowledge_sources WHERE id = ? AND organization_id = ?").get(sourceId, orgId);
+    const existing = db
+      .prepare("SELECT id, title, source_type FROM knowledge_sources WHERE id = ? AND organization_id = ?")
+      .get(sourceId, orgId) as { id: string; title: string; source_type: string } | undefined;
+
     if (!existing) {
       throw new NotFoundError("Knowledge source not found.");
     }
+
     withTransaction(() => {
+      // If manual Q&A, remove from unanswered_questions so deleted answers do not persist in testKnowledgeQuery
+      if (existing.source_type === "manual_qa") {
+        const cleanTitle = existing.title.replace(/^FAQ:\s*/i, "").trim();
+        db.prepare(`
+          DELETE FROM unanswered_questions 
+          WHERE organization_id = ? 
+            AND (
+              question = ? 
+              OR question = ?
+              OR question LIKE ? 
+              OR approved_answer IN (SELECT content FROM knowledge_chunks WHERE source_id = ?)
+            )
+        `).run(orgId, existing.title, cleanTitle, `%${cleanTitle}%`, sourceId);
+      }
+
       db.prepare("DELETE FROM knowledge_chunks WHERE source_id = ?").run(sourceId);
       db.prepare("DELETE FROM knowledge_sources WHERE id = ? AND organization_id = ?").run(sourceId, orgId);
     });
@@ -1883,11 +1903,21 @@ export class DashboardService {
 
     if (bookingParsed.isBookingIntent) {
       if (bookingParsed.hasTimeSlot && bookingParsed.targetTime) {
-        // Check for double booking conflict
+        const serviceName = bookingParsed.serviceName || "";
+        const durationMinutes = /initial|comprehensive|assessment|eval/i.test(serviceName)
+          ? 60
+          : /extended|long/i.test(serviceName)
+          ? 90
+          : /follow|subsequent|standard/i.test(serviceName)
+          ? 30
+          : 45;
+
+        // Check for double booking conflict with service-aware duration
         const avail = AppointmentService.checkSlotAvailability(
           orgId,
           bookingParsed.practitionerName,
-          bookingParsed.targetTime
+          bookingParsed.targetTime,
+          durationMinutes
         );
 
         if (!avail.isAvailable) {
@@ -1895,7 +1925,8 @@ export class DashboardService {
           const alternatives = AppointmentService.findAlternativeSlots(
             orgId,
             bookingParsed.practitionerName,
-            bookingParsed.targetTime
+            bookingParsed.targetTime,
+            durationMinutes
           );
 
           const slotFormatted = `${AppointmentService.formatSlotDay(bookingParsed.targetTime)} at ${AppointmentService.formatSlotTime(bookingParsed.targetTime)}`;

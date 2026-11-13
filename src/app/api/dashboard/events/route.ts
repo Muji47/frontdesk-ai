@@ -4,13 +4,19 @@ import { dashboardEventBus, type RealtimeDashboardEvent } from "@/lib/events";
 
 export const dynamic = "force-dynamic";
 
-// Cap concurrent HTTP/1.1 SSE streams per org so multiple browser tabs can never exhaust Chrome's 6-socket origin pool
-const MAX_SSE_STREAMS_PER_ORG = 2;
+// Cap concurrent HTTP/1.1 SSE streams per user/session so a single browser cannot exhaust sockets,
+// while allowing multi-seat clinic teams to remain connected simultaneously without kicking peers offline.
+const MAX_SSE_STREAMS_PER_USER = 3;
+const MAX_SSE_STREAMS_PER_ORG = 30;
+
 const globalForSsePool = globalThis as unknown as {
-  __activeSseStreams?: Map<string, Set<() => void>>;
+  __activeUserSseStreams?: Map<string, Set<() => void>>;
+  __activeOrgSseStreams?: Map<string, Set<() => void>>;
 };
-const activeSseStreams = globalForSsePool.__activeSseStreams ?? new Map<string, Set<() => void>>();
-globalForSsePool.__activeSseStreams = activeSseStreams;
+const activeUserStreams = globalForSsePool.__activeUserSseStreams ?? new Map<string, Set<() => void>>();
+const activeOrgStreams = globalForSsePool.__activeOrgSseStreams ?? new Map<string, Set<() => void>>();
+globalForSsePool.__activeUserSseStreams = activeUserStreams;
+globalForSsePool.__activeOrgSseStreams = activeOrgStreams;
 
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
@@ -22,15 +28,33 @@ export async function GET(req: NextRequest) {
   }
 
   const orgId = user.orgId;
+  const userKey = `${orgId}:${user.userId}`;
   const encoder = new TextEncoder();
 
-  let orgStreams = activeSseStreams.get(orgId);
-  if (!orgStreams) {
-    orgStreams = new Set();
-    activeSseStreams.set(orgId, orgStreams);
+  let userStreams = activeUserStreams.get(userKey);
+  if (!userStreams) {
+    userStreams = new Set();
+    activeUserStreams.set(userKey, userStreams);
   }
 
-  // Evict oldest SSE connection(s) if browser opened multiple tabs over HTTP/1.1
+  let orgStreams = activeOrgStreams.get(orgId);
+  if (!orgStreams) {
+    orgStreams = new Set();
+    activeOrgStreams.set(orgId, orgStreams);
+  }
+
+  // Evict oldest SSE connection for this specific user if multiple tabs opened
+  while (userStreams.size >= MAX_SSE_STREAMS_PER_USER) {
+    const oldestClose = userStreams.values().next().value;
+    if (oldestClose) {
+      userStreams.delete(oldestClose);
+      oldestClose();
+    } else {
+      break;
+    }
+  }
+
+  // Evict if organization exceeds total multi-seat safety ceiling
   while (orgStreams.size >= MAX_SSE_STREAMS_PER_ORG) {
     const oldestClose = orgStreams.values().next().value;
     if (oldestClose) {
@@ -52,13 +76,15 @@ export async function GET(req: NextRequest) {
         closed = true;
         if (heartbeat) clearInterval(heartbeat);
         if (unsubscribe) unsubscribe();
+        userStreams?.delete(closeStream);
         orgStreams?.delete(closeStream);
         try {
           controller.close();
         } catch {}
       };
 
-      orgStreams!.add(closeStream);
+      userStreams.add(closeStream);
+      orgStreams.add(closeStream);
 
       // 1. Send initial connection greeting
       const initPayload = JSON.stringify({

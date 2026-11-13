@@ -11,6 +11,7 @@ import type {
   DashboardUnansweredQuestion,
   DashboardKnowledgeSource,
   DashboardAppointment,
+  DashboardOrder,
   DashboardLead,
   DashboardIntegration,
   DashboardBillingData,
@@ -226,9 +227,17 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [exportingCsv, setExportingCsv] = useState<boolean>(false);
   const [copiedEmbed, setCopiedEmbed] = useState<boolean>(false);
 
-  // Appointments & Leads Real-Time Pipeline State
+  // Appointments, Orders & Leads Real-Time Pipeline State
   const [appointments, setAppointments] = useState<DashboardAppointment[]>(initialData.appointments || []);
+  const [orders, setOrders] = useState<DashboardOrder[]>(initialData.orders || []);
   const [leads, setLeads] = useState<DashboardLead[]>(initialData.leads || []);
+
+  // Responsive Mobile Navigation State
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Conversations Inbox Filter & Search State
+  const [convFilter, setConvFilter] = useState<"ALL" | "WAITING_FOR_HUMAN" | "ACTIVE" | "RESOLVED">("ALL");
+  const [convSearch, setConvSearch] = useState("");
 
   // Billing, Subscription Cycles, Payment Methods & Invoice Modal State
   const [billingState, setBillingState] = useState<DashboardBillingData>(
@@ -475,6 +484,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       } else if (payload.type === "new_lead" && payload.data?.lead) {
         const lead = payload.data.lead;
         setLeads((prev) => [lead, ...prev.filter((l) => l.id !== lead.id)]);
+      } else if (payload.type === "new_order" && payload.data?.order) {
+        const order = payload.data.order;
+        setOrders((prev) => [order, ...prev.filter((o) => o.id !== order.id)]);
       }
     }
 
@@ -978,6 +990,18 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const aiResolvedCount = conversations.filter((c) => c.status === "RESOLVED").length;
   const humanEscalatedCount = conversations.filter((c) => c.status === "WAITING_FOR_HUMAN").length;
   const activeCount = conversations.filter((c) => c.status === "ACTIVE").length;
+
+  const filteredConversations = conversations.filter((c) => {
+    if (convFilter !== "ALL" && c.status !== convFilter) return false;
+    if (convSearch.trim()) {
+      const q = convSearch.toLowerCase().trim();
+      const nameMatch = c.visitorName?.toLowerCase().includes(q);
+      const contactMatch = c.visitorContact?.toLowerCase().includes(q);
+      const msgMatch = c.lastMessage?.toLowerCase().includes(q);
+      return Boolean(nameMatch || contactMatch || msgMatch);
+    }
+    return true;
+  });
   const deflectionRate =
     totalConvs > 0
       ? Math.round(((aiResolvedCount || (totalConvs - humanEscalatedCount)) / totalConvs) * 100)
@@ -1425,16 +1449,38 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-slate-50 text-slate-900">
-      {/* Fixed Viewport Sidebar (locked to top:0 and bottom:0) */}
-      <aside className="fixed inset-y-0 left-0 z-30 w-64 h-dvh max-h-dvh border-r border-slate-200 bg-white flex flex-col justify-between overflow-hidden shrink-0 select-none">
+      {/* Mobile Backdrop Overlay */}
+      {isMobileMenuOpen && (
+        <div
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-xs md:hidden"
+        />
+      )}
+
+      {/* Viewport Sidebar (desktop fixed, mobile slide-over) */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-64 h-dvh max-h-dvh border-r border-slate-200 bg-white flex flex-col justify-between overflow-hidden shrink-0 select-none transition-transform duration-300 md:translate-x-0 ${
+          isMobileMenuOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
+        }`}
+      >
         {/* 1. Fixed Top Header (Logo & Organization) */}
         <div className="shrink-0 p-4 border-b border-slate-100 bg-white">
-          <Link href="/" className="flex items-center gap-2.5 font-bold text-slate-900 group">
-            <EchoLogo size={22} tile={true} tileSize="h-9 w-9" />
-            <span className="font-extrabold tracking-tight text-slate-900 text-lg">
-              Echo<span className="text-indigo-600">.ai</span>
-            </span>
-          </Link>
+          <div className="flex items-center justify-between">
+            <Link href="/" className="flex items-center gap-2.5 font-bold text-slate-900 group">
+              <EchoLogo size={22} tile={true} tileSize="h-9 w-9" />
+              <span className="font-extrabold tracking-tight text-slate-900 text-lg">
+                Echo<span className="text-indigo-600">.ai</span>
+              </span>
+            </Link>
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="md:hidden text-slate-400 hover:text-slate-600 p-1 rounded-lg text-sm font-bold"
+              aria-label="Close Navigation"
+            >
+              ✕
+            </button>
+          </div>
           <div className="mt-3 rounded-xl bg-slate-50 p-2.5 border border-slate-100">
             <div className="text-xs font-bold text-slate-900 truncate">{user.orgName}</div>
             <div className="text-[11px] text-slate-500 capitalize flex items-center justify-between mt-0.5">
@@ -1451,7 +1497,10 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           {navItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => {
+                setActiveTab(item.id);
+                setIsMobileMenuOpen(false);
+              }}
               className={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left font-semibold transition ${
                 activeTab === item.id
                   ? "bg-indigo-50 text-indigo-700"
@@ -1507,8 +1556,31 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         </div>
       </aside>
 
-      {/* Main Workspace Area (offset by w-64 sidebar, scrolls independently) */}
-      <main className="ml-64 flex-1 min-w-0 h-dvh overflow-y-auto p-6 md:p-8 relative custom-scrollbar">
+      {/* Main Workspace Area (offset by md:ml-64 sidebar, full width on mobile) */}
+      <main className="ml-0 md:ml-64 flex-1 min-w-0 h-dvh overflow-y-auto p-4 md:p-8 relative custom-scrollbar">
+        {/* Mobile Top App Bar with Hamburger Toggle */}
+        <div className="md:hidden flex items-center justify-between pb-3.5 mb-4 border-b border-slate-200">
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-xs cursor-pointer font-semibold text-xs"
+            aria-label="Open Navigation Menu"
+          >
+            <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+            <span>Menu</span>
+          </button>
+          <div className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
+            <EchoLogo size={16} tile={false} />
+            <span>
+              Echo<span className="text-indigo-600">.ai</span>
+            </span>
+          </div>
+          <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold text-indigo-700 capitalize">
+            {activeTab}
+          </span>
+        </div>
         {/* Top-Right Real-Time Notification Stack */}
         <div className="fixed top-5 right-5 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
           {toasts.map((toast) => {
@@ -2597,15 +2669,100 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden grid lg:grid-cols-12 min-h-[580px]">
             {/* Left Thread List */}
             <div className="lg:col-span-4 border-r border-slate-200 flex flex-col bg-slate-50/40">
-              <div className="p-3.5 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-                <div>
-                  <h3 className="text-xs font-bold text-slate-900">Customer Inbox</h3>
-                  <span className="text-[11px] text-slate-500">{conversations.length} total threads</span>
+              <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-900">Customer Inbox</h3>
+                    <span className="text-[11px] text-slate-500">
+                      {filteredConversations.length} of {conversations.length} threads
+                    </span>
+                  </div>
+                  {humanEscalatedCount > 0 && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 animate-pulse">
+                      ⚠️ {humanEscalatedCount} Needs Staff
+                    </span>
+                  )}
+                </div>
+
+                {/* Live Search Input */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={convSearch}
+                    onChange={(e) => setConvSearch(e.target.value)}
+                    placeholder="Search name, phone, message..."
+                    className="w-full rounded-xl border border-slate-200 bg-white pl-7 pr-6 py-1.5 text-xs text-slate-800 placeholder-slate-400 outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600/30 transition shadow-2xs"
+                  />
+                  <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">🔍</span>
+                  {convSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setConvSearch("")}
+                      className="absolute right-2 top-1.5 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Filter Pills */}
+                <div className="flex items-center gap-1 overflow-x-auto pb-0.5 custom-scrollbar text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setConvFilter("ALL")}
+                    className={`px-2 py-1 rounded-lg font-bold transition shrink-0 cursor-pointer ${
+                      convFilter === "ALL"
+                        ? "bg-slate-900 text-white shadow-2xs"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    All ({conversations.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConvFilter("WAITING_FOR_HUMAN")}
+                    className={`px-2 py-1 rounded-lg font-bold transition shrink-0 cursor-pointer ${
+                      convFilter === "WAITING_FOR_HUMAN"
+                        ? "bg-amber-600 text-white shadow-2xs"
+                        : "bg-white text-amber-700 border border-amber-200 hover:bg-amber-50"
+                    }`}
+                  >
+                    Needs Staff ({humanEscalatedCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConvFilter("ACTIVE")}
+                    className={`px-2 py-1 rounded-lg font-bold transition shrink-0 cursor-pointer ${
+                      convFilter === "ACTIVE"
+                        ? "bg-indigo-600 text-white shadow-2xs"
+                        : "bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50"
+                    }`}
+                  >
+                    AI Active ({activeCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConvFilter("RESOLVED")}
+                    className={`px-2 py-1 rounded-lg font-bold transition shrink-0 cursor-pointer ${
+                      convFilter === "RESOLVED"
+                        ? "bg-emerald-600 text-white shadow-2xs"
+                        : "bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50"
+                    }`}
+                  >
+                    Resolved ({aiResolvedCount})
+                  </button>
                 </div>
               </div>
 
               <div className="divide-y divide-slate-100 overflow-y-auto max-h-[640px] flex-1 bg-white">
-                {conversations.map((c, i) => {
+                {filteredConversations.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400">
+                    <div className="text-2xl mb-1">🔍</div>
+                    <div className="font-semibold text-xs">No conversations match filter</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">Try clearing your search or status filter</div>
+                  </div>
+                ) : (
+                  filteredConversations.map((c, i) => {
                   const isSelected = selectedConvId === c.id || (!selectedConvId && i === 0);
                   const initials = c.visitorName
                     ? c.visitorName
@@ -2664,7 +2821,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       </div>
                     </div>
                   );
-                })}
+                }))}
               </div>
             </div>
 
@@ -2862,32 +3019,42 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
             <div className="overflow-x-auto text-xs">
               {isEcom ? (
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-slate-100 text-slate-400">
-                      <th className="pb-2 font-semibold">Order #</th>
-                      <th className="pb-2 font-semibold">Customer</th>
-                      <th className="pb-2 font-semibold">Total</th>
-                      <th className="pb-2 font-semibold">Carrier & Tracking</th>
-                      <th className="pb-2 font-semibold">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {initialData.orders.map((o, oIdx) => (
-                      <tr key={o.id ? `${o.id}-${oIdx}` : `ord-${oIdx}`}>
-                        <td className="py-2.5 font-bold">{o.orderNumber}</td>
-                        <td>{o.customerName} ({o.customerEmail})</td>
-                        <td>${o.totalAmount.toFixed(2)} {o.currency}</td>
-                        <td>{o.trackingCarrier || "Standard Post"}</td>
-                        <td>
-                          <span className="rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 uppercase">
-                            {o.trackingStatus}
-                          </span>
-                        </td>
+                orders.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <div className="text-3xl mb-2">📦</div>
+                    <h4 className="text-sm font-bold text-slate-800">No orders looked up yet</h4>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                      Customer tracking inquiries and return lookups handled by the AI receptionist will appear here in real time.
+                    </p>
+                  </div>
+                ) : (
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-slate-400">
+                        <th className="pb-2 font-semibold">Order #</th>
+                        <th className="pb-2 font-semibold">Customer</th>
+                        <th className="pb-2 font-semibold">Total</th>
+                        <th className="pb-2 font-semibold">Carrier & Tracking</th>
+                        <th className="pb-2 font-semibold">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {orders.map((o, oIdx) => (
+                        <tr key={o.id ? `${o.id}-${oIdx}` : `ord-${oIdx}`}>
+                          <td className="py-2.5 font-bold">{o.orderNumber}</td>
+                          <td>{o.customerName} ({o.customerEmail})</td>
+                          <td>${o.totalAmount.toFixed(2)} {o.currency}</td>
+                          <td>{o.trackingCarrier || "Standard Post"}</td>
+                          <td>
+                            <span className="rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 uppercase">
+                              {o.trackingStatus}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )
               ) : appointments.length === 0 ? (
                 <div className="py-12 text-center">
                   <div className="text-3xl mb-2">📅</div>

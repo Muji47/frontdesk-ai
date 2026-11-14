@@ -16,5 +16,8 @@ export async function GET() {
     metrics: data.metrics,
     unansweredQuestions: data.unansweredQuestions,
     knowledgeSources: data.knowledgeSources,
+    appointments: data.appointments,
+    leads: data.leads,
+    orders: data.orders,
   });
 }

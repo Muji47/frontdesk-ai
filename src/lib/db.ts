@@ -323,6 +323,9 @@ try {
   if (!orgColNames.has("cancelled_at")) {
     db.exec("ALTER TABLE organizations ADD COLUMN cancelled_at TEXT");
   }
+  if (!orgColNames.has("credit_balance_cents")) {
+    db.exec("ALTER TABLE organizations ADD COLUMN credit_balance_cents INTEGER NOT NULL DEFAULT 0");
+  }
 
   const invCols = db.prepare("PRAGMA table_info(billing_invoices)").all() as { name: string }[];
   const invColNames = new Set(invCols.map((c) => c.name));

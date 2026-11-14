@@ -146,6 +146,8 @@ export interface DashboardBillingData {
   cancelEffectiveDate: string | null;
   cancellationReason: string | null;
   cancelledAt: string | null;
+  creditBalanceCents: number;
+  creditBalanceFormatted: string;
   paymentMethods: DashboardPaymentMethod[];
   invoices: DashboardBillingInvoice[];
 }
@@ -434,7 +436,7 @@ export class DashboardService {
   public static getBillingData(orgId: string): DashboardBillingData {
     const orgRow = db
       .prepare(
-        "SELECT plan, billing_cycle, billing_currency, billing_provider, external_subscription_id, customer_portal_url, subscription_status, cancel_at_period_end, cancellation_reason, cancelled_at FROM organizations WHERE id = ?"
+        "SELECT plan, billing_cycle, billing_currency, billing_provider, external_subscription_id, customer_portal_url, subscription_status, cancel_at_period_end, cancellation_reason, cancelled_at, credit_balance_cents FROM organizations WHERE id = ?"
       )
       .get(orgId) as
       | {
@@ -448,6 +450,7 @@ export class DashboardService {
           cancel_at_period_end?: number | null;
           cancellation_reason?: string | null;
           cancelled_at?: string | null;
+          credit_balance_cents?: number | null;
         }
       | undefined;
 
@@ -619,6 +622,12 @@ export class DashboardService {
       });
     }
 
+    const creditBalanceCents = Math.max(0, Number(orgRow?.credit_balance_cents || 0));
+    const creditBalanceFormatted = `$${(creditBalanceCents / 100).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+
     return {
       plan,
       billingCycle,
@@ -636,6 +645,8 @@ export class DashboardService {
       cancelEffectiveDate,
       cancellationReason,
       cancelledAt,
+      creditBalanceCents,
+      creditBalanceFormatted,
       paymentMethods,
       invoices,
     };
@@ -729,8 +740,24 @@ export class DashboardService {
       }
     }
 
-    // 2. Net amount charged today
-    const netAmountCents = Math.max(0, fullTargetCents - unusedCreditCents);
+    // 2. Net amount charged today (taking into account unused period credit + existing account balance)
+    const orgCreditRow = db
+      .prepare("SELECT credit_balance_cents FROM organizations WHERE id = ?")
+      .get(orgId) as { credit_balance_cents?: number } | undefined;
+    const existingCreditCents = Math.max(0, Number(orgCreditRow?.credit_balance_cents || 0));
+
+    const totalAvailableCreditCents = unusedCreditCents + existingCreditCents;
+    let netAmountCents = 0;
+    let newCreditBalanceCents = 0;
+
+    if (totalAvailableCreditCents >= fullTargetCents) {
+      netAmountCents = 0;
+      newCreditBalanceCents = totalAvailableCreditCents - fullTargetCents;
+    } else {
+      netAmountCents = fullTargetCents - totalAvailableCreditCents;
+      newCreditBalanceCents = 0;
+    }
+
     const netAmountFormatted = `$${(netAmountCents / 100).toLocaleString("en-US", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
@@ -798,13 +825,14 @@ export class DashboardService {
     withTransaction(() => {
       db.prepare(`
         UPDATE organizations
-        SET plan = ?, billing_cycle = ?, billing_currency = ?,
+        SET plan = ?, billing_cycle = ?, billing_currency = ?, credit_balance_cents = ?,
             subscription_status = 'active', cancel_at_period_end = 0, cancellation_reason = NULL, cancelled_at = NULL
         WHERE id = ?
       `).run(
         targetPlan,
         targetCycle,
         currency,
+        newCreditBalanceCents,
         orgId
       );
 
@@ -830,14 +858,14 @@ export class DashboardService {
 
     const billing = this.getBillingData(orgId);
     let successMessage: string;
-    if (unusedCreditCents > 0) {
-      const creditFormatted = `$${(unusedCreditCents / 100).toFixed(2)}`;
+    if (unusedCreditCents > 0 || existingCreditCents > 0) {
+      const creditFormatted = `$${(totalAvailableCreditCents / 100).toFixed(2)}`;
       const daysRemInt = Math.max(1, Math.round(daysRemaining));
       if (netAmountCents > 0) {
-        successMessage = `Subscription updated to ${planLabel} (${cycleLabel}) — Charged ${netAmountFormatted} via ${cardSummary} (credited ${creditFormatted} for ${daysRemInt} unused day${daysRemInt === 1 ? "" : "s"} of ${oldPlanLabel}).`;
+        successMessage = `Subscription updated to ${planLabel} (${cycleLabel}) — Charged ${netAmountFormatted} via ${cardSummary} (credited ${creditFormatted} from unused ${oldPlanLabel} balance).`;
       } else {
-        const remainingCredit = (unusedCreditCents - fullTargetCents) / 100;
-        successMessage = `Subscription updated to ${planLabel} (${cycleLabel}) — Charged $0.00 via ${cardSummary} (fully covered by ${creditFormatted} credit from ${oldPlanLabel}${remainingCredit > 0 ? `; $${remainingCredit.toFixed(2)} balance remaining` : ""}).`;
+        const remainingCredit = (newCreditBalanceCents / 100).toFixed(2);
+        successMessage = `Subscription updated to ${planLabel} (${cycleLabel}) — Charged $0.00 via ${cardSummary} (fully covered by ${creditFormatted} credit${newCreditBalanceCents > 0 ? `; $${remainingCredit} balance preserved in account` : ""}).`;
       }
     } else {
       successMessage = `Subscription updated to ${planLabel} (${cycleLabel}) — Charged ${netAmountFormatted} via ${cardSummary}.`;
@@ -1503,16 +1531,22 @@ export class DashboardService {
 
     const lowerQuery = query.toLowerCase().trim();
 
-    // 0. Handle conversational greetings naturally
+    // 0. Handle conversational greetings naturally with dynamic organization & agent context
+    const orgRow = db
+      .prepare("SELECT name, industry FROM organizations WHERE id = ?")
+      .get(orgId) as { name: string; industry: string } | undefined;
+    const orgName = orgRow?.name || "our clinic";
+    const industry = (orgRow?.industry || "clinic").toLowerCase();
+
+    const agentRow = db
+      .prepare("SELECT name, greeting FROM agents WHERE organization_id = ? LIMIT 1")
+      .get(orgId) as { name: string; greeting: string } | undefined;
+
     if (/^(hi|hello|hey|good morning|good afternoon|good evening|greetings)\b/.test(lowerQuery) && lowerQuery.split(/\s+/).length <= 5) {
-      const orgRow = db.prepare("SELECT name FROM organizations WHERE id = ?").get(orgId) as { name: string } | undefined;
-      const agentRow = db.prepare("SELECT name, greeting FROM agents WHERE organization_id = ? LIMIT 1").get(orgId) as
-        | { name: string; greeting: string }
-        | undefined;
       return {
         answer:
           agentRow?.greeting ||
-          `Hello! Welcome to ${orgRow?.name || "our clinic"}. How can I help you with appointments, pricing, or clinic hours today?`,
+          `Hello! Welcome to ${orgName}. How can I help you today?`,
         sources: ["Receptionist Greeting"],
         confidence: 0.99,
       };
@@ -1532,22 +1566,52 @@ export class DashboardService {
       .split(/\W+/)
       .filter((w) => w.length >= 3 && !stopWords.has(w));
 
-    // Synonym expansion so natural client questions match website content accurately
+    // Dynamic industry-aware synonym expansion
     const expandedTokens = new Set<string>(baseTokens);
-    if (/(fee|fees|price|pricing|cost|much|charge|rate|consult)/.test(lowerQuery)) {
-      ["consultation", "fees", "initial", "follow", "$140", "$95", "price", "pricing", "cost"].forEach((t) => expandedTokens.add(t));
+
+    // Universal business concepts
+    if (/(fee|fees|price|pricing|cost|much|charge|rate|rates|quote)/.test(lowerQuery)) {
+      ["pricing", "price", "fees", "fee", "cost", "rates", "rate", "charge"].forEach((t) => expandedTokens.add(t));
     }
-    if (/(hour|hours|open|opening|close|closing|time|when|location|address|where|street|parking|saturday|monday)/.test(lowerQuery)) {
-      ["location", "hours", "monday", "friday", "saturday", "suite", "collins", "street", "melbourne", "open"].forEach((t) => expandedTokens.add(t));
+    if (/(hour|hours|open|opening|close|closing|time|when|schedule|days|weekend)/.test(lowerQuery)) {
+      ["hours", "opening", "closing", "schedule", "operating", "open", "time"].forEach((t) => expandedTokens.add(t));
     }
-    if (/(hicaps|health|fund|funds|insurance|medicare|bupa|medibank|claim|rebate|cover|private)/.test(lowerQuery)) {
-      ["health", "funds", "hicaps", "bupa", "medibank", "hcf", "nib", "medicare", "claims"].forEach((t) => expandedTokens.add(t));
+    if (/(where|location|address|street|directions|parking|find|office|store)/.test(lowerQuery)) {
+      ["location", "address", "directions", "suite", "parking", "located"].forEach((t) => expandedTokens.add(t));
     }
-    if (/(doctor|doctors|dr\b|practitioner|practitioners|physio|physiotherapist|therapist|specialist|clinician|sarah|david|team|who|name)/.test(lowerQuery)) {
-      ["clinical", "practitioners", "dr.", "sarah", "lee", "david", "vance", "physiotherapist", "specialist"].forEach((t) => expandedTokens.add(t));
+    if (/(contact|email|phone|call|support|help|speak)/.test(lowerQuery)) {
+      ["contact", "phone", "email", "support", "help", "staff"].forEach((t) => expandedTokens.add(t));
     }
-    if (/(book|booking|appointment|schedule|availab|tomorrow)/.test(lowerQuery)) {
-      ["clinical", "practitioners", "sarah", "lee", "david", "vance", "consultation", "fees"].forEach((t) => expandedTokens.add(t));
+
+    // Domain-specific expansions
+    if (industry === "clinic") {
+      if (/(hicaps|health|fund|funds|insurance|medicare|claim|rebate|cover|private)/.test(lowerQuery)) {
+        ["health", "funds", "hicaps", "insurance", "medicare", "claims", "rebates"].forEach((t) => expandedTokens.add(t));
+      }
+      if (/(doctor|doctors|dr\b|practitioner|practitioners|physio|physiotherapist|therapist|specialist|clinician|who|name)/.test(lowerQuery)) {
+        ["clinical", "practitioners", "physiotherapist", "specialist", "practitioner", "doctor"].forEach((t) => expandedTokens.add(t));
+      }
+      if (/(book|booking|appointment|schedule|availab|tomorrow)/.test(lowerQuery)) {
+        ["consultation", "appointment", "booking", "fees", "practitioners"].forEach((t) => expandedTokens.add(t));
+      }
+    } else if (industry === "ecommerce") {
+      if (/(shipping|delivery|postage|dispatch|transit|tracking|courier|express|standard)/.test(lowerQuery)) {
+        ["shipping", "delivery", "dispatch", "transit", "tracking", "postage", "carrier"].forEach((t) => expandedTokens.add(t));
+      }
+      if (/(return|returns|refund|refunds|exchange|warranty|damaged|faulty)/.test(lowerQuery)) {
+        ["returns", "refund", "exchange", "warranty", "policy", "packaging"].forEach((t) => expandedTokens.add(t));
+      }
+      if (/(product|item|stock|catalog|order|buy|purchase)/.test(lowerQuery)) {
+        ["product", "items", "catalog", "order", "inventory"].forEach((t) => expandedTokens.add(t));
+      }
+    } else if (industry === "realestate") {
+      if (/(property|inspection|listing|lease|rent|tenant|agent)/.test(lowerQuery)) {
+        ["property", "inspection", "listing", "lease", "rent", "agent"].forEach((t) => expandedTokens.add(t));
+      }
+    } else if (industry === "beauty") {
+      if (/(treatment|styling|hair|salon|therapist|stylist|service)/.test(lowerQuery)) {
+        ["treatment", "styling", "salon", "therapist", "stylist", "appointment"].forEach((t) => expandedTokens.add(t));
+      }
     }
 
     const queryTokens = Array.from(expandedTokens);
@@ -1583,13 +1647,22 @@ export class DashboardService {
     if (chunks.length > 0) {
       const scored = chunks
         .map((chunk) => {
-          const text = (chunk.chunkTitle + " " + chunk.content).toLowerCase();
+          const title = String(chunk.chunkTitle || "").toLowerCase();
+          const content = String(chunk.content || "").toLowerCase();
+
           let score = 0;
+
+          // Exact phrase bonus in title or content
+          if (title.includes(lowerQuery)) score += 8;
+          else if (content.includes(lowerQuery)) score += 5;
+
+          // Token matches
           for (const token of queryTokens) {
-            if (text.includes(token)) {
-              score += baseTokens.includes(token) ? 3 : 1;
-            }
+            const isBase = baseTokens.includes(token);
+            if (title.includes(token)) score += isBase ? 4 : 2;
+            if (content.includes(token)) score += isBase ? 3 : 1;
           }
+
           return { chunk, score };
         })
         .filter((item) => item.score >= 3)
@@ -1598,19 +1671,19 @@ export class DashboardService {
       if (scored.length > 0) {
         const top = scored[0].chunk;
         const cleanTitle = String(top.chunkTitle || "")
-          .replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "")
+          .replace(/^([📍💳👩‍⚕️🏥⚡📦🛍️🏡✨]+\s*)/, "")
           .trim();
         let cleanContent = String(top.content)
-          .replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "")
+          .replace(/^([📍💳👩‍⚕️🏥⚡📦🛍️🏡✨]+\s*)/, "")
           .trim();
         if (cleanTitle && cleanContent.toLowerCase().startsWith(cleanTitle.toLowerCase())) {
           cleanContent = cleanContent.slice(cleanTitle.length).trim();
         }
 
-        // If booking intent, combine practitioner/fee info with a helpful booking prompt
-        if (/(book|booking|appointment|schedule|tomorrow|available)/.test(lowerQuery)) {
-          const pracChunk = chunks.find((c) => /practitioner|sarah|doctor|team/i.test(c.chunkTitle + " " + c.content));
-          const feeChunk = chunks.find((c) => /fee|price|\$140|consultation/i.test(c.chunkTitle + " " + c.content));
+        // If booking intent for clinics, synthesize a helpful booking prompt
+        if (industry === "clinic" && /(book|booking|appointment|schedule|tomorrow|available)/.test(lowerQuery)) {
+          const pracChunk = chunks.find((c) => /practitioner|doctor|physio|therapist|specialist/i.test(c.chunkTitle + " " + c.content));
+          const feeChunk = chunks.find((c) => /fee|price|consultation/i.test(c.chunkTitle + " " + c.content));
           const parts: string[] = [];
           if (pracChunk) {
             const pTitle = String(pracChunk.chunkTitle || "").replace(/^([📍💳👩‍⚕️🏥⚡]+\s*)/, "").trim();
@@ -1634,17 +1707,37 @@ export class DashboardService {
 
         // Synthesize natural receptionist phrasing strictly from verified chunk content
         let naturalAnswer = cleanContent;
-        if (/hicaps/i.test(lowerQuery) && /hicaps|on-the-spot|electronic claims/i.test(top.chunkTitle + " " + cleanContent)) {
-          naturalAnswer = `HICAPS is our on-the-spot electronic health fund claiming system at reception — it lets you claim your private health rebate immediately after your appointment. ${cleanContent}`;
-        } else if (/(doctor|dr\b|practitioner|physio|therapist|specialist|who|name)/.test(lowerQuery) && /sarah|david|practitioner/i.test(top.chunkTitle + " " + cleanContent)) {
-          naturalAnswer = `Our clinical practitioners are: ${cleanContent}.`;
-        } else if (/(fee|fees|price|pricing|cost|much|charge|consult)/.test(lowerQuery)) {
-          const feeMatch = cleanContent.match(/Consultation Fees:\s*([^\n.]+)/i);
-          if (feeMatch) {
-            naturalAnswer = `Our consultation fees are ${feeMatch[1].trim()}. (${cleanContent.replace(/Consultation Fees:.*$/i, "").trim()})`;
+        if (industry === "clinic") {
+          if (/hicaps/i.test(lowerQuery) && /hicaps|on-the-spot|electronic claims/i.test(top.chunkTitle + " " + cleanContent)) {
+            naturalAnswer = `HICAPS is our on-the-spot electronic health fund claiming system at reception — it lets you claim your private health rebate immediately after your appointment. ${cleanContent}`;
+          } else if (/(doctor|dr\b|practitioner|physio|therapist|specialist|who|name)/.test(lowerQuery) && /practitioner|clinician|doctor/i.test(top.chunkTitle + " " + cleanContent)) {
+            naturalAnswer = `Our clinical team: ${cleanContent}`;
+          } else if (/(fee|fees|price|pricing|cost|much|charge|consult)/.test(lowerQuery)) {
+            const feeMatch = cleanContent.match(/Consultation Fees:\s*([^\n.]+)/i);
+            if (feeMatch) {
+              naturalAnswer = `Our consultation fees are ${feeMatch[1].trim()}. (${cleanContent.replace(/Consultation Fees:.*$/i, "").trim()})`;
+            }
           }
-        } else if (/(where|location|address|street|hour|open|close|when)/.test(lowerQuery) && /suite|street|monday|saturday/i.test(cleanContent)) {
-          naturalAnswer = `We are located at ${cleanContent}`;
+        } else if (industry === "ecommerce") {
+          if (/(shipping|delivery|dispatch|postage|express|standard|courier)/.test(lowerQuery) && /shipping|delivery|business days|express/i.test(top.chunkTitle + " " + cleanContent)) {
+            naturalAnswer = `Here are our shipping details: ${cleanContent}`;
+          } else if (/(return|returns|refund|refunds|exchange|policy)/.test(lowerQuery) && /return|refund|exchange|30 days/i.test(top.chunkTitle + " " + cleanContent)) {
+            naturalAnswer = `Our return and refund policy: ${cleanContent}`;
+          }
+        }
+
+        // Universal fallbacks if not specialized
+        if (naturalAnswer === cleanContent) {
+          if (/(where|location|address|street)/.test(lowerQuery) && /suite|street|road|avenue|located|address/i.test(cleanContent)) {
+            naturalAnswer = `We are located at: ${cleanContent}`;
+          } else if (/(hour|hours|open|opening|close|closing|when)/.test(lowerQuery) && /am|pm|monday|friday|saturday|hours|operating/i.test(cleanContent)) {
+            naturalAnswer = `Our operating hours: ${cleanContent}`;
+          } else if (/(fee|fees|price|pricing|cost|much|charge)/.test(lowerQuery)) {
+            const feeMatch = cleanContent.match(/(?:Consultation Fees|Pricing|Fees|Rates):\s*([^\n.]+)/i);
+            if (feeMatch) {
+              naturalAnswer = `Our pricing details: ${feeMatch[1].trim()}. (${cleanContent.replace(/(?:Consultation Fees|Pricing|Fees|Rates):.*$/i, "").trim()})`;
+            }
+          }
         }
 
         return {

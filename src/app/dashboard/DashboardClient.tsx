@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { EchoLogo } from "@/components/EchoLogo";
@@ -249,6 +249,13 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       morMode: "sandbox",
       externalSubscriptionId: "sub_mor_demo",
       customerPortalUrl: "https://app.lemonsqueezy.com/my-orders",
+      subscriptionStatus: "active",
+      cancelAtPeriodEnd: false,
+      cancelEffectiveDate: null,
+      cancellationReason: null,
+      cancelledAt: null,
+      creditBalanceCents: 0,
+      creditBalanceFormatted: "$0.00",
       paymentMethods: [],
       invoices: [],
     }
@@ -509,6 +516,15 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           }
           if (Array.isArray(fresh.knowledgeSources)) {
             setKnowledgeSources(fresh.knowledgeSources);
+          }
+          if (Array.isArray(fresh.appointments)) {
+            setAppointments(fresh.appointments);
+          }
+          if (Array.isArray(fresh.leads)) {
+            setLeads(fresh.leads);
+          }
+          if (Array.isArray(fresh.orders)) {
+            setOrders(fresh.orders);
           }
         }
       } catch {
@@ -986,72 +1002,100 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   }
 
   // Dynamic performance & deflection analytics calculations
-  const totalConvs = conversations.length;
-  const aiResolvedCount = conversations.filter((c) => c.status === "RESOLVED").length;
-  const humanEscalatedCount = conversations.filter((c) => c.status === "WAITING_FOR_HUMAN").length;
-  const activeCount = conversations.filter((c) => c.status === "ACTIVE").length;
+  const filteredConversations = useMemo(() => {
+    return conversations.filter((c) => {
+      if (convFilter !== "ALL" && c.status !== convFilter) return false;
+      if (convSearch.trim()) {
+        const q = convSearch.toLowerCase().trim();
+        const nameMatch = c.visitorName?.toLowerCase().includes(q);
+        const contactMatch = c.visitorContact?.toLowerCase().includes(q);
+        const msgMatch = c.lastMessage?.toLowerCase().includes(q);
+        return Boolean(nameMatch || contactMatch || msgMatch);
+      }
+      return true;
+    });
+  }, [conversations, convFilter, convSearch]);
 
-  const filteredConversations = conversations.filter((c) => {
-    if (convFilter !== "ALL" && c.status !== convFilter) return false;
-    if (convSearch.trim()) {
-      const q = convSearch.toLowerCase().trim();
-      const nameMatch = c.visitorName?.toLowerCase().includes(q);
-      const contactMatch = c.visitorContact?.toLowerCase().includes(q);
-      const msgMatch = c.lastMessage?.toLowerCase().includes(q);
-      return Boolean(nameMatch || contactMatch || msgMatch);
-    }
-    return true;
-  });
-  const deflectionRate =
-    totalConvs > 0
-      ? Math.round(((aiResolvedCount || (totalConvs - humanEscalatedCount)) / totalConvs) * 100)
-      : 0;
-  const hoursSaved = ((totalConvs * 4.5) / 60).toFixed(1);
-  const costSavings = Math.round(Number(hoursSaved) * 34.5);
+  const {
+    totalConvs,
+    aiResolvedCount,
+    humanEscalatedCount,
+    activeCount,
+    deflectionRate,
+    hoursSaved,
+    costSavings,
+    trendBars,
+    maxTrendTotal,
+    channelBreakdown,
+    intentBreakdown,
+  } = useMemo(() => {
+    const total = conversations.length;
+    const aiResolved = conversations.filter((c) => c.status === "RESOLVED").length;
+    const humanEsc = conversations.filter((c) => c.status === "WAITING_FOR_HUMAN").length;
+    const active = conversations.filter((c) => c.status === "ACTIVE").length;
 
-  // 7-day trend calculations scaled with timeframe
-  const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const trendMultiplier =
-    analyticsTimeframe === "24h"
-      ? 0.35
-      : analyticsTimeframe === "30d"
-      ? 3.8
-      : analyticsTimeframe === "all"
-      ? 5.5
-      : 1;
-  const trendBars = daysOfWeek.map((day, idx) => {
-    const weights = [0.12, 0.18, 0.24, 0.20, 0.14, 0.06, 0.06];
-    const rawTotal = totalConvs > 0 ? Math.max(1, Math.round(totalConvs * weights[idx] * trendMultiplier)) : 0;
-    const escRatio = totalConvs > 0 ? humanEscalatedCount / totalConvs : 0;
-    const dayEscalated = Math.round(rawTotal * escRatio);
-    const dayAi = Math.max(0, rawTotal - dayEscalated);
-    return { day, total: rawTotal, ai: dayAi, escalated: dayEscalated };
-  });
-  const maxTrendTotal = Math.max(...trendBars.map((b) => b.total), 4);
+    const deflRate =
+      total > 0
+        ? Math.round(((aiResolved || (total - humanEsc)) / total) * 100)
+        : 0;
+    const hrsSaved = ((total * 4.5) / 60).toFixed(1);
+    const cSavings = Math.round(Number(hrsSaved) * 34.5);
 
-  // Omnichannel breakdown
-  const channelBreakdown = [
-    { name: "Web Chat Widget", pct: totalConvs > 0 ? 76 : 0, count: Math.round(totalConvs * 0.76), color: "bg-indigo-600" },
-    { name: "Direct Booking Link / Portal", pct: totalConvs > 0 ? 16 : 0, count: Math.round(totalConvs * 0.16), color: "bg-sky-500" },
-    { name: "Inbound SMS / WhatsApp", pct: totalConvs > 0 ? 8 : 0, count: Math.round(totalConvs * 0.08), color: "bg-emerald-500" },
-  ];
+    const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const trendMultiplier =
+      analyticsTimeframe === "24h"
+        ? 0.35
+        : analyticsTimeframe === "30d"
+        ? 3.8
+        : analyticsTimeframe === "all"
+        ? 5.5
+        : 1;
+    const tBars = daysOfWeek.map((day, idx) => {
+      const weights = [0.12, 0.18, 0.24, 0.20, 0.14, 0.06, 0.06];
+      const rawTotal = total > 0 ? Math.max(1, Math.round(total * weights[idx] * trendMultiplier)) : 0;
+      const escRatio = total > 0 ? humanEsc / total : 0;
+      const dayEscalated = Math.round(rawTotal * escRatio);
+      const dayAi = Math.max(0, rawTotal - dayEscalated);
+      return { day, total: rawTotal, ai: dayAi, escalated: dayEscalated };
+    });
+    const maxTrend = Math.max(...tBars.map((b) => b.total), 4);
 
-  // Intent breakdown tailored to industry
-  const intentBreakdown = isEcom
-    ? [
-        { label: "Order Tracking & Delivery Status", pct: totalConvs > 0 ? 40 : 0, count: Math.round(totalConvs * 0.4), color: "bg-indigo-600" },
-        { label: "Returns, Refunds & Exchange Policy", pct: totalConvs > 0 ? 24 : 0, count: Math.round(totalConvs * 0.24), color: "bg-sky-500" },
-        { label: "Product Specifications & Sizing", pct: totalConvs > 0 ? 18 : 0, count: Math.round(totalConvs * 0.18), color: "bg-emerald-500" },
-        { label: "Bulk Purchasing & Wholesale Pricing", pct: totalConvs > 0 ? 12 : 0, count: Math.round(totalConvs * 0.12), color: "bg-purple-500" },
-        { label: "Payment & Checkout Escalations", pct: totalConvs > 0 ? 6 : 0, count: Math.round(totalConvs * 0.06), color: "bg-amber-500" },
-      ]
-    : [
-        { label: "New Patient Consultation & Booking", pct: totalConvs > 0 ? 44 : 0, count: Math.round(totalConvs * 0.44), color: "bg-indigo-600" },
-        { label: "Treatment Pricing & HICAPS Health Funds", pct: totalConvs > 0 ? 22 : 0, count: Math.round(totalConvs * 0.22), color: "bg-sky-500" },
-        { label: "Practitioner Availability & Schedules", pct: totalConvs > 0 ? 16 : 0, count: Math.round(totalConvs * 0.16), color: "bg-emerald-500" },
-        { label: "Clinic Location, Parking & Access", pct: totalConvs > 0 ? 12 : 0, count: Math.round(totalConvs * 0.12), color: "bg-purple-500" },
-        { label: "Urgent Care & Clinical Escalations", pct: totalConvs > 0 ? 6 : 0, count: Math.round(totalConvs * 0.06), color: "bg-amber-500" },
-      ];
+    const chBreakdown = [
+      { name: "Web Chat Widget", pct: total > 0 ? 76 : 0, count: Math.round(total * 0.76), color: "bg-indigo-600" },
+      { name: "Direct Booking Link / Portal", pct: total > 0 ? 16 : 0, count: Math.round(total * 0.16), color: "bg-sky-500" },
+      { name: "Inbound SMS / WhatsApp", pct: total > 0 ? 8 : 0, count: Math.round(total * 0.08), color: "bg-emerald-500" },
+    ];
+
+    const intBreakdown = isEcom
+      ? [
+          { label: "Order Tracking & Delivery Status", pct: total > 0 ? 40 : 0, count: Math.round(total * 0.4), color: "bg-indigo-600" },
+          { label: "Returns, Refunds & Exchange Policy", pct: total > 0 ? 24 : 0, count: Math.round(total * 0.24), color: "bg-sky-500" },
+          { label: "Product Specifications & Sizing", pct: total > 0 ? 18 : 0, count: Math.round(total * 0.18), color: "bg-emerald-500" },
+          { label: "Bulk Purchasing & Wholesale Pricing", pct: total > 0 ? 12 : 0, count: Math.round(total * 0.12), color: "bg-purple-500" },
+          { label: "Payment & Checkout Escalations", pct: total > 0 ? 6 : 0, count: Math.round(total * 0.06), color: "bg-amber-500" },
+        ]
+      : [
+          { label: "New Patient Consultation & Booking", pct: total > 0 ? 44 : 0, count: Math.round(total * 0.44), color: "bg-indigo-600" },
+          { label: "Treatment Pricing & HICAPS Health Funds", pct: total > 0 ? 22 : 0, count: Math.round(total * 0.22), color: "bg-sky-500" },
+          { label: "Practitioner Availability & Schedules", pct: total > 0 ? 16 : 0, count: Math.round(total * 0.16), color: "bg-emerald-500" },
+          { label: "Clinic Location, Parking & Access", pct: total > 0 ? 12 : 0, count: Math.round(total * 0.12), color: "bg-purple-500" },
+          { label: "Urgent Care & Clinical Escalations", pct: total > 0 ? 6 : 0, count: Math.round(total * 0.06), color: "bg-amber-500" },
+        ];
+
+    return {
+      totalConvs: total,
+      aiResolvedCount: aiResolved,
+      humanEscalatedCount: humanEsc,
+      activeCount: active,
+      deflectionRate: deflRate,
+      hoursSaved: hrsSaved,
+      costSavings: cSavings,
+      trendBars: tBars,
+      maxTrendTotal: maxTrend,
+      channelBreakdown: chBreakdown,
+      intentBreakdown: intBreakdown,
+    };
+  }, [conversations, analyticsTimeframe, isEcom]);
 
   const handleExportCsv = () => {
     setExportingCsv(true);
@@ -3925,6 +3969,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
                         {activePricing.cycleLabel}
                       </span>
+                      {billingState.creditBalanceCents > 0 && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-teal-800 bg-teal-100 border border-teal-300 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-2xs">
+                          <span>💰</span>
+                          <span>Account Credit: {billingState.creditBalanceFormatted}</span>
+                        </span>
+                      )}
                     </div>
                     <h3 className="text-2xl font-black text-slate-900 mt-1.5 capitalize">
                       {activePlanMeta.name} Plan

@@ -1724,6 +1724,18 @@ export class DashboardService {
           } else if (/(return|returns|refund|refunds|exchange|policy)/.test(lowerQuery) && /return|refund|exchange|30 days/i.test(top.chunkTitle + " " + cleanContent)) {
             naturalAnswer = `Our return and refund policy: ${cleanContent}`;
           }
+        } else if (industry === "realestate") {
+          if (/(pet|pets|dog|cat|animal)/.test(lowerQuery) && /pet|animal|lease|case by case/i.test(top.chunkTitle + " " + cleanContent)) {
+            naturalAnswer = `Regarding pet policies: ${cleanContent}`;
+          } else if (/(price|rent|pricing|fee|bond|cost)/.test(lowerQuery) && /rent|price|week|month|bond/i.test(top.chunkTitle + " " + cleanContent)) {
+            naturalAnswer = `Listing and pricing details: ${cleanContent}`;
+          }
+        } else if (industry === "beauty") {
+          if (/(haircut|cut|style|styling|treatment|colour|color|balayage|facial)/.test(lowerQuery) && /service|cut|style|colour|treatment|\$/i.test(top.chunkTitle + " " + cleanContent)) {
+            naturalAnswer = `Our treatment and service options: ${cleanContent}`;
+          } else if (/(price|menu|cost|fee|much)/.test(lowerQuery) && /\$|from|price|menu/i.test(top.chunkTitle + " " + cleanContent)) {
+            naturalAnswer = `Our service menu pricing: ${cleanContent}`;
+          }
         }
 
         // Universal fallbacks if not specialized
@@ -1977,108 +1989,224 @@ export class DashboardService {
       .update(`${convId}:${orgId}`)
       .digest("hex");
 
-    // 3. Process Booking Intent & Appointment Scheduling
-    const history = db
-      .prepare(`SELECT sender, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`)
-      .all(convId) as Array<{ sender: string; content: string }>;
+    const orgRow = db
+      .prepare("SELECT name, industry FROM organizations WHERE id = ?")
+      .get(orgId) as { name: string; industry: string } | undefined;
+    const orgName = orgRow?.name || "our team";
+    const industry = (orgRow?.industry || "clinic").toLowerCase();
 
-    const bookingParsed = AppointmentService.parseBookingIntentAndEntities(
-      text,
-      history,
-      params.visitorName || existingConv?.visitor_name,
-      params.visitorContact || existingConv?.visitor_contact
-    );
+    let defaultChips: string[];
+    if (industry === "ecommerce") {
+      defaultChips = ["Track my order", "Find sneakers under $90", "Returns & refunds", "Shipping policy"];
+    } else if (industry === "realestate") {
+      defaultChips = ["Book an inspection", "Is the 2-bed pet friendly?", "Listing prices", "Speak to an agent"];
+    } else if (industry === "beauty") {
+      defaultChips = ["Book a haircut", "Price list & menu", "Do you do colour?", "Opening hours"];
+    } else {
+      defaultChips = ["Book Appointment", "Consultation Fees", "HICAPS Health Funds", "Opening Hours"];
+    }
 
     let aiReplyText = "";
     let isEscalated = false;
-    let chips: string[] = ["Book Appointment", "Consultation Fees", "HICAPS Health Funds", "Opening Hours"];
+    let chips: string[] = defaultChips;
     let isAiBooked = false;
 
-    if (bookingParsed.isBookingIntent) {
-      if (bookingParsed.hasTimeSlot && bookingParsed.targetTime) {
-        const serviceName = bookingParsed.serviceName || "";
-        const durationMinutes = /initial|comprehensive|assessment|eval/i.test(serviceName)
-          ? 60
-          : /extended|long/i.test(serviceName)
-          ? 90
-          : /follow|subsequent|standard/i.test(serviceName)
-          ? 30
-          : 45;
+    // 3. Explicit Human Handover / Staff Escalation Request
+    const lower = text.toLowerCase();
+    const isHumanEscalationRequest =
+      /\b(human|person|agent|stylist|receptionist|staff|someone|anyone|team|manager|representative|operator)\b/.test(lower) &&
+      /\b(talk|speak|chat with|connect|transfer|handover|switch|get me|put me through|call)\b/.test(lower);
 
-        // Check for double booking conflict with service-aware duration
-        const avail = AppointmentService.checkSlotAvailability(
-          orgId,
-          bookingParsed.practitionerName,
-          bookingParsed.targetTime,
-          durationMinutes
-        );
+    if (isHumanEscalationRequest) {
+      isEscalated = true;
+      if (industry === "ecommerce") {
+        aiReplyText = "I've flagged this thread for our store support team. A team member will assist you directly shortly.";
+        chips = ["Track an order", "Returns policy", "View catalog"];
+      } else if (industry === "realestate") {
+        aiReplyText = "I've flagged this thread for our real estate agents. A licensed agent will assist you directly shortly.";
+        chips = ["Book an inspection", "Rental listings", "Office hours"];
+      } else if (industry === "beauty") {
+        aiReplyText = "I've flagged this thread for our salon reception team. A stylist or team member will assist you shortly.";
+        chips = ["View price list", "Book appointment", "Salon hours"];
+      } else {
+        aiReplyText = "I've flagged this thread for our clinic front desk team. A staff member has been alerted and will assist you directly.";
+        chips = ["Book appointment", "Consultation fees", "Opening hours"];
+      }
+    }
 
-        if (!avail.isAvailable) {
-          // Double-booking prevented! Find nearest alternative slots
-          const alternatives = AppointmentService.findAlternativeSlots(
+    // 3A. E-Commerce Order Tracking Handler
+    const isOrderInquiry = !aiReplyText && /(track|where is|order|package|parcel|delivery status|shipment)/i.test(text);
+    const orderNumMatch = !aiReplyText ? text.match(/#?(\d{4,8})/) : null;
+    const emailMatch = !aiReplyText ? text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/) : null;
+
+    if (!aiReplyText && industry === "ecommerce" && (isOrderInquiry || orderNumMatch)) {
+      if (orderNumMatch) {
+        const orderNum = orderNumMatch[1];
+        const order = db.prepare(`
+          SELECT order_number, customer_name, customer_email, total_amount, currency, tracking_carrier, tracking_status
+          FROM orders
+          WHERE organization_id = ? AND (order_number = ? OR order_number = ?)
+        `).get(orgId, orderNum, `#${orderNum}`) as any;
+
+        if (order) {
+          aiReplyText = `Found it! Order #${order.order_number} for ${order.customer_name}:\n\n📦 Status: ${String(order.tracking_status).replace("_", " ").toUpperCase()}\n🚚 Carrier: ${order.tracking_carrier || "Express Courier"}\n💰 Total: $${Number(order.total_amount).toFixed(2)} ${order.currency}\n📅 Estimated Delivery: Tomorrow by 4:00 PM\n\nWould you like help with anything else, such as a return or product recommendation?`;
+          chips = ["Return an item", "Shipping policy", "Speak to support"];
+        } else {
+          aiReplyText = `I couldn't locate an order matching #${orderNum} in our store system. Please verify your order number or let me know the email address you used at checkout so our team can track it down.`;
+          chips = ["Track another order", "Shipping policy", "Speak to support"];
+        }
+      } else if (emailMatch) {
+        const order = db.prepare(`
+          SELECT order_number, customer_name, customer_email, total_amount, currency, tracking_carrier, tracking_status
+          FROM orders
+          WHERE organization_id = ? AND lower(customer_email) = ?
+          ORDER BY created_at DESC
+        `).get(orgId, emailMatch[0].toLowerCase()) as any;
+
+        if (order) {
+          aiReplyText = `Found your latest order! Order #${order.order_number} (${order.customer_name}):\n\n📦 Status: ${String(order.tracking_status).replace("_", " ").toUpperCase()}\n🚚 Carrier: ${order.tracking_carrier || "Express Courier"}\n💰 Total: $${Number(order.total_amount).toFixed(2)} ${order.currency}\n\nLet me know if you need to initiate a return or tracking update.`;
+          chips = ["Return an item", "Product catalog", "Speak to support"];
+        } else {
+          aiReplyText = `I searched our system for ${emailMatch[0]}, but couldn't find any associated orders. Please verify the email address or provide your 5-digit Order Number.`;
+          chips = ["Track another order", "Shipping policy", "Speak to support"];
+        }
+      } else {
+        aiReplyText = "I would be happy to track your order! What is your 5-digit Order Number (e.g. #10842) or checkout email address?";
+        chips = ["#10842", "Shipping times", "Returns & exchanges"];
+      }
+    }
+
+    // 3B. Process Booking Intent & Appointment / Inspection Scheduling
+    if (!aiReplyText) {
+      const history = db
+        .prepare(`SELECT sender, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`)
+        .all(convId) as Array<{ sender: string; content: string }>;
+
+      const bookingParsed = AppointmentService.parseBookingIntentAndEntities(
+        text,
+        history,
+        params.visitorName || existingConv?.visitor_name,
+        params.visitorContact || existingConv?.visitor_contact,
+        industry
+      );
+
+      if (bookingParsed.isBookingIntent) {
+        if (bookingParsed.hasTimeSlot && bookingParsed.targetTime) {
+          const serviceName = bookingParsed.serviceName || "";
+          const durationMinutes = /initial|comprehensive|assessment|eval/i.test(serviceName)
+            ? 60
+            : /extended|long/i.test(serviceName)
+            ? 90
+            : /follow|subsequent|standard/i.test(serviceName)
+            ? 30
+            : 45;
+
+          // Check for double booking conflict with service-aware duration
+          const avail = AppointmentService.checkSlotAvailability(
             orgId,
             bookingParsed.practitionerName,
             bookingParsed.targetTime,
             durationMinutes
           );
 
-          const slotFormatted = `${AppointmentService.formatSlotDay(bookingParsed.targetTime)} at ${AppointmentService.formatSlotTime(bookingParsed.targetTime)}`;
-
-          aiReplyText = `${bookingParsed.practitionerName} is already fully booked on ${slotFormatted}.\n\nThe closest available openings with ${bookingParsed.practitionerName} are:\n` +
-            alternatives.map((alt) => `• ${alt.label}`).join("\n") +
-            `\n\nWould any of these alternative times work for you?`;
-
-          chips = alternatives.map((alt) => alt.chip);
-
-          // Save warm inbound lead so clinic never loses the patient
-          if (bookingParsed.patientName || bookingParsed.patientContact) {
-            AppointmentService.recordInquiryLead({
+          if (!avail.isAvailable) {
+            // Double-booking prevented! Find nearest alternative slots
+            const alternatives = AppointmentService.findAlternativeSlots(
               orgId,
-              conversationId: convId,
-              patientName: bookingParsed.patientName || "Interested Patient",
-              patientContact: bookingParsed.patientContact || "Inquiry from website chat",
-              note: `Requested ${slotFormatted} (conflicted) - offered alternatives`,
-            });
+              bookingParsed.practitionerName,
+              bookingParsed.targetTime,
+              durationMinutes
+            );
+
+            const slotFormatted = `${AppointmentService.formatSlotDay(bookingParsed.targetTime)} at ${AppointmentService.formatSlotTime(bookingParsed.targetTime)}`;
+
+            aiReplyText = `${bookingParsed.practitionerName} is already fully booked on ${slotFormatted}.\n\nThe closest available openings with ${bookingParsed.practitionerName} are:\n` +
+              alternatives.map((alt) => `• ${alt.label}`).join("\n") +
+              `\n\nWould any of these alternative times work for you?`;
+
+            chips = alternatives.map((alt) => alt.chip);
+
+            // Save warm inbound lead so business never loses the prospect
+            if (bookingParsed.patientName || bookingParsed.patientContact) {
+              AppointmentService.recordInquiryLead({
+                orgId,
+                conversationId: convId,
+                patientName: bookingParsed.patientName || "Interested Client",
+                patientContact: bookingParsed.patientContact || "Inquiry from website chat",
+                note: `Requested ${slotFormatted} (conflicted) - offered alternatives`,
+              });
+            }
+          } else {
+            // Slot is open! Check if visitor provided contact
+            if (!bookingParsed.patientContact) {
+              const contactPrompt =
+                industry === "realestate"
+                  ? `I have held ${bookingParsed.formattedSlot} for your inspection with ${bookingParsed.practitionerName}! What is your mobile phone number so we can register your viewing and send confirmation?`
+                  : industry === "beauty"
+                  ? `I have held ${bookingParsed.formattedSlot} with ${bookingParsed.practitionerName} for you! What is your mobile number so we can reserve your chair and send confirmation?`
+                  : `I have held ${bookingParsed.formattedSlot} with ${bookingParsed.practitionerName} for you! What is your mobile phone number so we can register your appointment and send confirmation?`;
+
+              aiReplyText = contactPrompt;
+              chips = ["Enter Mobile Number", "Change Time"];
+            } else {
+              // Confirm booking and write to SQLite appointments & leads
+              const booked = AppointmentService.bookAppointment({
+                orgId,
+                conversationId: convId,
+                patientName: bookingParsed.patientName || "Client",
+                patientContact: bookingParsed.patientContact,
+                practitionerName: bookingParsed.practitionerName,
+                serviceName: bookingParsed.serviceName,
+                startTime: bookingParsed.targetTime,
+              });
+
+              isAiBooked = true;
+              if (industry === "realestate") {
+                aiReplyText = `You're all booked for an inspection, ${booked.appointment.patientName}! 🏡\n\n🗓️ ${AppointmentService.formatSlotDay(bookingParsed.targetTime)} at ${AppointmentService.formatSlotTime(bookingParsed.targetTime)}\n📍 ${booked.appointment.serviceName}\n👩‍💼 Agent: ${booked.appointment.practitionerName}\n🏷️ Reference: #${booked.externalRef}\n\nWe've confirmed your inspection time and sent confirmation to ${booked.appointment.patientContact}.`;
+                chips = ["Add to Calendar", "Reschedule", "Directions"];
+              } else if (industry === "beauty") {
+                aiReplyText = `You're all booked, ${booked.appointment.patientName}! 💇✨\n\n🗓️ ${AppointmentService.formatSlotDay(bookingParsed.targetTime)} at ${AppointmentService.formatSlotTime(bookingParsed.targetTime)}\n✂️ Stylist: ${booked.appointment.practitionerName} — ${booked.appointment.serviceName}\n🏷️ Reference: #${booked.externalRef}\n\nWe've confirmed your reservation at ${orgName} and sent details to ${booked.appointment.patientContact}. See you in the chair!`;
+                chips = ["Add to Calendar", "Reschedule", "Salon Location"];
+              } else {
+                aiReplyText = `You're all booked, ${booked.appointment.patientName}! 🎉\n\n🗓️ ${AppointmentService.formatSlotDay(bookingParsed.targetTime)} at ${AppointmentService.formatSlotTime(bookingParsed.targetTime)}\n👨‍⚕️ ${booked.appointment.practitionerName} — ${booked.appointment.serviceName}\n🏷️ Reference: #${booked.externalRef}\n\nWe've confirmed your reservation and dispatched details to ${booked.appointment.patientContact}. See you at the clinic!`;
+                chips = ["Add to Calendar", "Reschedule", "Clinic Directions"];
+              }
+            }
           }
         } else {
-          // Slot is open! Check if patient provided contact
-          if (!bookingParsed.patientContact) {
-            aiReplyText = `I have held ${bookingParsed.formattedSlot} with ${bookingParsed.practitionerName} for you! What is your mobile phone number so we can register your appointment and send confirmation?`;
-            chips = ["Enter Mobile Number", "Change Time"];
+          // Expressed booking intent but didn't pick a slot
+          if (industry === "realestate") {
+            aiReplyText = `I would be delighted to schedule an inspection with ${bookingParsed.practitionerName}! What day and time suits you best for a viewing, and what is your name and mobile number?`;
+            chips = ["Saturday 11:00 AM", "Thursday 5:30 PM", "Ask About Pets", "Agent Contact"];
+          } else if (industry === "beauty") {
+            aiReplyText = `I would love to help you book a session with ${bookingParsed.practitionerName}! What day and time suits you best, and what is your name and mobile number?`;
+            chips = ["Friday 10:00 AM", "Saturday 1:30 PM", "View Price List", "Colour Consult"];
           } else {
-            // Confirm booking and write to SQLite appointments & leads
-            const booked = AppointmentService.bookAppointment({
-              orgId,
-              conversationId: convId,
-              patientName: bookingParsed.patientName || "Patient",
-              patientContact: bookingParsed.patientContact,
-              practitionerName: bookingParsed.practitionerName,
-              serviceName: bookingParsed.serviceName,
-              startTime: bookingParsed.targetTime,
-            });
-
-            isAiBooked = true;
-            aiReplyText = `You're all booked, ${booked.appointment.patientName}! 🎉\n\n🗓️ ${AppointmentService.formatSlotDay(bookingParsed.targetTime)} at ${AppointmentService.formatSlotTime(bookingParsed.targetTime)}\n👨‍⚕️ ${booked.appointment.practitionerName} — ${booked.appointment.serviceName}\n🏷️ Reference: #${booked.externalRef}\n\nWe've confirmed your reservation and dispatched details to ${booked.appointment.patientContact}. See you at the clinic!`;
-            chips = ["Add to Calendar", "Reschedule", "Clinic Directions"];
+            aiReplyText = `I would be delighted to help you schedule an appointment with ${bookingParsed.practitionerName}! We have openings this week for Initial Assessments, Musculoskeletal Physio, and Follow-up consultations. What day and time suits you best, and what is your name and mobile number?`;
+            chips = ["Tomorrow 10:00 AM", "Friday 2:00 PM", "Monday 11:00 AM", "View Fees"];
           }
         }
       } else {
-        // Expressed booking intent but didn't pick a slot
-        aiReplyText = `I would be delighted to help you schedule an appointment with ${bookingParsed.practitionerName}! We have openings this week for Initial Assessments, Musculoskeletal Physio, and Follow-up consultations. What day and time suits you best, and what is your name and mobile number?`;
-        chips = ["Tomorrow 10:00 AM", "Friday 2:00 PM", "Monday 11:00 AM", "View Fees"];
-      }
-    } else {
-      // Normal knowledge base query & escalation check
-      const testResult = this.testKnowledgeQuery(orgId, text);
-      aiReplyText = testResult.answer;
+        // Normal knowledge base query & escalation check
+        const testResult = this.testKnowledgeQuery(orgId, text);
+        aiReplyText = testResult.answer;
 
-      // Check if user is explicitly asking for a human staff member
-      const lower = text.toLowerCase();
-      if (/(talk to a human|speak to a person|real person|human agent|staff member|speak to staff|transfer me)/.test(lower)) {
-        isEscalated = true;
-        aiReplyText = "I've flagged this thread for our clinic front desk team. A staff member has been alerted and will assist you directly.";
-      } else if (testResult.confidence < 0.5) {
-        isEscalated = true;
+        // Check if user is explicitly asking for a human staff member
+        const lower = text.toLowerCase();
+        if (/(talk to a human|speak to a person|real person|human agent|staff member|speak to staff|transfer me)/.test(lower)) {
+          isEscalated = true;
+          if (industry === "ecommerce") {
+            aiReplyText = "I've flagged this thread for our store support team. A team member will assist you directly shortly.";
+          } else if (industry === "realestate") {
+            aiReplyText = "I've flagged this thread for our real estate agents. A licensed agent will assist you directly shortly.";
+          } else if (industry === "beauty") {
+            aiReplyText = "I've flagged this thread for our salon reception team. A stylist or team member will assist you shortly.";
+          } else {
+            aiReplyText = "I've flagged this thread for our clinic front desk team. A staff member has been alerted and will assist you directly.";
+          }
+        } else if (testResult.confidence < 0.5) {
+          isEscalated = true;
+        }
       }
     }
 

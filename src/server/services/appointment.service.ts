@@ -64,7 +64,8 @@ export class AppointmentService {
     currentMessage: string,
     history: Array<{ sender: string; content: string }> = [],
     fallbackVisitorName?: string,
-    fallbackVisitorContact?: string
+    fallbackVisitorContact?: string,
+    industry: string = "clinic"
   ): BookingParsedIntent {
     const combinedText = [...history.map((h) => h.content), currentMessage].join(" ");
     const currentLower = currentMessage.toLowerCase();
@@ -78,11 +79,16 @@ export class AppointmentService {
 
     // 2. Booking intent keywords
     let isBookingIntent = false;
-    if (isPriceOrInfoInquiry && !/\b(book|booking|schedule|reserve|lock in|make an appointment)\b/i.test(currentLower)) {
+    if (
+      /\b(talk|speak|chat with|connect|transfer|handover)\b/i.test(currentLower) &&
+      /\b(human|person|agent|stylist|receptionist|staff|someone|anyone)\b/i.test(currentLower)
+    ) {
+      isBookingIntent = false;
+    } else if (isPriceOrInfoInquiry && !/\b(book|booking|schedule|reserve|lock in|make an appointment|viewing|inspection)\b/i.test(currentLower)) {
       isBookingIntent = false;
     } else {
       isBookingIntent =
-        /\b(book|appointment|booking|schedule|reserve|slot|see doctor|see a doctor|physio|available times?|check in)\b/i.test(
+        /\b(book|appointment|booking|schedule|reserve|slot|see doctor|see a doctor|physio|available times?|check in|viewing|inspection|haircut|stylist)\b/i.test(
           combinedLower
         ) ||
         /\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)|morning|afternoon)\b/i.test(currentLower);
@@ -104,13 +110,13 @@ export class AppointmentService {
       patientContact = fallbackVisitorContact;
     }
 
-    // 4. Extract Patient Name
+    // 4. Extract Patient / Visitor Name
     let patientName: string | undefined;
     if (fallbackVisitorName && fallbackVisitorName !== "Website Visitor" && !fallbackVisitorName.startsWith("Visitor #")) {
       patientName = fallbackVisitorName;
     } else {
       const nameIntroMatch = combinedText.match(
-        /\b(?:my name is|name is|i am|this is|name:|patient:)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i
+        /\b(?:my name is|name is|i am|this is|name:|patient:|client:)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i
       );
       const forNameMatch = combinedText.match(/\bfor\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/);
       const startsWithNameMatch = currentMessage.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)[,\s]/);
@@ -124,28 +130,51 @@ export class AppointmentService {
       }
     }
 
-    // 5. Extract Practitioner
+    // 5. Extract Practitioner based on industry niche
     let practitionerName = "Dr. Sarah Lee";
-    if (/\b(?:dr\.?\s+)?michael\s+chen\b/i.test(combinedText)) {
-      practitionerName = "Dr. Michael Chen";
-    } else if (/\b(?:dr\.?\s+)?alex(?:\s+taylor)?\b/i.test(combinedText)) {
-      practitionerName = "Dr. Alex Taylor";
-    } else if (/\b(?:dr\.?\s+)?sarah(?:\s+lee)?\b/i.test(combinedText)) {
-      practitionerName = "Dr. Sarah Lee";
+    if (industry === "realestate") {
+      practitionerName = /\bpriya\b/i.test(combinedText) ? "Priya Sharma (Licensed Estate Agent)" : "Sam (Property Manager)";
+    } else if (industry === "beauty") {
+      practitionerName = /\blexi\b/i.test(combinedText) ? "Lexi (Color Specialist)" : "Mia (Senior Stylist)";
+    } else if (industry === "ecommerce") {
+      practitionerName = "Aria (Styling Consultant)";
+    } else {
+      if (/\b(?:dr\.?\s+)?michael\s+chen\b/i.test(combinedText)) {
+        practitionerName = "Dr. Michael Chen";
+      } else if (/\b(?:dr\.?\s+)?alex(?:\s+taylor)?\b/i.test(combinedText)) {
+        practitionerName = "Dr. Alex Taylor";
+      } else if (/\b(?:dr\.?\s+)?sarah(?:\s+lee)?\b/i.test(combinedText)) {
+        practitionerName = "Dr. Sarah Lee";
+      }
     }
 
-    // 6. Extract Service
+    // 6. Extract Service based on industry niche
     let serviceName = "Initial Physiotherapy Consultation";
-    if (/sports\s+injury/i.test(combinedText)) {
-      serviceName = "Sports Injury Assessment";
-    } else if (/dry\s+needling/i.test(combinedText)) {
-      serviceName = "Dry Needling & Myofascial Release";
-    } else if (/follow[\s-]?up/i.test(combinedText)) {
-      serviceName = "Standard Follow-Up Consultation";
-    } else if (/telehealth/i.test(combinedText)) {
-      serviceName = "Telehealth Video Consultation";
-    } else if (/back\s+pain|neck\s+pain|physio/i.test(combinedText)) {
-      serviceName = "Musculoskeletal Assessment";
+    if (industry === "realestate") {
+      const propMatch = combinedText.match(/\b(\d+[\s\w]+(?:st|street|rd|road|ave|avenue|dr|drive|ct|court|pkwy|way))\b/i);
+      serviceName = propMatch ? `Inspection - ${propMatch[1]}` : "Property Viewing Inspection";
+    } else if (industry === "beauty") {
+      if (/balayage|colour|color|dye/i.test(combinedText)) {
+        serviceName = "Balayage & Hair Colour Consultation";
+      } else if (/cut|haircut|style/i.test(combinedText)) {
+        serviceName = "Cut & Style Consultation";
+      } else {
+        serviceName = "Salon Treatment & Styling";
+      }
+    } else if (industry === "ecommerce") {
+      serviceName = "Personal Shopping & Sizing Consultation";
+    } else {
+      if (/sports\s+injury/i.test(combinedText)) {
+        serviceName = "Sports Injury Assessment";
+      } else if (/dry\s+needling/i.test(combinedText)) {
+        serviceName = "Dry Needling & Myofascial Release";
+      } else if (/follow[\s-]?up/i.test(combinedText)) {
+        serviceName = "Standard Follow-Up Consultation";
+      } else if (/telehealth/i.test(combinedText)) {
+        serviceName = "Telehealth Video Consultation";
+      } else if (/back\s+pain|neck\s+pain|physio/i.test(combinedText)) {
+        serviceName = "Musculoskeletal Assessment";
+      }
     }
 
     // 7. Extract Target Date & Time Slot

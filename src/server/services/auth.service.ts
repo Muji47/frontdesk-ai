@@ -61,10 +61,29 @@ export class AuthService {
       const defaultGreeting =
         input.industry === "ecommerce"
           ? `Hi! Welcome to ${input.businessName}. Looking for a product or need to track an order?`
+          : input.industry === "realestate"
+          ? `Hi! Welcome to ${input.businessName}. Looking to buy, rent, or schedule a property inspection?`
+          : input.industry === "beauty"
+          ? `Hi! Welcome to ${input.businessName}. Looking to book a treatment or view our service menu?`
           : `Hi! Welcome to ${input.businessName}. How can I assist you with appointment bookings or questions today?`;
 
-      const defaultColor = input.industry === "ecommerce" ? "#4f46e5" : "#0d9488";
-      const defaultAgentName = input.industry === "ecommerce" ? "Aria" : "Maya";
+      const defaultColor =
+        input.industry === "ecommerce"
+          ? "#4f46e5"
+          : input.industry === "realestate"
+          ? "#2563eb"
+          : input.industry === "beauty"
+          ? "#9333ea"
+          : "#0d9488";
+
+      const defaultAgentName =
+        input.industry === "ecommerce"
+          ? "Aria"
+          : input.industry === "realestate"
+          ? "Sam"
+          : input.industry === "beauty"
+          ? "Lexi"
+          : "Maya";
 
       db.prepare(`
         INSERT INTO agents (id, organization_id, name, greeting, color, position, tone)
@@ -77,6 +96,15 @@ export class AuthService {
 
     // 3. Issue Session Token
     const { token, expiresAt } = this.createSession(userId);
+
+    const agentName =
+      input.industry === "ecommerce"
+        ? "Aria"
+        : input.industry === "realestate"
+        ? "Sam"
+        : input.industry === "beauty"
+        ? "Lexi"
+        : "Maya";
 
     return {
       token,
@@ -91,7 +119,7 @@ export class AuthService {
         industry: input.industry,
         plan: "growth",
         agentId,
-        agentName: input.industry === "ecommerce" ? "Aria" : "Maya",
+        agentName,
       },
     };
   }

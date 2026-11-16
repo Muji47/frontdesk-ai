@@ -32,6 +32,7 @@ globalForDb.__echoSqliteDb = db;
 if (!globalForDb.__echoSqliteInitialized) {
   globalForDb.__echoSqliteInitialized = true;
   db.exec(`
+  PRAGMA busy_timeout = 5000;
   PRAGMA foreign_keys = ON;
   PRAGMA journal_mode = WAL;
 

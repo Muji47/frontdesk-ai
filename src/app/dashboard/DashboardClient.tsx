@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { EchoLogo } from "@/components/EchoLogo";
@@ -238,6 +238,27 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   // Conversations Inbox Filter & Search State
   const [convFilter, setConvFilter] = useState<"ALL" | "WAITING_FOR_HUMAN" | "ACTIVE" | "RESOLVED">("ALL");
   const [convSearch, setConvSearch] = useState("");
+
+  // Command Palette & Global Shortcut State
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [cmdSearch, setCmdSearch] = useState("");
+  const cmdInputRef = useRef<HTMLInputElement>(null);
+  const [copiedOrgId, setCopiedOrgId] = useState(false);
+
+  // Widget Studio Interactive Multi-Device Preview State
+  const [widgetPreviewMode, setWidgetPreviewMode] = useState<"desktop" | "mobile">("desktop");
+  const [previewTestInput, setPreviewTestInput] = useState("");
+  const [previewTestMessages, setPreviewTestMessages] = useState<
+    { id: string; sender: "user" | "agent"; text: string; time: string }[]
+  >([
+    {
+      id: "preview-init",
+      sender: "agent",
+      text: initialData.agent.greeting || "Hello! How can I help you today?",
+      time: "Just now",
+    },
+  ]);
+  const [isPreviewTyping, setIsPreviewTyping] = useState(false);
 
   // Billing, Subscription Cycles, Payment Methods & Invoice Modal State
   const [billingState, setBillingState] = useState<DashboardBillingData>(
@@ -1140,6 +1161,258 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     setTimeout(() => setCopiedEmbed(false), 2500);
   };
 
+  const handleCopyOrgId = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(user.orgId).catch(() => {});
+    }
+    setCopiedOrgId(true);
+    showToast({
+      type: "success",
+      title: "Organization ID Copied",
+      message: `Organization ID ${user.orgId} copied to clipboard.`,
+    });
+    setTimeout(() => setCopiedOrgId(false), 2000);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => {
+          if (!prev) {
+            setTimeout(() => cmdInputRef.current?.focus(), 50);
+          }
+          return !prev;
+        });
+      } else if (e.key === "Escape" && isCommandPaletteOpen) {
+        setIsCommandPaletteOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isCommandPaletteOpen]);
+
+  const handleSendPreviewMessage = async (customQuery?: string) => {
+    const query = (customQuery || previewTestInput).trim();
+    if (!query) return;
+
+    const userMsg = {
+      id: `usr-${Date.now()}`,
+      sender: "user" as const,
+      text: query,
+      time: "Just now",
+    };
+    setPreviewTestMessages((prev) => [...prev, userMsg]);
+    if (!customQuery) setPreviewTestInput("");
+    setIsPreviewTyping(true);
+
+    try {
+      const res = await fetch("/api/dashboard/knowledge/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      const data = await res.json();
+      const replyText =
+        data.result?.answer ||
+        data.answer ||
+        "I can certainly help you with that! Please let me know your preferred day and contact details.";
+
+      setPreviewTestMessages((prev) => [
+        ...prev,
+        { id: `agent-${Date.now()}`, sender: "agent" as const, text: replyText, time: "Just now" },
+      ]);
+    } catch {
+      setPreviewTestMessages((prev) => [
+        ...prev,
+        {
+          id: `agent-${Date.now()}`,
+          sender: "agent" as const,
+          text: `Thank you for reaching out! Our team is available during operating hours.`,
+          time: "Just now",
+        },
+      ]);
+    } finally {
+      setIsPreviewTyping(false);
+    }
+  };
+
+  const commandPaletteItems = useMemo(() => {
+    const baseNav = [
+      {
+        id: "nav-overview",
+        category: "Navigation",
+        title: "Go to Overview",
+        subtitle: "Key metrics, active channels & deflection rates",
+        icon: "📊",
+        action: () => {
+          setActiveTab("overview");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "nav-agent",
+        category: "Navigation",
+        title: "Go to AI Receptionist Studio",
+        subtitle: "Customise persona, greetings, brand colors & widget preview",
+        icon: "🤖",
+        action: () => {
+          setActiveTab("agent");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "nav-knowledge",
+        category: "Navigation",
+        title: "Go to Knowledge Base",
+        subtitle: "Manage crawled URLs, PDF documents & FAQ training pairs",
+        icon: "📚",
+        action: () => {
+          setActiveTab("knowledge");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "nav-conversations",
+        category: "Navigation",
+        title: "Go to Conversations",
+        subtitle: "Live chat inbox, customer transcripts & staff takeover",
+        icon: "💬",
+        action: () => {
+          setActiveTab("conversations");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "nav-appointments",
+        category: "Navigation",
+        title: isEcom ? "Go to Orders & Tracking" : "Go to Appointments",
+        subtitle: isEcom ? "Live retail customer orders and delivery updates" : "Patient bookings, staff allocations & schedules",
+        icon: isEcom ? "📦" : "📅",
+        action: () => {
+          setActiveTab("appointments");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "nav-leads",
+        category: "Navigation",
+        title: "Go to Leads",
+        subtitle: "Captured visitor leads, phone numbers & inquiries",
+        icon: "🎯",
+        action: () => {
+          setActiveTab("leads");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "nav-analytics",
+        category: "Navigation",
+        title: "Go to Analytics",
+        subtitle: "7-day trends, volume breakdowns & export telemetry",
+        icon: "📈",
+        action: () => {
+          setActiveTab("analytics");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "nav-integrations",
+        category: "Navigation",
+        title: "Go to Integrations",
+        subtitle: "Webhook endpoints, delivery logs & clinical PMS sync",
+        icon: "🔌",
+        action: () => {
+          setActiveTab("integrations");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "nav-billing",
+        category: "Navigation",
+        title: "Go to Billing & Subscription",
+        subtitle: "Manage plan tiers, payment methods, invoices & credit balance",
+        icon: "💳",
+        action: () => {
+          setActiveTab("billing");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+    ];
+
+    const quickActions = [
+      {
+        id: "act-add-source",
+        category: "Quick Actions",
+        title: "+ Index Website URL or PDF Document",
+        subtitle: "Add new knowledge for your AI to study",
+        icon: "🌐",
+        action: () => {
+          setActiveTab("knowledge");
+          setShowAddSource(true);
+          setShowAddFaq(false);
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "act-add-faq",
+        category: "Quick Actions",
+        title: "+ Add Custom Q&A Pair",
+        subtitle: "Teach your receptionist verified answers directly",
+        icon: "❓",
+        action: () => {
+          setActiveTab("knowledge");
+          setShowAddFaq(true);
+          setShowAddSource(false);
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "act-copy-embed",
+        category: "Quick Actions",
+        title: "Copy Web Chat Widget Embed Script",
+        subtitle: "Embed the interactive receptionist on any website",
+        icon: "📋",
+        action: () => {
+          handleCopyEmbed();
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "act-copy-orgid",
+        category: "Quick Actions",
+        title: "Copy Organization ID",
+        subtitle: `Organization UUID: ${user.orgId}`,
+        icon: "🔑",
+        action: () => {
+          handleCopyOrgId();
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "act-export-csv",
+        category: "Quick Actions",
+        title: "Export Telemetry to CSV",
+        subtitle: "Download full conversation audit trail and metrics",
+        icon: "📥",
+        action: () => {
+          handleExportCsv();
+          setIsCommandPaletteOpen(false);
+        },
+      },
+    ];
+
+    const all = [...baseNav, ...quickActions];
+    if (!cmdSearch.trim()) return all;
+    const q = cmdSearch.toLowerCase().trim();
+    return all.filter(
+      (item) =>
+        item.title.toLowerCase().includes(q) ||
+        item.subtitle.toLowerCase().includes(q) ||
+        item.category.toLowerCase().includes(q)
+    );
+  }, [user.orgId, isEcom, cmdSearch]);
+
   async function handleUpdateBillingPreferences(
     nextCurrency: BillingCurrency,
     nextProvider: BillingProvider
@@ -1459,36 +1732,96 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
   }
 
-  const navItems = [
-    { id: "overview", icon: "▦", label: "Overview" },
-    { id: "agent", icon: "🤖", label: "AI Receptionist" },
+  const navItems: { id: string; icon: ReactNode; label: string; badge?: string }[] = [
+    {
+      id: "overview",
+      label: "Overview",
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+        </svg>
+      ),
+    },
+    {
+      id: "agent",
+      label: "AI Receptionist",
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+        </svg>
+      ),
+    },
     {
       id: "knowledge",
-      icon: "📚",
       label: "Knowledge Base",
       badge: pendingQuestionsCount > 0 ? `${pendingQuestionsCount}` : undefined,
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+        </svg>
+      ),
     },
     {
       id: "conversations",
-      icon: "💬",
       label: "Conversations",
       badge: conversations.length > 0 ? `${conversations.length}` : undefined,
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.27z" />
+        </svg>
+      ),
     },
     {
       id: "appointments",
-      icon: isEcom ? "📦" : "📅",
       label: isEcom ? "Orders & Tracking" : "Appointments",
       badge: appointments.length > 0 ? `${appointments.length}` : undefined,
+      icon: isEcom ? (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
+        </svg>
+      ) : (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+        </svg>
+      ),
     },
     {
       id: "leads",
-      icon: "🎯",
       label: "Leads",
       badge: leads.length > 0 ? `${leads.length}` : undefined,
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+        </svg>
+      ),
     },
-    { id: "analytics", icon: "📈", label: "Analytics" },
-    { id: "integrations", icon: "🔌", label: "Integrations" },
-    { id: "billing", icon: "💳", label: "Billing" },
+    {
+      id: "analytics",
+      label: "Analytics",
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+        </svg>
+      ),
+    },
+    {
+      id: "integrations",
+      label: "Integrations",
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.25 9.75L16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z" />
+        </svg>
+      ),
+    },
+    {
+      id: "billing",
+      label: "Billing",
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
+        </svg>
+      ),
+    },
   ];
 
   return (
@@ -1537,31 +1870,46 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         </div>
 
         {/* 2. Scrollable Middle Navigation List */}
-        <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-2 space-y-0.5 text-xs custom-scrollbar">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => {
-                setActiveTab(item.id);
-                setIsMobileMenuOpen(false);
-              }}
-              className={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left font-semibold transition ${
-                activeTab === item.id
-                  ? "bg-indigo-50 text-indigo-700"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <span className="text-sm">{item.icon}</span>
-                <span>{item.label}</span>
-              </div>
-              {item.badge && (
-                <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
-                  {item.badge}
-                </span>
-              )}
-            </button>
-          ))}
+        <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-2 space-y-1 text-xs custom-scrollbar">
+          {navItems.map((item) => {
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-left font-semibold transition group cursor-pointer ${
+                  isActive
+                    ? "bg-indigo-50/90 text-indigo-700 font-bold border border-indigo-200/60 shadow-2xs"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span
+                    className={`shrink-0 transition ${
+                      isActive ? "text-indigo-600" : "text-slate-400 group-hover:text-slate-600"
+                    }`}
+                  >
+                    {item.icon}
+                  </span>
+                  <span className="truncate">{item.label}</span>
+                </div>
+                {item.badge && (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      isActive
+                        ? "bg-indigo-100 text-indigo-800"
+                        : "bg-amber-100 text-amber-700"
+                    }`}
+                  >
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
 
         {/* 3. Fixed Bottom Footer (Always Visible User Name & Log Out) */}
@@ -1713,12 +2061,25 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           <div className="flex items-center gap-3">
             <EchoLogo size={24} tile={true} tileSize="h-11 w-11" />
             <div>
-              <h1 className="text-2xl font-bold text-slate-900 capitalize">
-                {navItems.find((n) => n.id === activeTab)?.label}
-              </h1>
-              <div className="flex items-center gap-2 mt-0.5">
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold text-slate-900 capitalize">
+                  {navItems.find((n) => n.id === activeTab)?.label}
+                </h1>
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-semibold border border-slate-200 capitalize">
+                  {user.industry}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
                 <p className="text-xs text-slate-500">
-                  Workspace: <b className="text-slate-700">{user.orgName}</b> · ID: <code className="font-mono text-indigo-600">{user.orgId}</code>
+                  Workspace: <b className="text-slate-700">{user.orgName}</b> · ID:{" "}
+                  <button
+                    type="button"
+                    onClick={handleCopyOrgId}
+                    title="Click to copy Organization ID"
+                    className="font-mono text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 border border-indigo-200/50 px-1.5 py-0.5 rounded transition cursor-pointer text-[11px] font-semibold"
+                  >
+                    {copiedOrgId ? "✓ Copied!" : user.orgId}
+                  </button>
                 </p>
                 <span
                   title={
@@ -1763,15 +2124,32 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsCommandPaletteOpen(true);
+                setTimeout(() => cmdInputRef.current?.focus(), 50);
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:border-slate-300 text-slate-600 hover:text-slate-900 text-xs shadow-2xs transition cursor-pointer"
+              title="Search or jump to tab (⌘K)"
+            >
+              <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+              </svg>
+              <span>Quick Actions...</span>
+              <kbd className="hidden sm:inline-block px-1.5 py-0.2 rounded bg-slate-100 border border-slate-200 text-[10px] font-mono font-bold text-slate-500">
+                ⌘K
+              </kbd>
+            </button>
             <Link
               href="/"
-              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-300"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-300 shadow-2xs"
             >
               ← Marketing Site
             </Link>
             <button
               onClick={() => setActiveTab("agent")}
-              className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
+              className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-indigo-700 transition"
             >
               ⚙️ Agent Settings
             </button>
@@ -2030,56 +2408,268 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
             {/* Live Widget Preview */}
             <div className="lg:col-span-5">
-              <div className="sticky top-6">
-                <span className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-                  Live Agent Preview
-                </span>
-                <div className="rounded-2xl border border-slate-200 bg-white shadow-xl overflow-hidden text-xs">
-                  <div
-                    className="p-3 text-white flex items-center gap-2.5"
-                    style={{ backgroundColor: brandColor }}
-                  >
-                    <div className="h-8 w-8 rounded-xl bg-slate-950/80 border border-white/20 flex items-center justify-center p-1 shrink-0">
-                      <EchoLogo size={18} />
-                    </div>
-                    <div>
-                      <div className="font-bold leading-tight">{user.orgName}</div>
-                      <div className="text-[10px] opacity-80">{agentName} · AI Receptionist ({tone})</div>
-                    </div>
-                  </div>
-                  <div className="p-4 space-y-3 bg-slate-50 h-64 overflow-y-auto">
-                    <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-slate-200 bg-white p-3 text-slate-800 shadow-sm">
-                      {greeting}
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      <span
-                        className="rounded-full border px-2.5 py-1 text-[11px] font-semibold bg-white"
-                        style={{ borderColor: brandColor, color: brandColor }}
-                      >
-                        {isEcom ? "Track my order" : "Book appointment"}
-                      </span>
-                      <span
-                        className="rounded-full border px-2.5 py-1 text-[11px] font-semibold bg-white"
-                        style={{ borderColor: brandColor, color: brandColor }}
-                      >
-                        {isEcom ? "Returns & refunds" : "Pricing & hours"}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="p-3 bg-white border-t border-slate-200 flex gap-2">
-                    <input
-                      disabled
-                      placeholder="Type a message..."
-                      className="flex-1 bg-slate-100 rounded-lg px-2.5 py-1.5 text-xs text-slate-400"
-                    />
+              <div className="sticky top-6 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="block text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Live Agent Preview
+                  </span>
+                  {/* Device Switcher Pills */}
+                  <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-[11px] font-bold">
                     <button
-                      className="px-3 rounded-lg text-white font-bold"
-                      style={{ backgroundColor: brandColor }}
+                      type="button"
+                      onClick={() => setWidgetPreviewMode("desktop")}
+                      className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                        widgetPreviewMode === "desktop"
+                          ? "bg-white text-indigo-700 shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
                     >
-                      ➤
+                      💻 Desktop
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWidgetPreviewMode("mobile")}
+                      className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                        widgetPreviewMode === "mobile"
+                          ? "bg-white text-indigo-700 shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      📱 Mobile
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPreviewTestMessages([
+                          {
+                            id: `init-${Date.now()}`,
+                            sender: "agent",
+                            text: greeting || "Hello! How can I help you today?",
+                            time: "Just now",
+                          },
+                        ])
+                      }
+                      title="Reset test conversation"
+                      className="px-2 py-1 text-slate-400 hover:text-slate-700 transition cursor-pointer"
+                    >
+                      ↺
                     </button>
                   </div>
                 </div>
+
+                {/* Device View Wrapper */}
+                {widgetPreviewMode === "mobile" ? (
+                  /* Mobile iPhone Viewport Frame */
+                  <div className="w-[310px] sm:w-[325px] mx-auto rounded-[38px] border-[8px] border-slate-900 bg-slate-900 shadow-2xl overflow-hidden text-xs">
+                    {/* Dynamic Island */}
+                    <div className="pt-2 pb-1 bg-slate-900 flex justify-center">
+                      <div className="h-3.5 w-20 bg-black rounded-full" />
+                    </div>
+                    {/* Simulated Mobile Status Bar */}
+                    <div className="px-5 py-1 bg-white flex items-center justify-between text-[10px] font-bold text-slate-700 border-b border-slate-100">
+                      <span>9:41</span>
+                      <div className="flex items-center gap-1.5 text-[9px] text-slate-500 font-semibold">
+                        <span>5G</span>
+                        <span>100%</span>
+                      </div>
+                    </div>
+
+                    {/* Widget Content inside Mobile Frame */}
+                    <div className="bg-white flex flex-col h-[400px]">
+                      {/* Header */}
+                      <div
+                        className="p-3 text-white flex items-center gap-2.5 transition-colors shrink-0"
+                        style={{ backgroundColor: brandColor }}
+                      >
+                        <div className="h-7 w-7 rounded-xl bg-slate-950/80 border border-white/20 flex items-center justify-center p-1 shrink-0">
+                          <EchoLogo size={16} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold leading-tight truncate">{user.orgName}</div>
+                          <div className="text-[10px] opacity-80 truncate">
+                            {agentName} · AI Receptionist ({tone})
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Chat Messages */}
+                      <div className="p-3 space-y-2 bg-slate-50 flex-1 overflow-y-auto custom-scrollbar">
+                        {previewTestMessages.map((m) => (
+                          <div
+                            key={m.id}
+                            className={`flex ${m.sender === "user" ? "justify-end" : "justify-start"}`}
+                          >
+                            <div
+                              className={`max-w-[85%] rounded-2xl p-2.5 text-xs shadow-2xs leading-relaxed ${
+                                m.sender === "user"
+                                  ? "rounded-br-xs text-white"
+                                  : "rounded-bl-xs border border-slate-200 bg-white text-slate-800"
+                              }`}
+                              style={m.sender === "user" ? { backgroundColor: brandColor } : undefined}
+                            >
+                              {m.text}
+                            </div>
+                          </div>
+                        ))}
+
+                        {isPreviewTyping && (
+                          <div className="flex justify-start">
+                            <div className="rounded-2xl rounded-bl-xs border border-slate-200 bg-white p-2 text-slate-400 flex items-center gap-1 text-xs">
+                              <span className="animate-bounce">●</span>
+                              <span className="animate-bounce [animation-delay:0.2s]">●</span>
+                              <span className="animate-bounce [animation-delay:0.4s]">●</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Quick Chips */}
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleSendPreviewMessage(isEcom ? "Track my order" : "Book appointment")}
+                            className="rounded-full border px-2.5 py-0.5 text-[10px] font-semibold bg-white hover:bg-slate-50 transition cursor-pointer"
+                            style={{ borderColor: brandColor, color: brandColor }}
+                          >
+                            {isEcom ? "Track my order" : "Book appointment"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSendPreviewMessage(isEcom ? "Returns & refunds" : "Pricing & hours")}
+                            className="rounded-full border px-2.5 py-0.5 text-[10px] font-semibold bg-white hover:bg-slate-50 transition cursor-pointer"
+                            style={{ borderColor: brandColor, color: brandColor }}
+                          >
+                            {isEcom ? "Returns & refunds" : "Pricing & hours"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Input Box */}
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleSendPreviewMessage();
+                        }}
+                        className="p-2 bg-white border-t border-slate-200 flex gap-1.5 shrink-0"
+                      >
+                        <input
+                          type="text"
+                          value={previewTestInput}
+                          onChange={(e) => setPreviewTestInput(e.target.value)}
+                          placeholder="Ask a question..."
+                          className="flex-1 bg-slate-100 rounded-xl px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!previewTestInput.trim() || isPreviewTyping}
+                          className="px-2.5 rounded-xl text-white font-bold text-xs disabled:opacity-50 transition cursor-pointer"
+                          style={{ backgroundColor: brandColor }}
+                        >
+                          ➤
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                ) : (
+                  /* Desktop Floating Widget Frame */
+                  <div className="rounded-2xl border border-slate-200 bg-white shadow-xl overflow-hidden text-xs">
+                    {/* Header */}
+                    <div
+                      className="p-3.5 text-white flex items-center justify-between gap-2.5 transition-colors"
+                      style={{ backgroundColor: brandColor }}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="h-8 w-8 rounded-xl bg-slate-950/80 border border-white/20 flex items-center justify-center p-1 shrink-0">
+                          <EchoLogo size={18} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold leading-tight truncate">{user.orgName}</div>
+                          <div className="text-[10px] opacity-80 truncate">
+                            {agentName} · AI Receptionist ({tone})
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">
+                        Interactive Sandbox
+                      </span>
+                    </div>
+
+                    {/* Chat Messages */}
+                    <div className="p-4 space-y-3 bg-slate-50 h-64 overflow-y-auto custom-scrollbar">
+                      {previewTestMessages.map((m) => (
+                        <div
+                          key={m.id}
+                          className={`flex ${m.sender === "user" ? "justify-end" : "justify-start"}`}
+                        >
+                          <div
+                            className={`max-w-[85%] rounded-2xl p-2.5 text-xs shadow-2xs leading-relaxed ${
+                              m.sender === "user"
+                                ? "rounded-br-xs text-white"
+                                : "rounded-bl-xs border border-slate-200 bg-white text-slate-800"
+                            }`}
+                            style={m.sender === "user" ? { backgroundColor: brandColor } : undefined}
+                          >
+                            {m.text}
+                          </div>
+                        </div>
+                      ))}
+
+                      {isPreviewTyping && (
+                        <div className="flex justify-start">
+                          <div className="rounded-2xl rounded-bl-xs border border-slate-200 bg-white p-2.5 text-slate-400 flex items-center gap-1.5 text-xs">
+                            <span className="animate-bounce">●</span>
+                            <span className="animate-bounce [animation-delay:0.2s]">●</span>
+                            <span className="animate-bounce [animation-delay:0.4s]">●</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Quick Chips */}
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleSendPreviewMessage(isEcom ? "Track my order" : "Book appointment")}
+                          className="rounded-full border px-2.5 py-1 text-[11px] font-semibold bg-white hover:bg-slate-50 transition cursor-pointer"
+                          style={{ borderColor: brandColor, color: brandColor }}
+                        >
+                          {isEcom ? "Track my order" : "Book appointment"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSendPreviewMessage(isEcom ? "Returns & refunds" : "Pricing & hours")}
+                          className="rounded-full border px-2.5 py-1 text-[11px] font-semibold bg-white hover:bg-slate-50 transition cursor-pointer"
+                          style={{ borderColor: brandColor, color: brandColor }}
+                        >
+                          {isEcom ? "Returns & refunds" : "Pricing & hours"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Interactive Input Form */}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSendPreviewMessage();
+                      }}
+                      className="p-3 bg-white border-t border-slate-200 flex gap-2"
+                    >
+                      <input
+                        type="text"
+                        value={previewTestInput}
+                        onChange={(e) => setPreviewTestInput(e.target.value)}
+                        placeholder="Ask your receptionist a question..."
+                        className="flex-1 bg-slate-100 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!previewTestInput.trim() || isPreviewTyping}
+                        className="px-3.5 rounded-xl text-white font-bold text-xs disabled:opacity-50 transition cursor-pointer"
+                        style={{ backgroundColor: brandColor }}
+                      >
+                        ➤
+                      </button>
+                    </form>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -5222,6 +5812,83 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 >
                   Close
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Command Palette Modal (⌘K / Ctrl+K) */}
+        {isCommandPaletteOpen && (
+          <div
+            onClick={() => setIsCommandPaletteOpen(false)}
+            className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center pt-20 px-4 animate-in fade-in duration-150"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="max-w-xl w-full bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden text-slate-900 animate-in zoom-in-95 duration-150"
+            >
+              <div className="p-3.5 border-b border-slate-100 flex items-center gap-3">
+                <svg className="w-5 h-5 text-indigo-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                </svg>
+                <input
+                  ref={cmdInputRef}
+                  type="text"
+                  value={cmdSearch}
+                  onChange={(e) => setCmdSearch(e.target.value)}
+                  placeholder="Type a command or search tabs (e.g. 'billing', 'faq', 'leads')..."
+                  className="w-full bg-transparent outline-none text-sm font-medium text-slate-900 placeholder:text-slate-400"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsCommandPaletteOpen(false)}
+                  className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-[10px] font-mono text-slate-500 font-bold hover:bg-slate-200 transition cursor-pointer"
+                >
+                  ESC
+                </button>
+              </div>
+
+              <div className="max-h-[380px] overflow-y-auto p-2 space-y-1 custom-scrollbar">
+                {commandPaletteItems.length === 0 ? (
+                  <div className="py-8 text-center text-slate-400 text-xs font-medium">
+                    No matching commands or actions found for &quot;{cmdSearch}&quot;
+                  </div>
+                ) : (
+                  commandPaletteItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={item.action}
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-indigo-50/70 hover:text-indigo-900 text-left transition group cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-base shrink-0 p-1.5 rounded-lg bg-slate-100 group-hover:bg-indigo-100/70 transition">
+                          {item.icon}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-slate-900 group-hover:text-indigo-700 truncate">
+                            {item.title}
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate">
+                            {item.subtitle}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-semibold text-slate-400 group-hover:text-indigo-600 shrink-0 ml-2">
+                        {item.category} →
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              <div className="px-3.5 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                <div className="flex items-center gap-3">
+                  <span><b>↑↓</b> to navigate</span>
+                  <span><b>↵</b> to select</span>
+                </div>
+                <span>Command Palette · <b>Echo.ai</b></span>
               </div>
             </div>
           </div>

@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
     const seatLimits: Record<string, number> = {
       starter: 1,
       growth: 3,
+      scale: 10,
       pro: 10,
     };
     const seatLimit = seatLimits[plan] || 3;
@@ -76,6 +77,7 @@ export async function POST(req: NextRequest) {
     const seatLimits: Record<string, number> = {
       starter: 1,
       growth: 3,
+      scale: 10,
       pro: 10,
     };
     const seatLimit = seatLimits[plan] || 3;

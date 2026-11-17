@@ -122,6 +122,44 @@ function playNotificationChime() {
   } catch {}
 }
 
+export const PLAN_CATALOG: Array<{
+  id: "starter" | "growth" | "scale";
+  name: string;
+  tagline: string;
+  baseMonthly: number;
+  convLimit: number;
+  seatsLimit: number;
+  features: string[];
+}> = [
+  {
+    id: "starter",
+    name: "Starter",
+    tagline: "Solo practitioners & single-site front desks",
+    baseMonthly: 49,
+    convLimit: 500,
+    seatsLimit: 1,
+    features: ["500 AI conversations / mo", "1 Staff seat", "Website embed widget", "Email & live inbox handover"],
+  },
+  {
+    id: "growth",
+    name: "Growth",
+    tagline: "Multi-practitioner clinics & high-volume reception",
+    baseMonthly: 99,
+    convLimit: 2000,
+    seatsLimit: 3,
+    features: ["2,000 AI conversations / mo", "3 Staff seats", "Cliniko & Shopify 2-way sync", "Self-learning Q&A approval queue"],
+  },
+  {
+    id: "scale",
+    name: "Scale",
+    tagline: "Multi-location clinic groups & enterprise SLAs",
+    baseMonthly: 249,
+    convLimit: 10000,
+    seatsLimit: 10,
+    features: ["10,000 AI conversations / mo", "10 Staff seats", "Priority SLA & custom webhooks", "Dedicated multi-site analytics"],
+  },
+];
+
 export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<string>("overview");
@@ -274,8 +312,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     created_at: string;
   }
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
-  const [teamPlan, setTeamPlan] = useState("growth");
-  const [seatLimit, setSeatLimit] = useState(3);
   const [isLoadingTeam, setIsLoadingTeam] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [inviteName, setInviteName] = useState("");
@@ -308,6 +344,14 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       invoices: [],
     }
   );
+
+  const currentPlanId = (billingState.plan as "starter" | "growth" | "scale") || "growth";
+  const activePlanMeta = useMemo(() => {
+    return PLAN_CATALOG.find((p) => p.id === currentPlanId) || PLAN_CATALOG[1];
+  }, [currentPlanId]);
+
+  const seatLimit = activePlanMeta.seatsLimit;
+  const teamPlan = activePlanMeta.name;
   const [selectedCycle, setSelectedCycle] = useState<"monthly" | "biannual" | "annual">(
     initialData.billing?.billingCycle || "monthly"
   );
@@ -938,8 +982,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       const data = await res.json();
       if (data.success) {
         setTeamMembers(data.data.team);
-        setTeamPlan(data.data.plan);
-        setSeatLimit(data.data.seatLimit);
       }
     } catch {}
     finally {
@@ -4936,43 +4978,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
         {/* ===================== TAB: BILLING ===================== */}
         {activeTab === "billing" && (() => {
-          const planCatalog: Array<{
-            id: "starter" | "growth" | "scale";
-            name: string;
-            tagline: string;
-            baseMonthly: number;
-            convLimit: number;
-            seatsLimit: number;
-            features: string[];
-          }> = [
-            {
-              id: "starter",
-              name: "Starter",
-              tagline: "Solo practitioners & single-site front desks",
-              baseMonthly: 49,
-              convLimit: 500,
-              seatsLimit: 1,
-              features: ["500 AI conversations / mo", "1 Staff seat", "Website embed widget", "Email & live inbox handover"],
-            },
-            {
-              id: "growth",
-              name: "Growth",
-              tagline: "Multi-practitioner clinics & high-volume reception",
-              baseMonthly: 99,
-              convLimit: 2000,
-              seatsLimit: 3,
-              features: ["2,000 AI conversations / mo", "3 Staff seats", "Cliniko & Shopify 2-way sync", "Self-learning Q&A approval queue"],
-            },
-            {
-              id: "scale",
-              name: "Scale",
-              tagline: "Multi-location clinic groups & enterprise SLAs",
-              baseMonthly: 249,
-              convLimit: 10000,
-              seatsLimit: 10,
-              features: ["10,000 AI conversations / mo", "10 Staff seats", "Priority SLA & custom webhooks", "Dedicated multi-site analytics"],
-            },
-          ];
+          const planCatalog = PLAN_CATALOG;
 
           const tierOrder: Record<"starter" | "growth" | "scale", number> = {
             starter: 1,
@@ -5109,16 +5115,16 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   <div>
                     <div className="flex justify-between text-slate-600 font-medium mb-1">
                       <span>Staff Team Seats</span>
-                      <b className="text-slate-900">1 / {activePlanMeta.seatsLimit} Seats</b>
+                      <b className="text-slate-900">{teamMembers.length} / {activePlanMeta.seatsLimit} Seats</b>
                     </div>
                     <div className="h-2 w-full rounded-full bg-indigo-100 overflow-hidden">
                       <div
                         className="h-full bg-indigo-600 rounded-full transition-all duration-300"
-                        style={{ width: `${Math.round((1 / activePlanMeta.seatsLimit) * 100)}%` }}
+                        style={{ width: `${Math.round((teamMembers.length / activePlanMeta.seatsLimit) * 100)}%` }}
                       />
                     </div>
                     <span className="text-[10px] text-slate-400 mt-1 block">
-                      {Math.max(0, activePlanMeta.seatsLimit - 1)} seats available
+                      {Math.max(0, activePlanMeta.seatsLimit - teamMembers.length)} seats available
                     </span>
                   </div>
 

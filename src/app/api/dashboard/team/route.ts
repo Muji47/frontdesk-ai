@@ -189,3 +189,78 @@ export async function DELETE(req: NextRequest) {
     return handleApiError(err);
   }
 }
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      throw new UnauthorizedError("You must be logged in to edit team members.");
+    }
+
+    const callerRow = db
+      .prepare("SELECT role FROM users WHERE id = ?")
+      .get(user.userId) as { role: string } | undefined;
+    if (callerRow?.role !== "owner" && callerRow?.role !== "admin") {
+      throw new ForbiddenError("Only organization owners or administrators can edit team members.");
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const targetId = typeof body.id === "string" ? body.id.trim() : "";
+    const newName = typeof body.name === "string" ? body.name.trim() : undefined;
+    const newRole = typeof body.role === "string" ? body.role.trim() : undefined;
+
+    if (!targetId) {
+      throw new ValidationError("Team member ID is required.");
+    }
+
+    const targetUser = db
+      .prepare("SELECT id, name, email, role, organization_id, created_at FROM users WHERE id = ? AND organization_id = ?")
+      .get(targetId, user.orgId) as {
+        id: string;
+        name: string;
+        email: string;
+        role: string;
+        organization_id: string;
+        created_at: string;
+      } | undefined;
+
+    if (!targetUser) {
+      throw new ValidationError("Team member not found in your organization.");
+    }
+
+    if (newName !== undefined) {
+      if (newName.length < 2) {
+        throw new ValidationError("Staff member name must be at least 2 characters.");
+      }
+      db.prepare("UPDATE users SET name = ? WHERE id = ?").run(newName, targetId);
+      targetUser.name = newName;
+    }
+
+    if (newRole !== undefined) {
+      const allowedRoles = ["admin", "receptionist", "viewer"];
+      if (!allowedRoles.includes(newRole)) {
+        throw new ValidationError("Invalid role. Allowed roles: Administrator, Receptionist, Viewer.");
+      }
+      if (targetUser.role === "owner") {
+        throw new ForbiddenError("The primary organization owner's role cannot be changed.");
+      }
+      db.prepare("UPDATE users SET role = ? WHERE id = ?").run(newRole, targetId);
+      targetUser.role = newRole;
+    }
+
+    return NextResponse.json({
+      success: true,
+      member: {
+        id: targetUser.id,
+        organizationId: targetUser.organization_id,
+        email: targetUser.email,
+        name: targetUser.name,
+        role: targetUser.role,
+        createdAt: targetUser.created_at,
+      },
+      message: "Team member updated successfully.",
+    });
+  } catch (err) {
+    return handleApiError(err);
+  }
+}

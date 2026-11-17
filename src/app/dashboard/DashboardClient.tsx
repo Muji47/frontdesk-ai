@@ -324,6 +324,24 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [sourceToDelete, setSourceToDelete] = useState<{ id: string; title: string } | null>(null);
   const [inviteErrors, setInviteErrors] = useState<{ name?: string; email?: string } | null>(null);
 
+  // User Profile & Account Settings State
+  const [currentUserState, setCurrentUserState] = useState(user);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileName, setProfileName] = useState(user.name || "");
+  const [profileCurrentPass, setProfileCurrentPass] = useState("");
+  const [profileNewPass, setProfileNewPass] = useState("");
+  const [profileConfirmPass, setProfileConfirmPass] = useState("");
+  const [profileErrors, setProfileErrors] = useState<{ name?: string; currentPass?: string; newPass?: string } | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
+
+  // Staff Member Details & Edit State
+  const [editingMember, setEditingMember] = useState<TeamMember | null>(null);
+  const [editMemberName, setEditMemberName] = useState("");
+  const [editMemberRole, setEditMemberRole] = useState("receptionist");
+  const [editMemberErrors, setEditMemberErrors] = useState<{ name?: string } | null>(null);
+  const [isSavingMemberEdit, setIsSavingMemberEdit] = useState(false);
+
   // Billing, Subscription Cycles, Payment Methods & Invoice Modal State
   const [billingState, setBillingState] = useState<DashboardBillingData>(
     initialData.billing || {
@@ -1066,6 +1084,164 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
   }
 
+  // User Profile & Settings Handlers
+  function openUserProfileModal() {
+    setProfileName(currentUserState.name || "");
+    setProfileCurrentPass("");
+    setProfileNewPass("");
+    setProfileConfirmPass("");
+    setProfileErrors(null);
+    setProfileSuccessMsg(null);
+    setIsProfileModalOpen(true);
+  }
+
+  async function handleUpdateProfile(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (isSavingProfile) return;
+    setProfileErrors(null);
+    setProfileSuccessMsg(null);
+
+    const name = profileName.trim();
+    const errors: { name?: string; currentPass?: string; newPass?: string } = {};
+
+    if (!name) {
+      errors.name = "Full name is required.";
+    } else if (name.length < 2) {
+      errors.name = "Full name must be at least 2 characters.";
+    }
+
+    if (profileNewPass) {
+      if (!profileCurrentPass) {
+        errors.currentPass = "Current password is required to change password.";
+      }
+      if (profileNewPass.length < 8) {
+        errors.newPass = "New password must be at least 8 characters.";
+      } else if (profileNewPass !== profileConfirmPass) {
+        errors.newPass = "Passwords do not match.";
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setProfileErrors(errors);
+      return;
+    }
+
+    setIsSavingProfile(true);
+    try {
+      const res = await fetch("/api/auth/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          currentPassword: profileCurrentPass || undefined,
+          newPassword: profileNewPass || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const errMsg = data.error?.message || data.error || "Failed to update profile";
+        if (errMsg.toLowerCase().includes("current password")) {
+          setProfileErrors({ currentPass: errMsg });
+        } else if (errMsg.toLowerCase().includes("name")) {
+          setProfileErrors({ name: errMsg });
+        } else if (errMsg.toLowerCase().includes("new password")) {
+          setProfileErrors({ newPass: errMsg });
+        } else {
+          showToast({ type: "error", title: "Update Failed", message: errMsg });
+        }
+        return;
+      }
+
+      const updatedName = data.data.user.name;
+      setCurrentUserState((prev) => ({ ...prev, name: updatedName }));
+      setTeamMembers((prev) =>
+        prev.map((m) =>
+          m.id === user.userId || m.email.toLowerCase() === user.email.toLowerCase()
+            ? { ...m, name: updatedName }
+            : m
+        )
+      );
+      setProfileCurrentPass("");
+      setProfileNewPass("");
+      setProfileConfirmPass("");
+      setProfileSuccessMsg("Profile details saved successfully.");
+      showToast({ type: "success", title: "Profile Updated", message: "Your account details have been saved." });
+      setTimeout(() => setIsProfileModalOpen(false), 900);
+    } catch (err: any) {
+      showToast({ type: "error", title: "Update Failed", message: err.message || "Failed to update profile." });
+    } finally {
+      setIsSavingProfile(false);
+    }
+  }
+
+  // Staff Member Details & Edit Handlers
+  function openEditMemberModal(member: TeamMember) {
+    setEditingMember(member);
+    setEditMemberName(member.name);
+    setEditMemberRole(member.role);
+    setEditMemberErrors(null);
+  }
+
+  async function handleSaveMemberEdit(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!editingMember || isSavingMemberEdit) return;
+    setEditMemberErrors(null);
+
+    const name = editMemberName.trim();
+    if (!name) {
+      setEditMemberErrors({ name: "Staff member name is required." });
+      return;
+    }
+    if (name.length < 2) {
+      setEditMemberErrors({ name: "Staff name must be at least 2 characters." });
+      return;
+    }
+
+    setIsSavingMemberEdit(true);
+    try {
+      const res = await fetch("/api/dashboard/team", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingMember.id,
+          name,
+          role: editMemberRole,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const errMsg = data.error?.message || data.error || "Failed to update staff member";
+        if (errMsg.toLowerCase().includes("name")) {
+          setEditMemberErrors({ name: errMsg });
+        } else {
+          showToast({ type: "error", title: "Update Failed", message: errMsg });
+        }
+        return;
+      }
+
+      setTeamMembers((prev) =>
+        prev.map((m) =>
+          m.id === editingMember.id
+            ? { ...m, name: data.member.name, role: data.member.role }
+            : m
+        )
+      );
+      if (editingMember.id === user.userId) {
+        setCurrentUserState((prev) => ({ ...prev, name: data.member.name, role: data.member.role }));
+      }
+      showToast({
+        type: "success",
+        title: "Staff Member Updated",
+        message: `Changes saved for ${data.member.name}.`,
+      });
+      setEditingMember(null);
+    } catch (err: any) {
+      showToast({ type: "error", title: "Update Failed", message: err.message || "Failed to save changes." });
+    } finally {
+      setIsSavingMemberEdit(false);
+    }
+  }
+
   // Staff Canned Response Macros
   const cannedMacros = useMemo(() => {
     if (user.industry === "ecommerce") {
@@ -1614,6 +1790,17 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           setActiveTab("knowledge");
           setShowAddFaq(true);
           setShowAddSource(false);
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "act-profile",
+        category: "Account Settings",
+        title: "My User Profile & Credentials",
+        subtitle: `View account details, update display name (${currentUserState.name}) & change password`,
+        icon: "👤",
+        action: () => {
+          openUserProfileModal();
           setIsCommandPaletteOpen(false);
         },
       },
@@ -2175,10 +2362,15 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         {/* 3. Fixed Bottom Footer (Always Visible User Name & Log Out) */}
         <div className="shrink-0 mt-auto p-3 border-t border-slate-200 bg-slate-50/90">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-[11px] font-bold text-white shadow-xs">
-                {user.name
-                  ? user.name
+            <button
+              type="button"
+              onClick={openUserProfileModal}
+              title="Click to view & edit your user account profile"
+              className="flex items-center gap-2.5 min-w-0 flex-1 text-left p-1 rounded-xl hover:bg-slate-200/60 transition group cursor-pointer"
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-[11px] font-bold text-white shadow-xs group-hover:ring-2 group-hover:ring-indigo-500/50 transition">
+                {currentUserState.name
+                  ? currentUserState.name
                       .split(" ")
                       .map((n) => n[0])
                       .join("")
@@ -2187,14 +2379,15 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   : "U"}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-xs font-bold text-slate-900 truncate" title={user.name}>
-                  {user.name}
+                <div className="text-xs font-bold text-slate-900 truncate flex items-center gap-1">
+                  <span className="truncate">{currentUserState.name}</span>
+                  <span className="text-[10px] text-slate-400 opacity-60 group-hover:opacity-100 transition">✏️</span>
                 </div>
-                <div className="text-[11px] text-slate-500 truncate" title={user.email}>
-                  {user.email}
+                <div className="text-[11px] text-slate-500 truncate" title={currentUserState.email}>
+                  {currentUserState.email}
                 </div>
               </div>
-            </div>
+            </button>
             <button
               onClick={handleLogout}
               title="Log out"
@@ -2412,6 +2605,18 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-indigo-700 transition"
             >
               ⚙️ Agent Settings
+            </button>
+            <button
+              type="button"
+              onClick={openUserProfileModal}
+              title="My User Account Profile & Settings"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-300 shadow-2xs transition cursor-pointer"
+            >
+              <span className="h-5 w-5 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-bold text-[10px] flex items-center justify-center">
+                {currentUserState.name?.[0]?.toUpperCase() || "U"}
+              </span>
+              <span className="max-w-[100px] truncate">{currentUserState.name}</span>
+              <span className="text-[10px] text-slate-400">✏️</span>
             </button>
           </div>
         </div>
@@ -4906,20 +5111,25 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           .slice(0, 2);
 
                         return (
-                          <tr key={member.id} className="hover:bg-slate-50/70 transition">
-                            <td className="py-3.5 px-4">
+                          <tr key={member.id} className="hover:bg-slate-50/70 transition group">
+                            <td
+                              onClick={() => (isSelf ? openUserProfileModal() : openEditMemberModal(member))}
+                              className="py-3.5 px-4 cursor-pointer"
+                              title="Click to view details and edit"
+                            >
                               <div className="flex items-center gap-3">
-                                <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                                <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs group-hover:ring-2 group-hover:ring-indigo-500/40 transition">
                                   {initials || "U"}
                                 </div>
                                 <div>
                                   <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                                    <span>{member.name}</span>
+                                    <span className="hover:text-indigo-600 transition">{member.name}</span>
                                     {isSelf && (
                                       <span className="rounded bg-indigo-50 text-indigo-700 px-1.5 py-0.2 text-[9px] font-bold">
                                         You
                                       </span>
                                     )}
+                                    <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition">✏️</span>
                                   </div>
                                   <span className="text-[11px] text-slate-400 font-mono">{member.email}</span>
                                 </div>
@@ -4954,17 +5164,39 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                               {member.created_at ? new Date(member.created_at).toLocaleDateString() : "Active"}
                             </td>
                             <td className="py-3.5 px-4 text-right">
-                              {isOwner ? (
-                                <span className="text-[10px] text-slate-400 font-semibold">Primary</span>
-                              ) : isSelf ? (
-                                <span className="text-[10px] text-slate-400 font-semibold">—</span>
-                              ) : (
+                              {isSelf ? (
                                 <button
-                                  onClick={() => setMemberToRemove(member)}
-                                  className="text-rose-600 hover:text-rose-800 font-semibold text-[11px] transition cursor-pointer hover:underline"
+                                  type="button"
+                                  onClick={openUserProfileModal}
+                                  className="text-indigo-600 hover:text-indigo-800 font-semibold text-[11px] transition cursor-pointer hover:underline inline-flex items-center gap-1"
+                                  title="View & edit your user account profile"
                                 >
-                                  Remove
+                                  <span>✏️ Edit Profile</span>
                                 </button>
+                              ) : (
+                                <div className="flex items-center justify-end gap-2.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditMemberModal(member)}
+                                    className="text-indigo-600 hover:text-indigo-800 font-semibold text-[11px] transition cursor-pointer hover:underline inline-flex items-center gap-1"
+                                    title="View details & edit staff permissions"
+                                  >
+                                    <span>✏️</span>
+                                    <span>Edit</span>
+                                  </button>
+                                  {!isOwner && (
+                                    <>
+                                      <span className="text-slate-200">|</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setMemberToRemove(member)}
+                                        className="text-rose-600 hover:text-rose-800 font-semibold text-[11px] transition cursor-pointer hover:underline"
+                                      >
+                                        Remove
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -6639,6 +6871,353 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* 8. User Account Profile & Settings Modal */}
+        {isProfileModalOpen && (
+          <div
+            onClick={() => !isSavingProfile && setIsProfileModalOpen(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-5 animate-in zoom-in-95 duration-150 text-slate-900 max-h-[90vh] overflow-y-auto custom-scrollbar"
+            >
+              {/* Modal Header */}
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-xs">
+                    {currentUserState.name
+                      ? currentUserState.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
+                      : "U"}
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                      <span>User Account Profile & Settings</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      View your user account information, organization tier, and edit credentials.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsProfileModalOpen(false)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Organization & Account Badges Card */}
+              <div className="grid grid-cols-2 gap-2.5 p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Work Email</span>
+                  <div className="font-mono text-slate-800 text-[11px] font-semibold mt-0.5 flex items-center gap-1 truncate">
+                    <span>{currentUserState.email}</span>
+                  </div>
+                  <span className="inline-block mt-1 text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
+                    ✓ Verified Primary
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Role & Authority</span>
+                  <div className="font-semibold text-slate-800 text-[11px] mt-0.5 capitalize flex items-center gap-1">
+                    <span>{currentUserState.role === "owner" ? "👑 Organization Owner" : currentUserState.role === "admin" ? "🛡️ Administrator" : currentUserState.role}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 block mt-1 truncate">Full administrative control</span>
+                </div>
+                <div className="pt-2 border-t border-slate-200/60">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Workspace</span>
+                  <span className="font-bold text-slate-800 text-[11px] block mt-0.5 truncate">{currentUserState.orgName}</span>
+                  <span className="font-mono text-[10px] text-slate-400 block truncate">{currentUserState.orgId}</span>
+                </div>
+                <div className="pt-2 border-t border-slate-200/60">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Plan & Sector</span>
+                  <span className="font-bold text-indigo-700 text-[11px] block mt-0.5 capitalize">{billingState.plan} Tier</span>
+                  <span className="text-[10px] text-slate-500 block capitalize">{currentUserState.industry} Front Desk</span>
+                </div>
+              </div>
+
+              {profileSuccessMsg && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center gap-2">
+                  <span>✅</span>
+                  <span>{profileSuccessMsg}</span>
+                </div>
+              )}
+
+              {/* Edit Form */}
+              <form onSubmit={handleUpdateProfile} noValidate className="space-y-4">
+                {/* Full Name Field */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700">Display Full Name</label>
+                    {profileErrors?.name && (
+                      <span className="text-[11px] font-semibold text-rose-500">{profileErrors.name}</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={profileName}
+                    onChange={(e) => {
+                      setProfileName(e.target.value);
+                      if (profileErrors?.name) setProfileErrors((prev) => (prev ? { ...prev, name: undefined } : null));
+                    }}
+                    placeholder="e.g. Dr. Sarah Lee"
+                    className={`w-full rounded-xl border px-3 py-2 text-xs outline-none transition ${
+                      profileErrors?.name
+                        ? "border-rose-400 bg-rose-50/20 text-slate-900 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                        : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                    }`}
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    This name is shown across your team directory, activity audit logs, and live staff takeover replies.
+                  </p>
+                </div>
+
+                {/* Password Change Card */}
+                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3">
+                  <b className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <span>🔒 Change Password</span>
+                    <span className="text-[10px] font-normal text-slate-500">(Optional — leave blank to keep current)</span>
+                  </b>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-600">Current Password</label>
+                    <input
+                      type="password"
+                      value={profileCurrentPass}
+                      onChange={(e) => {
+                        setProfileCurrentPass(e.target.value);
+                        if (profileErrors?.currentPass) setProfileErrors((prev) => (prev ? { ...prev, currentPass: undefined } : null));
+                      }}
+                      placeholder="••••••••"
+                      className={`w-full rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none transition ${
+                        profileErrors?.currentPass
+                          ? "border-rose-400 bg-rose-50/20 focus:border-rose-500"
+                          : "border-slate-200 focus:border-indigo-600"
+                      }`}
+                    />
+                    {profileErrors?.currentPass && (
+                      <p className="text-[11px] text-rose-600 font-medium">⚠️ {profileErrors.currentPass}</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-600">New Password</label>
+                      <input
+                        type="password"
+                        value={profileNewPass}
+                        onChange={(e) => {
+                          setProfileNewPass(e.target.value);
+                          if (profileErrors?.newPass) setProfileErrors((prev) => (prev ? { ...prev, newPass: undefined } : null));
+                        }}
+                        placeholder="Min 8 characters"
+                        className={`w-full rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none transition ${
+                          profileErrors?.newPass
+                            ? "border-rose-400 bg-rose-50/20 focus:border-rose-500"
+                            : "border-slate-200 focus:border-indigo-600"
+                        }`}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-600">Confirm Password</label>
+                      <input
+                        type="password"
+                        value={profileConfirmPass}
+                        onChange={(e) => {
+                          setProfileConfirmPass(e.target.value);
+                          if (profileErrors?.newPass) setProfileErrors((prev) => (prev ? { ...prev, newPass: undefined } : null));
+                        }}
+                        placeholder="Repeat new password"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-indigo-600"
+                      />
+                    </div>
+                  </div>
+                  {profileErrors?.newPass && (
+                    <p className="text-[11px] text-rose-600 font-medium">⚠️ {profileErrors.newPass}</p>
+                  )}
+                </div>
+
+                {/* Modal Footer Actions */}
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsProfileModalOpen(false)}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 transition text-xs cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingProfile}
+                    className="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {isSavingProfile ? (
+                      <>
+                        <svg className="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                        </svg>
+                        <span>Saving...</span>
+                      </>
+                    ) : (
+                      <span>Save Profile Changes</span>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* 9. Staff Member Details & Role Modal */}
+        {editingMember && (
+          <div
+            onClick={() => !isSavingMemberEdit && setEditingMember(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4 animate-in zoom-in-95 duration-150 text-slate-900"
+            >
+              {/* Header */}
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-xs">
+                    {editingMember.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "U"}
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                      <span>Staff Member Details</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      View staff account details and modify role permissions.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingMember(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Read-only Member Information */}
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Email Address:</span>
+                  <span className="font-mono text-slate-800 font-semibold">{editingMember.email}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Account Status:</span>
+                  <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold text-[11px]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    Active Member
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Member Since:</span>
+                  <span className="text-slate-700 font-medium text-[11px]">
+                    {editingMember.created_at ? new Date(editingMember.created_at).toLocaleDateString() : "Active"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Edit Form */}
+              <form onSubmit={handleSaveMemberEdit} noValidate className="space-y-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700">Staff Full Name</label>
+                    {editMemberErrors?.name && (
+                      <span className="text-[11px] font-semibold text-rose-500">{editMemberErrors.name}</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={editMemberName}
+                    onChange={(e) => {
+                      setEditMemberName(e.target.value);
+                      if (editMemberErrors?.name) setEditMemberErrors(null);
+                    }}
+                    placeholder="e.g. Rachel Adams"
+                    className={`w-full rounded-xl border px-3 py-2 text-xs outline-none transition ${
+                      editMemberErrors?.name
+                        ? "border-rose-400 bg-rose-50/20 text-slate-900 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                        : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                    }`}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">Role & Access Level</label>
+                  {editingMember.role === "owner" ? (
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold flex items-center gap-2">
+                      <span>👑</span>
+                      <span>Primary Organization Owner (cannot be modified)</span>
+                    </div>
+                  ) : (
+                    <>
+                      <select
+                        value={editMemberRole}
+                        onChange={(e) => setEditMemberRole(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 bg-white"
+                      >
+                        <option value="receptionist">Receptionist (Live Inbox, Takeover Chat & Bookings)</option>
+                        <option value="admin">Administrator (Full Config, AI Setup, Knowledge & Team)</option>
+                        <option value="viewer">Viewer (Read-only Conversations, Logs & Analytics)</option>
+                      </select>
+                      <p className="text-[11px] text-slate-500">
+                        {editMemberRole === "admin"
+                          ? "🛡️ Administrators have full access to edit prompts, upload knowledge documents, and manage team members."
+                          : editMemberRole === "receptionist"
+                          ? "💬 Receptionists can triage the live chat inbox, take over conversations, and manage bookings."
+                          : "👁️ Viewers have read-only access to conversation transcripts, leads, and analytics."}
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                {/* Footer Actions */}
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  {editingMember.role !== "owner" && editingMember.id !== user.userId ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = editingMember;
+                        setEditingMember(null);
+                        setMemberToRemove(target);
+                      }}
+                      className="text-rose-600 hover:text-rose-800 text-xs font-semibold transition cursor-pointer hover:underline"
+                    >
+                      Remove Member
+                    </button>
+                  ) : (
+                    <div />
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingMember(null)}
+                      className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-semibold text-slate-700 hover:bg-slate-50 transition text-xs cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingMemberEdit}
+                      className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {isSavingMemberEdit ? "Saving..." : "Save Changes"}
+                    </button>
+                  </div>
+                </div>
+              </form>
             </div>
           </div>
         )}

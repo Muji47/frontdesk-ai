@@ -260,6 +260,30 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   ]);
   const [isPreviewTyping, setIsPreviewTyping] = useState(false);
 
+  // Widget Installation Verifier State
+  const [verifyUrl, setVerifyUrl] = useState("");
+  const [isVerifyingUrl, setIsVerifyingUrl] = useState(false);
+  const [verificationResult, setVerificationResult] = useState<{ verified: boolean; message?: string; reason?: string } | null>(null);
+
+  // Team & Staff Management (RBAC) State
+  interface TeamMember {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    created_at: string;
+  }
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [teamPlan, setTeamPlan] = useState("growth");
+  const [seatLimit, setSeatLimit] = useState(3);
+  const [isLoadingTeam, setIsLoadingTeam] = useState(false);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteName, setInviteName] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("receptionist");
+  const [isSubmittingInvite, setIsSubmittingInvite] = useState(false);
+  const [inviteSuccess, setInviteSuccess] = useState<{ email: string; tempPass: string } | null>(null);
+
   // Billing, Subscription Cycles, Payment Methods & Invoice Modal State
   const [billingState, setBillingState] = useState<DashboardBillingData>(
     initialData.billing || {
@@ -873,6 +897,139 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
   }
 
+  // 1-Click Live Widget Installation Verifier Handler
+  async function handleVerifyInstallation() {
+    if (!verifyUrl.trim() || isVerifyingUrl) return;
+    setIsVerifyingUrl(true);
+    setVerificationResult(null);
+    try {
+      const res = await fetch("/api/dashboard/integrations/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ websiteUrl: verifyUrl.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setVerificationResult(data);
+        if (data.verified) {
+          showToast({ type: "success", title: "Installation Verified", message: "Echo.ai widget is active and communicating!" });
+        } else {
+          showToast({ type: "info", title: "Verification Incomplete", message: data.reason || "Script tag not detected." });
+        }
+      } else {
+        setVerificationResult({ verified: false, reason: data.error?.message || "Failed to verify website." });
+        showToast({ type: "error", title: "Verification Error", message: data.error?.message || "Verification failed." });
+      }
+    } catch (err: any) {
+      setVerificationResult({ verified: false, reason: err.message || "Network error while verifying." });
+    } finally {
+      setIsVerifyingUrl(false);
+    }
+  }
+
+  // Team Member Management API Handlers
+  const fetchTeamMembers = useCallback(async () => {
+    setIsLoadingTeam(true);
+    try {
+      const res = await fetch("/api/dashboard/team");
+      const data = await res.json();
+      if (data.success) {
+        setTeamMembers(data.data.team);
+        setTeamPlan(data.data.plan);
+        setSeatLimit(data.data.seatLimit);
+      }
+    } catch {}
+    finally {
+      setIsLoadingTeam(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTeamMembers();
+  }, [fetchTeamMembers]);
+
+  async function handleSendInvite() {
+    if (!inviteName.trim() || !inviteEmail.trim() || isSubmittingInvite) return;
+    setIsSubmittingInvite(true);
+    try {
+      const res = await fetch("/api/dashboard/team", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: inviteName.trim(), email: inviteEmail.trim(), role: inviteRole }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || data.error || "Failed to invite member");
+      setInviteSuccess({ email: data.member.email, tempPass: data.member.tempPassword });
+      setTeamMembers((prev) => [...prev, data.member]);
+      showToast({ type: "success", title: "Staff Member Invited", message: `Invite issued to ${data.member.email}` });
+    } catch (err: any) {
+      showToast({ type: "error", title: "Invite Failed", message: err.message || "Failed to send invite." });
+    } finally {
+      setIsSubmittingInvite(false);
+    }
+  }
+
+  async function handleRemoveMember(memberId: string, memberName: string) {
+    if (!confirm(`Are you sure you want to remove ${memberName} from your organization?`)) return;
+    try {
+      const res = await fetch(`/api/dashboard/team?id=${encodeURIComponent(memberId)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || data.error || "Failed to remove member");
+      setTeamMembers((prev) => prev.filter((m) => m.id !== memberId));
+      showToast({ type: "success", title: "Member Removed", message: `${memberName} has been removed.` });
+    } catch (err: any) {
+      showToast({ type: "error", title: "Remove Failed", message: err.message || "Failed to remove member." });
+    }
+  }
+
+  // Staff Canned Response Macros
+  const cannedMacros = useMemo(() => {
+    if (user.industry === "ecommerce") {
+      return [
+        { label: "📦 /track", command: "/track", text: "Your order is in transit with FedEx and is scheduled for delivery tomorrow by 4:00 PM." },
+        { label: "↩️ /return", command: "/return", text: "We offer 30-day hassle-free returns on all unworn items with tags attached. Would you like a prepaid return label?" },
+        { label: "🚚 /shipping", command: "/shipping", text: "Standard shipping takes 3-5 business days ($8.95), and express shipping takes 1-2 business days ($14.95). Free standard shipping on orders over $100." },
+        { label: "⏰ /hours", command: "/hours", text: "Our customer support team is available Monday–Friday 9:00 AM – 5:00 PM AEST." },
+      ];
+    } else if (user.industry === "realestate") {
+      return [
+        { label: "📅 /viewing", command: "/viewing", text: "Open inspection for 12 Park St is scheduled for Thursday at 5:30 PM and Saturday at 11:00 AM. Shall I register your details?" },
+        { label: "🏷️ /rent", command: "/rent", text: "The rental rate is $650 per week with a 4-week bond. Water usage is included." },
+        { label: "🐾 /pets", command: "/pets", text: "Pets are considered case-by-case with landlord approval. Please include pet details in your rental application." },
+        { label: "⏰ /hours", command: "/hours", text: "Our real estate office is open Monday–Friday 9:00 AM – 5:30 PM." },
+      ];
+    } else if (user.industry === "beauty") {
+      return [
+        { label: "✂️ /pricing", command: "/pricing", text: "Our Cut & Style Consultation is $85 (60 min), and full Balayage & Colour transformations start from $160." },
+        { label: "📅 /booking", command: "/booking", text: "Senior stylist Mia has openings this Friday at 10:00 AM and 1:30 PM. Would either of those times suit you?" },
+        { label: "💇 /balayage", command: "/balayage", text: "Balayage includes a full toner, gloss treatment, and blowout finish. We recommend booking a 15-minute consultation first." },
+        { label: "⏰ /hours", command: "/hours", text: "Luna Studio is open Tuesday–Saturday 9:00 AM – 6:00 PM with late hours on Thursday." },
+      ];
+    } else {
+      return [
+        { label: "🏷️ /fees", command: "/fees", text: "Our consultation fees are $120 for an Initial Assessment (60 min) and $90 for Standard Follow-ups (30 min)." },
+        { label: "💳 /hicaps", command: "/hicaps", text: "We provide on-the-spot electronic HICAPS claiming at our front desk for Bupa, Medibank, NIB, and all major health funds." },
+        { label: "⏰ /hours", command: "/hours", text: "Our clinic is open Monday–Friday 7:30 AM – 6:00 PM and Saturday 8:00 AM – 1:00 PM. Closed Sundays." },
+        { label: "📍 /location", command: "/location", text: "We are located at 45 Commercial Rd, South Yarra. Dedicated patient parking is available at the rear of the clinic." },
+        { label: "📅 /booking", command: "/booking", text: "Dr. Sarah Lee has an opening tomorrow at 2:30 PM. Shall I reserve this appointment slot for you?" },
+      ];
+    }
+  }, [user.industry]);
+
+  function handleReplyInputChange(val: string) {
+    let expanded = val;
+    for (const macro of cannedMacros) {
+      if (expanded.endsWith(`${macro.command} `) || expanded === macro.command) {
+        expanded = macro.text;
+        showToast({ type: "info", title: "Macro Expanded", message: `Inserted ${macro.command}` });
+        break;
+      }
+    }
+    setReplyText(expanded);
+  }
+
   async function handleAddSource(e: React.FormEvent) {
     e.preventDefault();
     if (!newSourceTitle.trim() && !newSourceFile) return;
@@ -1324,6 +1481,17 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         icon: "🔌",
         action: () => {
           setActiveTab("integrations");
+          setIsCommandPaletteOpen(false);
+        },
+      },
+      {
+        id: "nav-team",
+        category: "Navigation",
+        title: "Go to Team & Access (RBAC)",
+        subtitle: "Staff invitations, seat quotas & receptionist permissions",
+        icon: "👥",
+        action: () => {
+          setActiveTab("team");
           setIsCommandPaletteOpen(false);
         },
       },
@@ -1810,6 +1978,16 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       icon: (
         <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.25 9.75L16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z" />
+        </svg>
+      ),
+    },
+    {
+      id: "team",
+      label: "Team",
+      badge: teamMembers.length > 0 ? `${teamMembers.length}/${seatLimit}` : undefined,
+      icon: (
+        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.999-3.196a5.971 5.971 0 00-.94 3.196m0 0A11.954 11.954 0 0012 21a11.954 11.954 0 005.058-.984m-9.058-7.266a3 3 0 116 0 3 3 0 01-6 0zm11.25 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
         </svg>
       ),
     },
@@ -3585,28 +3763,19 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* Suggested Quick Response Chips */}
-                <div className="px-3 py-2 bg-white border-t border-slate-200/80 flex items-center gap-1.5 overflow-x-auto text-[11px] shrink-0">
-                  <span className="text-slate-400 font-bold shrink-0 text-[10px] uppercase tracking-wider">AI Quick Fill:</span>
-                  {(isEcom
-                    ? [
-                        "Your order is in transit with Australia Post and will arrive in 1-2 business days.",
-                        "Items may be returned within 30 days for a full refund.",
-                        "Wholesale bulk pricing is available for quantities of 20+ bags.",
-                      ]
-                    : [
-                        "Dr. Sarah Lee has an opening tomorrow at 2:30 PM. Shall I reserve this for you?",
-                        "We process on-the-spot HICAPS electronic claims for Bupa, Medibank, etc.",
-                        "Please bring your doctor's referral letter and any previous imaging to your consultation.",
-                      ]
-                  ).map((chip, cIdx) => (
+                {/* Staff Canned Response Macros & Auto-expansion */}
+                <div className="px-3 py-2 bg-slate-50 border-t border-slate-200/80 flex items-center gap-1.5 overflow-x-auto text-[11px] shrink-0">
+                  <span className="text-slate-500 font-bold shrink-0 text-[10px] uppercase tracking-wider flex items-center gap-1">
+                    ⚡ Fast Macros:
+                  </span>
+                  {cannedMacros.map((macro, mIdx) => (
                     <button
-                      key={cIdx}
-                      onClick={() => setReplyText(chip)}
-                      className="shrink-0 px-2.5 py-1 rounded-full bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-600 transition truncate max-w-[260px] border border-slate-200/60"
-                      title={chip}
+                      key={mIdx}
+                      onClick={() => setReplyText(macro.text)}
+                      className="shrink-0 px-2.5 py-1 rounded-full bg-white hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 transition font-medium border border-slate-200/80 shadow-2xs flex items-center gap-1 text-[11px] cursor-pointer"
+                      title={`Click to fill or type ${macro.command} + Space: ${macro.text}`}
                     >
-                      {chip}
+                      <span className="font-semibold">{macro.label}</span>
                     </button>
                   ))}
                 </div>
@@ -3615,9 +3784,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 <div className="p-3 border-t border-slate-200 bg-white flex gap-2 shrink-0">
                   <input
                     value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
+                    onChange={(e) => handleReplyInputChange(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSendReply()}
-                    placeholder={`Type a staff reply to ${currentConv.visitorName}... (Press Enter to send)`}
+                    placeholder={`Type a staff reply or slash command (/fees, /booking, /hours, /track) to ${currentConv.visitorName}...`}
                     className="flex-1 rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                   />
                   <button
@@ -3899,6 +4068,73 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   <b className="text-slate-900 block font-bold">Squarespace / Wix</b>
                   <span className="text-slate-500">Developer Tools &gt; Code Injection</span>
                 </div>
+              </div>
+
+              {/* 1-Click Live Installation Verifier */}
+              <div className="mt-4 rounded-xl border border-indigo-200 bg-white p-4.5 shadow-2xs space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🔍</span>
+                    <b className="text-xs font-bold text-slate-900">1-Click Live Installation Verifier</b>
+                    <span className="rounded-full bg-indigo-100 text-indigo-700 px-2 py-0.5 text-[10px] font-bold">
+                      Real-Time Check
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-500">Verify your website has loaded Echo.ai correctly</span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="url"
+                    value={verifyUrl}
+                    onChange={(e) => setVerifyUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleVerifyInstallation()}
+                    placeholder="Enter URL to check (e.g. http://localhost:3001/for/clinic or https://yourdomain.com)"
+                    className="flex-1 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                  />
+                  <button
+                    onClick={handleVerifyInstallation}
+                    disabled={isVerifyingUrl || !verifyUrl.trim()}
+                    className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition shrink-0 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                  >
+                    {isVerifyingUrl ? (
+                      <>
+                        <svg className="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                        </svg>
+                        <span>Scanning Website...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Verify Installation</span>
+                        <span>→</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {verificationResult && (
+                  <div
+                    className={`rounded-xl p-3.5 text-xs flex items-start gap-3 transition ${
+                      verificationResult.verified
+                        ? "bg-emerald-50/90 text-emerald-900 border border-emerald-200"
+                        : "bg-amber-50/90 text-amber-900 border border-amber-200"
+                    }`}
+                  >
+                    <span className="text-lg shrink-0 leading-none">
+                      {verificationResult.verified ? "✅" : "⚠️"}
+                    </span>
+                    <div className="space-y-0.5">
+                      <div className="font-bold flex items-center gap-2">
+                        {verificationResult.verified ? "Widget Active & Verified" : "Verification Incomplete"}
+                      </div>
+                      <p className="text-[11px] leading-relaxed opacity-90">
+                        {verificationResult.message || verificationResult.reason}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -4457,6 +4693,233 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   <span className="text-slate-500 block">Visitor Sentiment (CSAT)</span>
                   <b className="text-sm font-bold text-slate-900 mt-0.5 block">96.4%</b>
                   <span className="text-[10px] text-emerald-600 font-semibold">Positive conversation tone</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================== TAB: TEAM (RBAC) ===================== */}
+        {activeTab === "team" && (
+          <div className="space-y-6 max-w-5xl">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <span>Team Members & Role-Based Access</span>
+                  <span className="rounded-full bg-indigo-100 text-indigo-700 px-2.5 py-0.5 text-[11px] font-bold">
+                    RBAC Active
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Manage your clinic staff, receptionists, and administrative permissions.
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  setInviteSuccess(null);
+                  setInviteName("");
+                  setInviteEmail("");
+                  setInviteRole("receptionist");
+                  setIsInviteModalOpen(true);
+                }}
+                disabled={teamMembers.length >= seatLimit}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs shadow-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer"
+              >
+                <span>+ Invite Staff Member</span>
+              </button>
+            </div>
+
+            {/* Seat Quota & Plan Allocation Card */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Team Seat Allocation
+                    </span>
+                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700 uppercase">
+                      {teamPlan} Tier
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-extrabold text-slate-900">{teamMembers.length}</span>
+                    <span className="text-xs text-slate-500 font-medium">of {seatLimit} available seats occupied</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <div className="w-48 bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                    <div
+                      className={`h-2.5 rounded-full transition-all ${
+                        teamMembers.length >= seatLimit ? "bg-amber-500" : "bg-indigo-600"
+                      }`}
+                      style={{ width: `${Math.min(100, (teamMembers.length / seatLimit) * 100)}%` }}
+                    />
+                  </div>
+                  {teamMembers.length >= seatLimit ? (
+                    <button
+                      onClick={() => setActiveTab("billing")}
+                      className="px-3 py-1.5 rounded-lg bg-amber-500 text-white font-bold text-xs hover:bg-amber-600 transition shadow-xs cursor-pointer"
+                    >
+                      Upgrade Seats →
+                    </button>
+                  ) : (
+                    <span className="text-xs font-semibold text-emerald-600">
+                      {seatLimit - teamMembers.length} {seatLimit - teamMembers.length === 1 ? "seat" : "seats"} remaining
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {teamMembers.length >= seatLimit && (
+                <div className="mt-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between">
+                  <span>
+                    ⚠️ You have filled all <b>{seatLimit} staff seats</b> on your {teamPlan.toUpperCase()} plan. Upgrade to the Pro plan for up to 10 seats.
+                  </span>
+                  <button
+                    onClick={() => setActiveTab("billing")}
+                    className="font-bold underline ml-3 shrink-0 hover:text-amber-950"
+                  >
+                    View Upgrade Options
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Staff Directory Table */}
+            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                <b className="text-xs font-bold text-slate-900">Organization Staff Directory</b>
+                <span className="text-[11px] text-slate-400">{teamMembers.length} registered members</span>
+              </div>
+
+              {isLoadingTeam ? (
+                <div className="p-12 text-center text-xs text-slate-400">Loading team members...</div>
+              ) : teamMembers.length === 0 ? (
+                <div className="p-12 text-center text-xs text-slate-400">No team members registered yet.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase border-b border-slate-100">
+                      <tr>
+                        <th className="py-3 px-4">Staff Member</th>
+                        <th className="py-3 px-4">Role</th>
+                        <th className="py-3 px-4">Status</th>
+                        <th className="py-3 px-4">Joined</th>
+                        <th className="py-3 px-4 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium">
+                      {teamMembers.map((member) => {
+                        const isSelf = member.id === user.userId || member.email.toLowerCase() === user.email.toLowerCase();
+                        const isOwner = member.role === "owner";
+                        const initials = member.name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .join("")
+                          .toUpperCase()
+                          .slice(0, 2);
+
+                        return (
+                          <tr key={member.id} className="hover:bg-slate-50/70 transition">
+                            <td className="py-3.5 px-4">
+                              <div className="flex items-center gap-3">
+                                <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                                  {initials || "U"}
+                                </div>
+                                <div>
+                                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                    <span>{member.name}</span>
+                                    {isSelf && (
+                                      <span className="rounded bg-indigo-50 text-indigo-700 px-1.5 py-0.2 text-[9px] font-bold">
+                                        You
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[11px] text-slate-400 font-mono">{member.email}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4">
+                              {member.role === "owner" ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                  👑 Owner
+                                </span>
+                              ) : member.role === "admin" ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                  🛡️ Admin
+                                </span>
+                              ) : member.role === "receptionist" ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">
+                                  💬 Receptionist
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                  Viewer
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 font-semibold">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                Active
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-slate-400 text-[11px]">
+                              {member.created_at ? new Date(member.created_at).toLocaleDateString() : "Active"}
+                            </td>
+                            <td className="py-3.5 px-4 text-right">
+                              {isOwner ? (
+                                <span className="text-[10px] text-slate-400 font-semibold">Primary</span>
+                              ) : isSelf ? (
+                                <span className="text-[10px] text-slate-400 font-semibold">—</span>
+                              ) : (
+                                <button
+                                  onClick={() => handleRemoveMember(member.id, member.name)}
+                                  className="text-rose-600 hover:text-rose-800 font-semibold text-[11px] transition cursor-pointer hover:underline"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* RBAC Role Permissions Matrix Card */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5 shadow-xs space-y-3">
+              <b className="text-xs font-bold text-slate-900 block">Role Permissions Overview</b>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-1">
+                  <div className="font-bold text-purple-900 flex items-center gap-1.5">
+                    <span>🛡️ Administrator</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Full organizational control: edit AI prompts & persona, upload knowledge docs, connect Cliniko PMS, manage billing and staff invites.
+                  </p>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-1">
+                  <div className="font-bold text-sky-900 flex items-center gap-1.5">
+                    <span>💬 Receptionist / Front Desk</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Live inbox triage, real-time takeover chat, canned slash macros, appointment & tracking queries, visitor phone call triage.
+                  </p>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-1">
+                  <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                    <span>👁️ Viewer</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Read-only visibility for clinical directors or accountants: review conversation logs, analytics reports, and export CSVs.
+                  </p>
                 </div>
               </div>
             </div>
@@ -5813,6 +6276,131 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* 5. Team Member Staff Invitation Modal */}
+        {isInviteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                    <span>👥 Invite Staff Member</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Add a front desk receptionist or administrator to your organization.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsInviteModalOpen(false);
+                    setInviteSuccess(null);
+                  }}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {inviteSuccess ? (
+                <div className="space-y-4 py-2">
+                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 space-y-2">
+                    <div className="flex items-center gap-2 font-bold text-xs">
+                      <span>✅ Staff Account Created</span>
+                    </div>
+                    <p className="text-xs">
+                      An account has been created for <b>{inviteSuccess.email}</b>. They can sign in immediately with the following temporary credentials:
+                    </p>
+                    <div className="p-2.5 rounded-lg bg-white border border-emerald-200 font-mono text-xs font-bold text-slate-900 select-all">
+                      {inviteSuccess.tempPass}
+                    </div>
+                    <p className="text-[11px] text-emerald-700">
+                      Share this temporary password securely with your staff member. They will be prompted to choose their own password upon first login.
+                    </p>
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsInviteModalOpen(false);
+                        setInviteSuccess(null);
+                      }}
+                      className="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSendInvite();
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700">Staff Full Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={inviteName}
+                      onChange={(e) => setInviteName(e.target.value)}
+                      placeholder="e.g. Rachel Adams"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700">Staff Work Email</label>
+                    <input
+                      type="email"
+                      required
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      placeholder="e.g. rachel@yourclinic.com.au"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700">Role & Permission Level</label>
+                    <select
+                      value={inviteRole}
+                      onChange={(e) => setInviteRole(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 bg-white"
+                    >
+                      <option value="receptionist">Receptionist (Live Inbox, Takeover Chat & Bookings)</option>
+                      <option value="admin">Administrator (Full Config, AI Setup, Knowledge & Team)</option>
+                    </select>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-[11px] text-slate-500">
+                    ℹ️ Staff members will receive full access scoped to your organization. Current seat usage: <b>{teamMembers.length}/{seatLimit}</b>.
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setIsInviteModalOpen(false)}
+                      className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmittingInvite || !inviteName.trim() || !inviteEmail.trim()}
+                      className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs disabled:opacity-50"
+                    >
+                      {isSubmittingInvite ? "Sending Invite..." : "Send Staff Invite"}
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         )}

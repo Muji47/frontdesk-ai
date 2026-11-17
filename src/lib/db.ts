@@ -444,4 +444,144 @@ if (countUser.cnt === 0) {
   seedOrganizationData("org_demo_101", "clinic", "Healing Hands Physio");
 }
 
+export function ensureDemoAndSalesOrgs() {
+  const checkSales = db.prepare("SELECT id FROM organizations WHERE id = 'org_echo_sales'").get();
+  if (!checkSales) {
+    withTransaction(() => {
+      const { hash, salt } = hashPassword("password123");
+
+      // 1. Echo Sales Org
+      db.prepare(`
+        INSERT OR IGNORE INTO organizations (id, name, industry, plan)
+        VALUES ('org_echo_sales', 'Echo.ai', 'other', 'pro')
+      `).run();
+
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, organization_id, email, name, password_hash, salt, role)
+        VALUES ('usr_echo_sales', 'org_echo_sales', 'sales@echo.ai', 'Echo Advisor', ?, ?, 'owner')
+      `).run(hash, salt);
+
+      db.prepare(`
+        INSERT OR IGNORE INTO agents (id, organization_id, name, greeting, color, position, tone)
+        VALUES ('agt_echo_sales', 'org_echo_sales', 'Echo Advisor', 'Hi! Welcome to Echo.ai. How can I help you explore our 24/7 AI front desk, pricing plans, or integrations today?', '#4f46e5', 'right', 'Friendly & Consultative')
+      `).run();
+
+      const srcId = 'src_echo_sales_docs';
+      db.prepare(`
+        INSERT OR IGNORE INTO knowledge_sources (id, organization_id, title, source_type, status, page_count)
+        VALUES (?, 'org_echo_sales', 'Echo.ai Platform & Pricing Docs', 'document', 'indexed', 4)
+      `).run(srcId);
+
+      const chunks = [
+        {
+          title: "Pricing Plans & Free Trial",
+          content: "Echo.ai offers three plans: Starter ($39/month for 1 website and 500 conversations), Growth ($99/month for 3 team members, live calendar booking and order sync, 2,000 conversations), and Pro ($199/month for 10 team members, custom actions, and priority support). Annual billing includes a 20% discount. Every plan includes a 14-day free trial with no credit card required."
+        },
+        {
+          title: "Website Setup & Installation",
+          content: "Setup takes less than 2 minutes. Point Echo.ai to your website URL or upload PDFs to train your assistant. To install, paste our lightweight script before the closing </body> tag: <script src=\"https://cdn.echo.ai/widget.js\" data-org=\"YOUR_ORG_ID\" async></script>. Works on WordPress, Shopify, Webflow, Squarespace, Wix, and custom websites."
+        },
+        {
+          title: "Supported Practice Software & Integrations",
+          content: "Echo.ai integrates natively with practice management software including Cliniko and Halaxy for live healthcare availability and appointment bookings. It connects to Google Calendar for schedule sync, and Shopify / WooCommerce for live order tracking, inventory queries, and return policies."
+        },
+        {
+          title: "Zero-Hallucination Safety & Human Handover",
+          content: "Echo.ai operates under strict boundary guardrails: it answers only from your approved website content, PDFs, and FAQs. It never invents medical advice, availability, or prices. If a customer requests a person or asks an unverified question, Echo smoothly hands over to your staff dashboard and alerts your team."
+        }
+      ];
+
+      chunks.forEach((c, idx) => {
+        db.prepare(`
+          INSERT OR IGNORE INTO knowledge_chunks (id, source_id, organization_id, chunk_index, title, content, token_count)
+          VALUES (?, ?, 'org_echo_sales', ?, ?, ?, ?)
+        `).run(`chk_echo_sales_${idx+1}`, srcId, idx + 1, c.title, c.content, Math.round(c.content.length / 4));
+      });
+
+      // 2. E-Commerce Demo Org
+      db.prepare(`
+        INSERT OR IGNORE INTO organizations (id, name, industry, plan)
+        VALUES ('org_demo_ecom', 'Aura Apparel', 'ecommerce', 'growth')
+      `).run();
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, organization_id, email, name, password_hash, salt, role)
+        VALUES ('usr_demo_ecom', 'org_demo_ecom', 'demo.ecom@echo.ai', 'Aria Support', ?, ?, 'owner')
+      `).run(hash, salt);
+      db.prepare(`
+        INSERT OR IGNORE INTO agents (id, organization_id, name, greeting, color, position, tone)
+        VALUES ('agt_demo_ecom', 'org_demo_ecom', 'Aria', 'Hi! I’m Aria from Aura Apparel. Looking for something or tracking an order?', '#4f46e5', 'right', 'Friendly')
+      `).run();
+      db.prepare(`
+        INSERT OR IGNORE INTO orders (id, organization_id, order_number, customer_name, customer_email, total_amount, currency, tracking_carrier, tracking_status)
+        VALUES ('ord_demo_10842', 'org_demo_ecom', '10842', 'David Miller', 'david.miller@example.com', 149.00, 'AUD', 'FedEx Express', 'in_transit')
+      `).run();
+
+      const ecomSrc = 'src_demo_ecom_docs';
+      db.prepare(`
+        INSERT OR IGNORE INTO knowledge_sources (id, organization_id, title, source_type, status, page_count)
+        VALUES (?, 'org_demo_ecom', 'Aura Apparel Store Policies', 'document', 'indexed', 2)
+      `).run(ecomSrc);
+      db.prepare(`
+        INSERT OR IGNORE INTO knowledge_chunks (id, source_id, organization_id, chunk_index, title, content, token_count)
+        VALUES ('chk_ecom_1', ?, 'org_demo_ecom', 1, 'Shipping Rates & Delivery Times', 'Standard shipping takes 3-5 business days ($8.95), and express shipping takes 1-2 business days ($14.95). We offer free standard shipping on orders over $100.', 45)
+      `).run(ecomSrc);
+      db.prepare(`
+        INSERT OR IGNORE INTO knowledge_chunks (id, source_id, organization_id, chunk_index, title, content, token_count)
+        VALUES ('chk_ecom_2', ?, 'org_demo_ecom', 2, 'Returns & Exchanges Policy', 'You can return unworn items with original tags within 30 days for a full refund or free size exchange. Prepaid return labels are provided upon request.', 45)
+      `).run(ecomSrc);
+
+      // 3. Real Estate Demo Org
+      db.prepare(`
+        INSERT OR IGNORE INTO organizations (id, name, industry, plan)
+        VALUES ('org_demo_realestate', 'Harbour Realty', 'realestate', 'growth')
+      `).run();
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, organization_id, email, name, password_hash, salt, role)
+        VALUES ('usr_demo_re', 'org_demo_realestate', 'demo.re@echo.ai', 'Julian Thorne', ?, ?, 'owner')
+      `).run(hash, salt);
+      db.prepare(`
+        INSERT OR IGNORE INTO agents (id, organization_id, name, greeting, color, position, tone)
+        VALUES ('agt_demo_re', 'org_demo_realestate', 'Sam', 'Hi! I’m Sam from Harbour Realty. Looking to buy, rent or book a property inspection?', '#2563eb', 'right', 'Professional')
+      `).run();
+
+      const reSrc = 'src_demo_re_docs';
+      db.prepare(`
+        INSERT OR IGNORE INTO knowledge_sources (id, organization_id, title, source_type, status, page_count)
+        VALUES (?, 'org_demo_realestate', '12 Park St Listing Specs', 'document', 'indexed', 1)
+      `).run(reSrc);
+      db.prepare(`
+        INSERT OR IGNORE INTO knowledge_chunks (id, source_id, organization_id, chunk_index, title, content, token_count)
+        VALUES ('chk_re_1', ?, 'org_demo_realestate', 1, '12 Park St Property Specs & Inspection Times', '12 Park St is a renovated 2-bedroom, 1-bathroom apartment for lease at $650 per week with secure parking. Pets are considered case by case with landlord approval. Open inspection times are Thursday 5:30 PM and Saturday 11:00 AM with Priya Sharma.', 60)
+      `).run(reSrc);
+
+      // 4. Beauty Salon Demo Org
+      db.prepare(`
+        INSERT OR IGNORE INTO organizations (id, name, industry, plan)
+        VALUES ('org_demo_beauty', 'Luna Studio', 'beauty', 'growth')
+      `).run();
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, organization_id, email, name, password_hash, salt, role)
+        VALUES ('usr_demo_beauty', 'org_demo_beauty', 'demo.beauty@echo.ai', 'Elena Rostova', ?, ?, 'owner')
+      `).run(hash, salt);
+      db.prepare(`
+        INSERT OR IGNORE INTO agents (id, organization_id, name, greeting, color, position, tone)
+        VALUES ('agt_demo_beauty', 'org_demo_beauty', 'Lexi', 'Hi! I’m Lexi from Luna Studio. Want to book a haircut or see our treatment prices?', '#9333ea', 'right', 'Friendly')
+      `).run();
+
+      const beautySrc = 'src_demo_beauty_docs';
+      db.prepare(`
+        INSERT OR IGNORE INTO knowledge_sources (id, organization_id, title, source_type, status, page_count)
+        VALUES (?, 'org_demo_beauty', 'Luna Studio Menu & Prices', 'document', 'indexed', 1)
+      `).run(beautySrc);
+      db.prepare(`
+        INSERT OR IGNORE INTO knowledge_chunks (id, source_id, organization_id, chunk_index, title, content, token_count)
+        VALUES ('chk_beauty_1', ?, 'org_demo_beauty', 1, 'Salon Treatment Menu & Pricing', 'Cut & style is $85 (60 min), full balayage and colour is from $160, and deep conditioning keratin treatments are $60. Senior stylist Mia specializes in precision cuts and colour transformations.', 55)
+      `).run(beautySrc);
+    });
+  }
+}
+
+// Ensure sales & industry demo orgs are seeded
+ensureDemoAndSalesOrgs();
+
 export { db };

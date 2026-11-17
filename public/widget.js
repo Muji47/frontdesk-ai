@@ -391,6 +391,112 @@
       color: #6366f1;
     }
 
+    /* Proactive Greeting Bubble */
+    .echo-proactive-bubble {
+      position: fixed;
+      bottom: 92px;
+      right: 24px;
+      max-width: 290px;
+      background: #ffffff;
+      border-radius: 18px;
+      padding: 12px 14px;
+      box-shadow: 0 12px 36px rgba(15, 23, 42, 0.16), 0 0 0 1px rgba(15, 23, 42, 0.08);
+      z-index: 2147483639;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      cursor: pointer;
+      opacity: 0;
+      transform: translateY(12px) scale(0.95);
+      pointer-events: none;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .echo-proactive-bubble.echo-show {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .echo-proactive-bubble.echo-left {
+      right: auto;
+      left: 24px;
+    }
+
+    .echo-proactive-bubble:hover {
+      box-shadow: 0 16px 42px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(15, 23, 42, 0.12);
+    }
+
+    .echo-proactive-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .echo-proactive-agent {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .echo-proactive-avatar {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #4f46e5;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 800;
+    }
+
+    .echo-proactive-close {
+      border: none;
+      background: transparent;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .echo-proactive-close:hover {
+      color: #0f172a;
+      background: #f1f5f9;
+    }
+
+    .echo-proactive-text {
+      font-size: 12px;
+      line-height: 1.45;
+      color: #334155;
+    }
+
+    .echo-proactive-tail {
+      position: absolute;
+      bottom: -6px;
+      right: 22px;
+      width: 12px;
+      height: 12px;
+      background: #ffffff;
+      transform: rotate(45deg);
+      box-shadow: 2px 2px 3px rgba(15, 23, 42, 0.05);
+      border-right: 1px solid rgba(15, 23, 42, 0.08);
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    }
+
+    .echo-proactive-bubble.echo-left .echo-proactive-tail {
+      right: auto;
+      left: 22px;
+    }
+
     /* Mobile Responsive */
     @media (max-width: 480px) {
       .echo-modal {
@@ -406,6 +512,11 @@
         bottom: 16px;
         right: 16px;
       }
+      .echo-proactive-bubble {
+        bottom: 84px;
+        right: 16px;
+        max-width: calc(100vw - 32px);
+      }
     }
   `;
   shadow.appendChild(style);
@@ -413,6 +524,22 @@
   // 4. Construct DOM Elements
   const container = document.createElement("div");
   container.innerHTML = `
+    <!-- Proactive Bubble -->
+    <div class="echo-proactive-bubble" id="echoProactiveBubble" role="status">
+      <div class="echo-proactive-header">
+        <div class="echo-proactive-agent">
+          <div class="echo-proactive-avatar" id="echoProactiveAvatar">M</div>
+          <span id="echoProactiveName">Maya</span>
+          <span class="echo-status-dot"></span>
+        </div>
+        <button class="echo-proactive-close" id="echoProactiveClose" aria-label="Dismiss proactive message">✕</button>
+      </div>
+      <div class="echo-proactive-text" id="echoProactiveText">
+        👋 Looking for pricing, hours, or want to book an appointment? Ask me anything!
+      </div>
+      <div class="echo-proactive-tail"></div>
+    </div>
+
     <!-- Floating Launcher -->
     <button class="echo-launcher" id="echoLauncher" aria-label="Open AI Receptionist Chat">
       <div class="echo-pulse-beacon"></div>
@@ -484,6 +611,11 @@
   const avatar = shadow.getElementById("echoAvatar");
   const agentNameEl = shadow.getElementById("echoAgentName");
   const clinicNameEl = shadow.getElementById("echoClinicName");
+  const proactiveBubble = shadow.getElementById("echoProactiveBubble");
+  const proactiveClose = shadow.getElementById("echoProactiveClose");
+  const proactiveAvatar = shadow.getElementById("echoProactiveAvatar");
+  const proactiveName = shadow.getElementById("echoProactiveName");
+  const proactiveText = shadow.getElementById("echoProactiveText");
 
   let conversationId = sessionStorage.getItem(`echo_conv_${orgId}`) || null;
   let visitorToken = sessionStorage.getItem(`echo_token_${orgId}`) || null;
@@ -516,6 +648,30 @@
     if (conversationId) {
       syncMessages();
     }
+    // Proactive engagement trigger
+    setTimeout(showProactiveBubble, 3500);
+  }
+
+  function showProactiveBubble() {
+    if (isOpen) return;
+    if (sessionStorage.getItem(`echo_proactive_dismissed_${orgId}`) === "true") return;
+    if (proactiveBubble) proactiveBubble.classList.add("echo-show");
+  }
+
+  function dismissProactiveBubble(e) {
+    if (e) e.stopPropagation();
+    if (proactiveBubble) proactiveBubble.classList.remove("echo-show");
+    sessionStorage.setItem(`echo_proactive_dismissed_${orgId}`, "true");
+  }
+
+  if (proactiveBubble) {
+    proactiveBubble.addEventListener("click", () => {
+      dismissProactiveBubble();
+      if (!isOpen) toggleModal();
+    });
+  }
+  if (proactiveClose) {
+    proactiveClose.addEventListener("click", dismissProactiveBubble);
   }
 
   function applyConfig() {
@@ -523,9 +679,30 @@
     agentNameEl.textContent = `${agentConfig.name} · AI Receptionist`;
     clinicNameEl.textContent = `${agentConfig.orgName} • Online`;
 
+    if (proactiveName) proactiveName.textContent = agentConfig.name;
+    if (proactiveAvatar) {
+      proactiveAvatar.textContent = (agentConfig.name || "A")[0].toUpperCase();
+      if (agentConfig.color) proactiveAvatar.style.background = agentConfig.color;
+    }
+
     if (agentConfig.position === "left") {
       launcher.classList.add("echo-left");
       modal.classList.add("echo-left");
+      if (proactiveBubble) proactiveBubble.classList.add("echo-left");
+    }
+
+    if (proactiveText) {
+      if (agentConfig.industry === "ecommerce") {
+        proactiveText.textContent = "👋 Looking for a product or need to track an order? Ask me here!";
+      } else if (agentConfig.industry === "realestate") {
+        proactiveText.textContent = "👋 Looking to buy, rent, or book an inspection? Ask me here!";
+      } else if (agentConfig.industry === "beauty") {
+        proactiveText.textContent = "👋 Want to book an appointment or see our treatment prices? Ask me here!";
+      } else if (agentConfig.name === "Echo Advisor" || orgId === "org_echo_sales") {
+        proactiveText.textContent = "👋 Have questions about Echo.ai plans, free trial, or setup? Ask me anything!";
+      } else {
+        proactiveText.textContent = "👋 Need help booking an appointment or checking clinic hours? Ask me here!";
+      }
     }
 
     if (agentConfig.color) {
@@ -541,6 +718,7 @@
 
   function toggleModal() {
     isOpen = !isOpen;
+    if (proactiveBubble) proactiveBubble.classList.remove("echo-show");
     if (isOpen) {
       modal.classList.add("echo-open");
       input.focus();

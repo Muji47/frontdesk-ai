@@ -16,15 +16,26 @@ export function GlobalWidgetLauncher() {
       return;
     }
 
-    // If widget not present, inject script
-    if (!document.getElementById("echo-receptionist-widget")) {
-      const existingScript = document.getElementById("echo-widget-script");
-      if (existingScript) existingScript.remove();
+    // Determine targeted persona for the active route
+    let targetOrg = "org_echo_sales";
+    if (pathname === "/for/clinic") targetOrg = "org_demo_101";
+    else if (pathname === "/for/ecommerce") targetOrg = "org_demo_ecom";
+    else if (pathname === "/for/realestate") targetOrg = "org_demo_realestate";
+    else if (pathname === "/for/beauty") targetOrg = "org_demo_beauty";
+
+    const currentScript = document.getElementById("echo-widget-script");
+    const currentOrg = currentScript?.getAttribute("data-org");
+
+    // If widget not present or persona changed for route, inject script
+    if (!document.getElementById("echo-receptionist-widget") || currentOrg !== targetOrg) {
+      const existingWidget = document.getElementById("echo-receptionist-widget");
+      if (existingWidget) existingWidget.remove();
+      if (currentScript) currentScript.remove();
 
       const script = document.createElement("script");
       script.id = "echo-widget-script";
       script.src = "/widget.js";
-      script.setAttribute("data-org", "org_demo_101");
+      script.setAttribute("data-org", targetOrg);
       script.async = true;
       document.body.appendChild(script);
     }

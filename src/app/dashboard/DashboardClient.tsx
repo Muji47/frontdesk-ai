@@ -902,7 +902,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         })
       );
       setReplyText("");
-      showToast({ type: "success", title: "Reply Sent", message: "Staff message delivered to visitor." });
     } catch (err: any) {
       showToast({ type: "error", title: "Failed to Send Reply", message: err.message || "Failed to send staff reply." });
     } finally {
@@ -1106,7 +1105,6 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     for (const macro of cannedMacros) {
       if (expanded.endsWith(`${macro.command} `) || expanded === macro.command) {
         expanded = macro.text;
-        showToast({ type: "info", title: "Macro Expanded", message: `Inserted ${macro.command}` });
         break;
       }
     }
@@ -3562,10 +3560,10 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
         {/* ===================== TAB: CONVERSATIONS (INBOX) ===================== */}
         {activeTab === "conversations" && (
-          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden grid lg:grid-cols-12 min-h-[580px]">
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden grid lg:grid-cols-12 h-[calc(100vh-140px)] min-h-[620px] max-h-[860px]">
             {/* Left Thread List */}
-            <div className="lg:col-span-4 border-r border-slate-200 flex flex-col bg-slate-50/40">
-              <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
+            <div className="lg:col-span-4 border-r border-slate-200 flex flex-col h-full bg-slate-50/40 overflow-hidden">
+              <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2 shrink-0">
                 <div className="flex justify-between items-center">
                   <div>
                     <h3 className="text-xs font-bold text-slate-900">Customer Inbox</h3>
@@ -3650,7 +3648,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
 
-              <div className="divide-y divide-slate-100 overflow-y-auto max-h-[640px] flex-1 bg-white">
+              <div className="divide-y divide-slate-100 overflow-y-auto flex-1 min-h-0 bg-white">
                 {filteredConversations.length === 0 ? (
                   <div className="p-8 text-center text-slate-400">
                     <div className="text-2xl mb-1">🔍</div>
@@ -3723,9 +3721,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
             {/* Right Chat Message Pane */}
             {currentConv ? (
-              <div className="lg:col-span-8 flex flex-col justify-between h-[640px] bg-slate-50/30">
+              <div className="lg:col-span-8 flex flex-col h-full bg-slate-50/30 overflow-hidden">
                 {/* Chat Top Header */}
-                <div className="p-3.5 border-b border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3 text-xs shadow-xs">
+                <div className="p-3.5 border-b border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3 text-xs shadow-xs shrink-0">
                   <div className="flex items-center gap-3">
                     <div className="h-9 w-9 rounded-full bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center font-bold text-xs">
                       {currentConv.visitorName
@@ -3811,7 +3809,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 )}
 
                 {/* Message History Container with Auto-scroll */}
-                <div className="p-4 space-y-3 overflow-y-auto flex-1 text-xs">
+                <div className="p-4 space-y-3 overflow-y-auto flex-1 min-h-0 text-xs">
                   {Array.from(new Map(currentConv.messages.map((m) => [m.id, m])).values()).map((m, mIdx) => {
                     const isClient = m.sender === "client";
                     const isStaff = m.sender === "staff";
@@ -3883,7 +3881,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
             ) : (
-              <div className="lg:col-span-8 p-12 text-center text-xs text-slate-400 flex flex-col items-center justify-center">
+              <div className="lg:col-span-8 p-12 text-center text-xs text-slate-400 flex flex-col items-center justify-center h-full">
                 <span className="text-3xl mb-2">💬</span>
                 <b className="text-slate-700">No conversation selected</b>
                 <p className="mt-1">Select an active customer conversation from the list to view the thread.</p>

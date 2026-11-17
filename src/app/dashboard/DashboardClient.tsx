@@ -283,6 +283,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [inviteRole, setInviteRole] = useState("receptionist");
   const [isSubmittingInvite, setIsSubmittingInvite] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState<{ email: string; tempPass: string } | null>(null);
+  const [memberToRemove, setMemberToRemove] = useState<TeamMember | null>(null);
+  const [isRemovingMember, setIsRemovingMember] = useState(false);
+  const [sourceToDelete, setSourceToDelete] = useState<{ id: string; title: string } | null>(null);
 
   // Billing, Subscription Cycles, Payment Methods & Invoice Modal State
   const [billingState, setBillingState] = useState<DashboardBillingData>(
@@ -969,18 +972,22 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
   }
 
-  async function handleRemoveMember(memberId: string, memberName: string) {
-    if (!confirm(`Are you sure you want to remove ${memberName} from your organization?`)) return;
+  async function confirmRemoveMember() {
+    if (!memberToRemove || isRemovingMember) return;
+    setIsRemovingMember(true);
     try {
-      const res = await fetch(`/api/dashboard/team?id=${encodeURIComponent(memberId)}`, {
+      const res = await fetch(`/api/dashboard/team?id=${encodeURIComponent(memberToRemove.id)}`, {
         method: "DELETE",
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || data.error || "Failed to remove member");
-      setTeamMembers((prev) => prev.filter((m) => m.id !== memberId));
-      showToast({ type: "success", title: "Member Removed", message: `${memberName} has been removed.` });
+      setTeamMembers((prev) => prev.filter((m) => m.id !== memberToRemove.id));
+      showToast({ type: "success", title: "Member Removed", message: `${memberToRemove.name} has been removed.` });
+      setMemberToRemove(null);
     } catch (err: any) {
       showToast({ type: "error", title: "Remove Failed", message: err.message || "Failed to remove member." });
+    } finally {
+      setIsRemovingMember(false);
     }
   }
 
@@ -1088,9 +1095,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
   }
 
-  async function handleDeleteSource(sourceId: string) {
-    if (!confirm("Are you sure you want to remove this knowledge source?")) return;
-
+  async function confirmDeleteSource() {
+    if (!sourceToDelete || deletingSourceId) return;
+    const sourceId = sourceToDelete.id;
     setDeletingSourceId(sourceId);
     try {
       const res = await fetch("/api/dashboard/knowledge/delete", {
@@ -1102,7 +1109,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       if (!res.ok) throw new Error("Failed to delete source");
 
       setKnowledgeSources((prev) => prev.filter((s) => s.id !== sourceId));
-      showToast({ type: "success", title: "Source Removed", message: "Knowledge source and extracted chunks removed." });
+      showToast({ type: "success", title: "Source Removed", message: `"${sourceToDelete.title}" and extracted chunks removed.` });
+      setSourceToDelete(null);
     } catch (err: any) {
       showToast({ type: "error", title: "Failed to Delete", message: err.message || "Failed to delete knowledge source." });
     } finally {
@@ -3208,9 +3216,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                 <span>View</span>
                               </button>
                               <button
-                                onClick={() => handleDeleteSource(source.id)}
+                                onClick={() => setSourceToDelete({ id: source.id, title: source.title })}
                                 disabled={deletingSourceId === source.id}
-                                className="text-red-500 hover:text-red-700 font-semibold text-[11px] disabled:opacity-50 px-1.5 py-1 rounded-lg hover:bg-red-50 transition"
+                                className="text-rose-600 hover:text-rose-800 font-semibold text-[11px] disabled:opacity-50 px-2 py-1 rounded-lg hover:bg-rose-50 transition cursor-pointer"
                               >
                                 {deletingSourceId === source.id ? "..." : "Remove"}
                               </button>
@@ -4877,7 +4885,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                 <span className="text-[10px] text-slate-400 font-semibold">—</span>
                               ) : (
                                 <button
-                                  onClick={() => handleRemoveMember(member.id, member.name)}
+                                  onClick={() => setMemberToRemove(member)}
                                   className="text-rose-600 hover:text-rose-800 font-semibold text-[11px] transition cursor-pointer hover:underline"
                                 >
                                   Remove
@@ -6401,6 +6409,158 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                   </div>
                 </form>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* 6. Remove Staff Member Confirmation Modal */}
+        {memberToRemove && (
+          <div
+            onClick={() => !isRemovingMember && setMemberToRemove(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4 animate-in zoom-in-95 duration-150 text-slate-900"
+            >
+              <div className="flex items-start gap-3.5">
+                <div className="h-11 w-11 rounded-2xl bg-rose-50 border border-rose-100 text-rose-600 flex items-center justify-center text-lg shrink-0 shadow-2xs">
+                  <svg className="w-5 h-5 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                  </svg>
+                </div>
+                <div className="space-y-1">
+                  <h3 className="font-bold text-sm text-slate-900">Remove Staff Member?</h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Are you sure you want to remove this staff member from your organization?
+                  </p>
+                </div>
+              </div>
+
+              {/* Staff Member Card */}
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="h-9 w-9 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                    {memberToRemove.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2) || "U"}
+                  </div>
+                  <div className="min-w-0">
+                    <b className="text-xs font-bold text-slate-900 block truncate">{memberToRemove.name}</b>
+                    <span className="text-[11px] text-slate-500 font-mono truncate block">{memberToRemove.email}</span>
+                  </div>
+                </div>
+                <span className="shrink-0 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-slate-700 border border-slate-200 capitalize shadow-2xs">
+                  {memberToRemove.role}
+                </span>
+              </div>
+
+              {/* Warning Notice */}
+              <div className="p-3 rounded-xl bg-rose-50/80 border border-rose-100 text-[11px] text-rose-800 leading-relaxed flex items-start gap-2">
+                <span className="text-xs shrink-0 mt-0.5">⚠️</span>
+                <span>
+                  Their active sessions will be revoked immediately and they will forfeit access to the live inbox, appointments, and dashboard.
+                </span>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isRemovingMember}
+                  onClick={() => setMemberToRemove(null)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 transition text-xs cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isRemovingMember}
+                  onClick={confirmRemoveMember}
+                  className="rounded-xl bg-rose-600 px-4 py-2 font-bold text-white hover:bg-rose-700 transition text-xs shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isRemovingMember ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      <span>Removing...</span>
+                    </>
+                  ) : (
+                    <span>Remove Member</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 7. Delete Knowledge Source Confirmation Modal */}
+        {sourceToDelete && (
+          <div
+            onClick={() => !deletingSourceId && setSourceToDelete(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4 animate-in zoom-in-95 duration-150 text-slate-900"
+            >
+              <div className="flex items-start gap-3.5">
+                <div className="h-11 w-11 rounded-2xl bg-rose-50 border border-rose-100 text-rose-600 flex items-center justify-center text-lg shrink-0 shadow-2xs">
+                  <svg className="w-5 h-5 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </div>
+                <div className="space-y-1">
+                  <h3 className="font-bold text-sm text-slate-900">Remove Knowledge Source?</h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Are you sure you want to remove this source and its trained memory chunks?
+                  </p>
+                </div>
+              </div>
+
+              {/* Source Card */}
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                <b className="text-xs font-bold text-slate-900 block truncate">{sourceToDelete.title}</b>
+                <span className="text-[11px] text-slate-500 block mt-0.5">ID: {sourceToDelete.id}</span>
+              </div>
+
+              {/* Warning Notice */}
+              <div className="p-3 rounded-xl bg-rose-50/80 border border-rose-100 text-[11px] text-rose-800 leading-relaxed flex items-start gap-2">
+                <span className="text-xs shrink-0 mt-0.5">⚠️</span>
+                <span>
+                  The AI receptionist will no longer use content from this source to answer visitor inquiries.
+                </span>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={Boolean(deletingSourceId)}
+                  onClick={() => setSourceToDelete(null)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 transition text-xs cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(deletingSourceId)}
+                  onClick={confirmDeleteSource}
+                  className="rounded-xl bg-rose-600 px-4 py-2 font-bold text-white hover:bg-rose-700 transition text-xs shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {deletingSourceId ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <span>Remove Source</span>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         )}

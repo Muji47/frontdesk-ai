@@ -232,7 +232,7 @@ export class AuthService {
     }
   }
 
-  private static createSession(userId: string): { token: string; expiresAt: Date } {
+  public static createSession(userId: string): { token: string; expiresAt: Date } {
     const token = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 14); // 14 days expiration
 

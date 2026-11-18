@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { db, hashPassword, withTransaction } from "@/lib/db";
+import { sendStaffInviteEmail } from "@/lib/email";
 import { handleApiError, UnauthorizedError, ValidationError, ForbiddenError } from "@/server/errors";
 import { randomBytes } from "node:crypto";
 
@@ -115,11 +116,35 @@ export async function POST(req: NextRequest) {
     const { hash, salt } = hashPassword(tempPassword);
     const nowIso = new Date().toISOString();
 
+    // Generate secure 48-hour activation token
+    const tokenId = "tok_" + randomBytes(8).toString("hex");
+    const token = "inv_" + randomBytes(24).toString("hex");
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3001";
+    const proto = req.headers.get("x-forwarded-proto") || "http";
+    const inviteUrl = `${proto}://${host}/set-password?token=${token}`;
+
     withTransaction(() => {
       db.prepare(`
         INSERT INTO users (id, organization_id, email, name, password_hash, salt, role, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(newUserId, user.orgId, email, name, hash, salt, role, nowIso);
+
+      db.prepare(`
+        INSERT INTO auth_tokens (id, user_id, email, token, type, expires_at)
+        VALUES (?, ?, ?, ?, 'invite', ?)
+      `).run(tokenId, newUserId, email, token, expiresAt);
+    });
+
+    // Dispatch formal invitation email
+    await sendStaffInviteEmail({
+      toEmail: email,
+      toName: name,
+      orgName: user.orgName || "Echo.ai Workspace",
+      inviterName: user.name || "Clinic Director",
+      role,
+      inviteUrl,
     });
 
     return NextResponse.json(
@@ -134,6 +159,9 @@ export async function POST(req: NextRequest) {
           createdAt: nowIso,
           tempPassword,
         },
+        inviteUrl,
+        emailSent: true,
+        message: `Invitation email with password setup link sent to ${email}`,
       },
       { status: 201 }
     );

@@ -360,6 +360,38 @@ try {
     );
 
     CREATE INDEX IF NOT EXISTS idx_integration_logs_org ON integration_logs(organization_id, created_at DESC);
+
+    -- Auth Tokens (Staff Invitations & Password Resets)
+    CREATE TABLE IF NOT EXISTS auth_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      email TEXT NOT NULL,
+      token TEXT UNIQUE NOT NULL,
+      type TEXT NOT NULL, -- 'invite' | 'reset'
+      expires_at DATETIME NOT NULL,
+      used_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON auth_tokens(token);
+    CREATE INDEX IF NOT EXISTS idx_auth_tokens_email ON auth_tokens(email);
+
+    -- Dispatched Emails (Audit & Outbox Log)
+    CREATE TABLE IF NOT EXISTS dispatched_emails (
+      id TEXT PRIMARY KEY,
+      to_email TEXT NOT NULL,
+      to_name TEXT,
+      subject TEXT NOT NULL,
+      body_text TEXT NOT NULL,
+      body_html TEXT NOT NULL,
+      action_url TEXT,
+      email_type TEXT NOT NULL, -- 'invite' | 'password_reset'
+      status TEXT NOT NULL DEFAULT 'delivered',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_dispatched_emails_to ON dispatched_emails(to_email);
   `);
 } catch (err) {
   console.error("Billing schema migration warning:", err);

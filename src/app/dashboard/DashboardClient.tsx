@@ -318,7 +318,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("receptionist");
   const [isSubmittingInvite, setIsSubmittingInvite] = useState(false);
-  const [inviteSuccess, setInviteSuccess] = useState<{ email: string; tempPass: string } | null>(null);
+  const [inviteSuccess, setInviteSuccess] = useState<{ email: string; tempPass?: string; inviteUrl?: string } | null>(null);
+  const [copiedInviteUrl, setCopiedInviteUrl] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState<TeamMember | null>(null);
   const [isRemovingMember, setIsRemovingMember] = useState(false);
   const [sourceToDelete, setSourceToDelete] = useState<{ id: string; title: string } | null>(null);
@@ -1055,9 +1056,13 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         }
         return;
       }
-      setInviteSuccess({ email: data.member.email, tempPass: data.member.tempPassword });
+      setInviteSuccess({
+        email: data.member.email,
+        tempPass: data.member.tempPassword,
+        inviteUrl: data.inviteUrl,
+      });
       setTeamMembers((prev) => [...prev, data.member]);
-      showToast({ type: "success", title: "Staff Member Invited", message: `Invite issued to ${data.member.email}` });
+      showToast({ type: "success", title: "Invitation Email Dispatched", message: `Activation email sent to ${data.member.email}` });
     } catch (err: any) {
       showToast({ type: "error", title: "Invite Failed", message: err.message || "Failed to send invite." });
     } finally {
@@ -6587,29 +6592,63 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
               {inviteSuccess ? (
                 <div className="space-y-4 py-2">
-                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 space-y-2">
-                    <div className="flex items-center gap-2 font-bold text-xs">
-                      <span>✅ Staff Account Created</span>
+                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 space-y-2.5">
+                    <div className="flex items-center gap-2 font-bold text-xs text-emerald-900">
+                      <span>✉️ Invitation Email Dispatched</span>
                     </div>
-                    <p className="text-xs">
-                      An account has been created for <b>{inviteSuccess.email}</b>. They can sign in immediately with the following temporary credentials:
+                    <p className="text-xs leading-relaxed">
+                      A formal invitation email has been sent to <b>{inviteSuccess.email}</b> containing a secure link to choose their password and activate their staff account.
                     </p>
-                    <div className="p-2.5 rounded-lg bg-white border border-emerald-200 font-mono text-xs font-bold text-slate-900 select-all">
-                      {inviteSuccess.tempPass}
+
+                    {inviteSuccess.inviteUrl && (
+                      <div className="space-y-1.5 pt-1">
+                        <label className="text-[11px] font-bold text-emerald-900 block">Direct Activation Link (Valid for 48 hours):</label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            readOnly
+                            value={inviteSuccess.inviteUrl}
+                            className="flex-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 font-mono text-[11px] text-slate-800 outline-none select-all"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(inviteSuccess.inviteUrl || "");
+                              setCopiedInviteUrl(true);
+                              setTimeout(() => setCopiedInviteUrl(false), 2000);
+                            }}
+                            className="shrink-0 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs px-3 py-1.5 transition shadow-2xs cursor-pointer"
+                          >
+                            {copiedInviteUrl ? "✓ Copied" : "Copy Link"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="p-2.5 rounded-lg bg-white/80 border border-emerald-200 text-[11px] text-emerald-800">
+                      💡 <b>Pro tip:</b> The staff member can open the link in their email (or direct URL) to choose their own password. They will be logged in immediately upon completion.
                     </div>
-                    <p className="text-[11px] text-emerald-700">
-                      Share this temporary password securely with your staff member. They will be prompted to choose their own password upon first login.
-                    </p>
                   </div>
 
-                  <div className="flex justify-end pt-2">
+                  <div className="flex justify-between items-center pt-2">
+                    {inviteSuccess.inviteUrl ? (
+                      <a
+                        href={inviteSuccess.inviteUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1"
+                      >
+                        <span>Open Activation Page</span>
+                        <span>↗</span>
+                      </a>
+                    ) : <div />}
                     <button
                       type="button"
                       onClick={() => {
                         setIsInviteModalOpen(false);
                         setInviteSuccess(null);
+                        setCopiedInviteUrl(false);
                       }}
-                      className="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs"
+                      className="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs cursor-pointer"
                     >
                       Done
                     </button>

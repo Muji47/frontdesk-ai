@@ -209,6 +209,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [newSourceContent, setNewSourceContent] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isAddingSource, setIsAddingSource] = useState(false);
+  const [addSourceError, setAddSourceError] = useState<string | null>(null);
   const [deletingSourceId, setDeletingSourceId] = useState<string | null>(null);
 
   // Test retrieval state
@@ -221,6 +222,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [newFaqQ, setNewFaqQ] = useState("");
   const [newFaqA, setNewFaqA] = useState("");
   const [isAddingFaq, setIsAddingFaq] = useState(false);
+  const [addFaqErrors, setAddFaqErrors] = useState<{ q?: string; a?: string }>({});
 
   // View resource modal state
   const [viewingSource, setViewingSource] = useState<DashboardKnowledgeSource | null>(null);
@@ -417,6 +419,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [cardCvc, setCardCvc] = useState<string>("");
   const [cardSetDefault, setCardSetDefault] = useState<boolean>(true);
   const [isSavingCard, setIsSavingCard] = useState<boolean>(false);
+  const [paymentCardErrors, setPaymentCardErrors] = useState<{ number?: string; expiry?: string; cvc?: string; holder?: string }>({});
   const [busyCardId, setBusyCardId] = useState<string | null>(null);
   const [viewingInvoice, setViewingInvoice] = useState<DashboardBillingInvoice | null>(null);
   const [pendingPlanSelection, setPendingPlanSelection] = useState<{
@@ -1345,8 +1348,18 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   async function handleAddSource(e: React.FormEvent) {
     e.preventDefault();
-    if (!newSourceTitle.trim() && !newSourceFile) return;
+    if (!newSourceTitle.trim() && !newSourceFile) {
+      setAddSourceError(
+        newSourceType === "url"
+          ? "Please provide a valid website URL to crawl."
+          : newSourceType === "pdf"
+          ? "Please enter a document title or select a PDF file."
+          : "Please enter a document title."
+      );
+      return;
+    }
 
+    setAddSourceError(null);
     setIsAddingSource(true);
     try {
       let res: Response;
@@ -1383,6 +1396,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       setNewSourceTitle("");
       setNewSourceFile(null);
       setNewSourceContent("");
+      setAddSourceError(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       setShowAddSource(false);
       showToast({
@@ -1391,6 +1405,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         message: `Parsed "${data.source?.title || newSourceTitle}" — ${data.source?.pageCount || data.source?.chunks?.length || 1} chunks active.`,
       });
     } catch (err: any) {
+      setAddSourceError(err.message || "Failed to add knowledge source.");
       showToast({
         type: "error",
         title: "Failed to Add Source",
@@ -2042,18 +2057,48 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   async function handleAddPaymentMethod(e: React.FormEvent) {
     e.preventDefault();
+    setPaymentCardErrors({});
+
     const cleanNum = cardNumber.replace(/\D/g, "");
-    if (!cleanNum || cleanNum.length < 4) {
-      showToast({ type: "error", title: "Invalid Card", message: "Please enter a valid card number." });
+    const errors: { number?: string; expiry?: string; cvc?: string; holder?: string } = {};
+
+    if (!cleanNum) {
+      errors.number = "Card number is required.";
+    } else if (cleanNum.length < 13 || cleanNum.length > 19) {
+      errors.number = "Please enter a valid card number (13-19 digits).";
+    }
+
+    const parts = cardExpiry.split("/");
+    const expMonth = (parts[0] || "").trim();
+    const expYear = (parts[1] || "").trim();
+    const monthNum = parseInt(expMonth, 10);
+    if (!expMonth || !expYear || isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+      errors.expiry = "Enter a valid expiration date (MM / YY).";
+    }
+
+    const cleanCvc = cardCvc.trim();
+    if (!cleanCvc) {
+      errors.cvc = "CVC is required.";
+    } else if (cleanCvc.length < 3 || cleanCvc.length > 4) {
+      errors.cvc = "CVC must be 3 or 4 digits.";
+    }
+
+    if (!cardHolder.trim()) {
+      errors.holder = "Cardholder name is required.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setPaymentCardErrors(errors);
       return;
     }
+
     setIsSavingCard(true);
+    setPaymentCardErrors({});
     try {
       const brand = getDetectedBrand(cleanNum);
-      const parts = cardExpiry.split("/");
-      const expMonth = (parts[0] || "12").trim().padStart(2, "0");
-      let expYear = (parts[1] || "29").trim();
-      if (expYear.length === 2) expYear = `20${expYear}`;
+      const formattedMonth = expMonth.padStart(2, "0");
+      let formattedYear = expYear;
+      if (formattedYear.length === 2) formattedYear = `20${formattedYear}`;
 
       const res = await fetch("/api/dashboard/billing", {
         method: "POST",
@@ -2062,9 +2107,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           action: "add_payment_method",
           brand,
           cardNumber: cleanNum,
-          expMonth,
-          expYear,
-          cardholderName: cardHolder,
+          expMonth: formattedMonth,
+          expYear: formattedYear,
+          cardholderName: cardHolder.trim(),
           setAsDefault: cardSetDefault,
         }),
       });
@@ -2073,6 +2118,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       if (data.billing) setBillingState(data.billing);
       setCardNumber("");
       setCardCvc("");
+      setPaymentCardErrors({});
       setShowInlineCardForm(false);
 
       // If user clicked Upgrade / Downgrade while having no card, automatically complete their pending plan change now
@@ -3249,14 +3295,18 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             {showAddSource && (
               <form
                 onSubmit={handleAddSource}
+                noValidate
                 className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5 space-y-4 text-xs"
               >
                 <div className="flex justify-between items-center">
                   <b className="text-sm font-bold text-slate-900">Index New Knowledge Source</b>
                   <button
                     type="button"
-                    onClick={() => setShowAddSource(false)}
-                    className="text-slate-400 hover:text-slate-600 font-bold"
+                    onClick={() => {
+                      setShowAddSource(false);
+                      setAddSourceError(null);
+                    }}
+                    className="text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
                   >
                     ✕
                   </button>
@@ -3264,17 +3314,24 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="sm:col-span-2">
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      {newSourceType === "url"
-                        ? "Website URL to Crawl"
-                        : newSourceType === "pdf"
-                        ? "PDF Document Name / Title"
-                        : "Document Title"}
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-semibold text-slate-700">
+                        {newSourceType === "url"
+                          ? "Website URL to Crawl"
+                          : newSourceType === "pdf"
+                          ? "PDF Document Name / Title"
+                          : "Document Title"} <span className="text-rose-500">*</span>
+                      </label>
+                      {addSourceError && (
+                        <span className="text-[10px] font-bold text-rose-500">Required</span>
+                      )}
+                    </div>
                     <input
-                      required
                       value={newSourceTitle}
-                      onChange={(e) => setNewSourceTitle(e.target.value)}
+                      onChange={(e) => {
+                        setNewSourceTitle(e.target.value);
+                        if (addSourceError) setAddSourceError(null);
+                      }}
                       placeholder={
                         newSourceType === "url"
                           ? "https://yourclinic.com.au/services"
@@ -3282,8 +3339,18 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           ? "Clinic_Fee_Schedule_2026.pdf"
                           : "Intake_and_Cancellation_Policy.txt"
                       }
-                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600"
+                      className={`w-full rounded-xl border bg-white p-2.5 outline-none transition ${
+                        addSourceError
+                          ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                          : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                      }`}
                     />
+                    {addSourceError && (
+                      <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1.5 animate-in fade-in">
+                        <span>⚠️</span>
+                        <span>{addSourceError}</span>
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">Source Format</label>
@@ -3449,47 +3516,92 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             {showAddFaq && (
               <form
                 onSubmit={handleAddManualFaq}
+                noValidate
                 className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5 space-y-4 text-xs"
               >
                 <div className="flex justify-between items-center">
                   <b className="text-sm font-bold text-slate-900">Add Pre-Approved Question & Answer</b>
                   <button
                     type="button"
-                    onClick={() => setShowAddFaq(false)}
-                    className="text-slate-400 hover:text-slate-600 font-bold"
+                    onClick={() => {
+                      setShowAddFaq(false);
+                      setAddFaqErrors({});
+                    }}
+                    className="text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
                   >
                     ✕
                   </button>
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Customer Question</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-semibold text-slate-700">
+                      Customer Question <span className="text-rose-500">*</span>
+                    </label>
+                    {addFaqErrors.q && (
+                      <span className="text-[10px] font-bold text-rose-500">Required</span>
+                    )}
+                  </div>
                   <input
-                    required
                     value={newFaqQ}
-                    onChange={(e) => setNewFaqQ(e.target.value)}
+                    onChange={(e) => {
+                      setNewFaqQ(e.target.value);
+                      if (addFaqErrors.q) setAddFaqErrors((prev) => ({ ...prev, q: undefined }));
+                    }}
                     placeholder="e.g. Do you accept emergency walk-in patients?"
-                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600"
+                    className={`w-full rounded-xl border bg-white p-2.5 outline-none transition ${
+                      addFaqErrors.q
+                        ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                        : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                    }`}
                   />
+                  {addFaqErrors.q && (
+                    <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1.5 animate-in fade-in">
+                      <span>⚠️</span>
+                      <span>{addFaqErrors.q}</span>
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Approved AI Answer</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-semibold text-slate-700">
+                      Approved AI Answer <span className="text-rose-500">*</span>
+                    </label>
+                    {addFaqErrors.a && (
+                      <span className="text-[10px] font-bold text-rose-500">Required</span>
+                    )}
+                  </div>
                   <textarea
-                    required
                     rows={2}
                     value={newFaqA}
-                    onChange={(e) => setNewFaqA(e.target.value)}
+                    onChange={(e) => {
+                      setNewFaqA(e.target.value);
+                      if (addFaqErrors.a) setAddFaqErrors((prev) => ({ ...prev, a: undefined }));
+                    }}
                     placeholder="e.g. Yes! We reserve walk-in appointment slots daily from 9 AM to 11 AM."
-                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 outline-none focus:border-indigo-600"
+                    className={`w-full rounded-xl border bg-white p-2.5 outline-none transition ${
+                      addFaqErrors.a
+                        ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                        : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                    }`}
                   />
+                  {addFaqErrors.a && (
+                    <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1.5 animate-in fade-in">
+                      <span>⚠️</span>
+                      <span>{addFaqErrors.a}</span>
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowAddFaq(false)}
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600"
+                    onClick={() => {
+                      setShowAddFaq(false);
+                      setAddFaqErrors({});
+                    }}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -5881,7 +5993,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         : null;
 
                       return (
-                        <form onSubmit={handleAddPaymentMethod} className="space-y-3.5">
+                        <form onSubmit={handleAddPaymentMethod} noValidate className="space-y-3.5">
                           <div>
                             <div className="flex items-center justify-between mb-1.5">
                               <label className="text-[11px] font-bold text-slate-700">Card information</label>
@@ -5899,17 +6011,23 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                             </div>
 
                             {/* Stripe-style unified card container */}
-                            <div className="rounded-xl border border-slate-300 bg-white shadow-xs focus-within:border-indigo-600 focus-within:ring-2 focus-within:ring-indigo-100/70 transition-all overflow-hidden">
+                            <div className={`rounded-xl border bg-white shadow-xs transition-all overflow-hidden ${
+                              paymentCardErrors.number || paymentCardErrors.expiry || paymentCardErrors.cvc
+                                ? "border-rose-400 ring-1 ring-rose-400"
+                                : "border-slate-300 focus-within:border-indigo-600 focus-within:ring-2 focus-within:ring-indigo-100/70"
+                            }`}>
                               {/* Card Number */}
                               <div className="px-3.5 py-2.5 flex items-center justify-between">
                                 <input
                                   ref={addCardInputRef}
                                   type="text"
                                   value={cardNumber}
-                                  onChange={handleCardNumberChange}
+                                  onChange={(e) => {
+                                    handleCardNumberChange(e);
+                                    if (paymentCardErrors.number) setPaymentCardErrors((prev) => ({ ...prev, number: undefined }));
+                                  }}
                                   placeholder="1234 1234 1234 1234"
                                   maxLength={19}
-                                  required
                                   className="w-full bg-transparent text-xs font-mono tracking-wide text-slate-900 outline-none placeholder:text-slate-400 placeholder:font-sans"
                                 />
                                 <svg className="h-4 w-4 text-slate-400 shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -5924,10 +6042,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                   <input
                                     type="text"
                                     value={cardExpiry}
-                                    onChange={handleExpiryChange}
+                                    onChange={(e) => {
+                                      handleExpiryChange(e);
+                                      if (paymentCardErrors.expiry) setPaymentCardErrors((prev) => ({ ...prev, expiry: undefined }));
+                                    }}
                                     placeholder="MM / YY"
                                     maxLength={7}
-                                    required
                                     className="w-full bg-transparent text-xs font-mono tracking-wide text-slate-900 outline-none placeholder:text-slate-400 placeholder:font-sans"
                                   />
                                 </div>
@@ -5935,10 +6055,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                   <input
                                     type="text"
                                     value={cardCvc}
-                                    onChange={handleCvcChange}
+                                    onChange={(e) => {
+                                      handleCvcChange(e);
+                                      if (paymentCardErrors.cvc) setPaymentCardErrors((prev) => ({ ...prev, cvc: undefined }));
+                                    }}
                                     placeholder="CVC"
                                     maxLength={4}
-                                    required
                                     className="w-full bg-transparent text-xs font-mono tracking-wide text-slate-900 outline-none placeholder:text-slate-400 placeholder:font-sans"
                                   />
                                   <svg className="h-3.5 w-3.5 text-slate-400 shrink-0 ml-1" fill="currentColor" viewBox="0 0 20 20">
@@ -5947,18 +6069,50 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                 </div>
                               </div>
                             </div>
+
+                            {paymentCardErrors.number && (
+                              <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                                <span>⚠️</span> {paymentCardErrors.number}
+                              </p>
+                            )}
+                            {paymentCardErrors.expiry && (
+                              <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                                <span>⚠️</span> {paymentCardErrors.expiry}
+                              </p>
+                            )}
+                            {paymentCardErrors.cvc && (
+                              <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                                <span>⚠️</span> {paymentCardErrors.cvc}
+                              </p>
+                            )}
                           </div>
 
                           <div>
-                            <label className="block text-[11px] font-bold text-slate-700 mb-1">Name on card</label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-[11px] font-bold text-slate-700">Name on card</label>
+                              {paymentCardErrors.holder && (
+                                <span className="text-[10px] font-bold text-rose-500">Required</span>
+                              )}
+                            </div>
                             <input
                               type="text"
                               value={cardHolder}
-                              onChange={(e) => setCardHolder(e.target.value)}
+                              onChange={(e) => {
+                                setCardHolder(e.target.value);
+                                if (paymentCardErrors.holder) setPaymentCardErrors((prev) => ({ ...prev, holder: undefined }));
+                              }}
                               placeholder="Dr. Sarah Lee"
-                              required
-                              className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 shadow-xs"
+                              className={`w-full rounded-xl border bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition shadow-xs ${
+                                paymentCardErrors.holder
+                                  ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                                  : "border-slate-300 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100"
+                              }`}
                             />
+                            {paymentCardErrors.holder && (
+                              <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                                <span>⚠️</span> {paymentCardErrors.holder}
+                              </p>
+                            )}
                           </div>
 
                           <div className="flex items-center justify-between pt-1">
@@ -7335,6 +7489,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                     }`}
                   />
+                  {editMemberErrors?.name && (
+                    <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                      <span>⚠️</span> {editMemberErrors.name}
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-1.5">

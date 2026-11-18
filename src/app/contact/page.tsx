@@ -5,6 +5,7 @@ import { PageHero } from "@/components/SiteShell";
 
 export default function ContactPage() {
   const [submitted, setSubmitted] = useState(false);
+  const [contactErrors, setContactErrors] = useState<{ name?: string; email?: string }>({});
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -16,6 +17,22 @@ export default function ContactPage() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const errors: { name?: string; email?: string } = {};
+    if (!formData.name.trim()) {
+      errors.name = "Your full name is required.";
+    }
+    if (!formData.email.trim()) {
+      errors.email = "Work email is required.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
+      errors.email = "Please enter a valid email address (e.g. name@company.com).";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setContactErrors(errors);
+      return;
+    }
+
+    setContactErrors({});
     setSubmitted(true);
   }
 
@@ -48,30 +65,62 @@ export default function ContactPage() {
                 </button>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+              <form onSubmit={handleSubmit} noValidate className="space-y-4 text-xs">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Your Full Name *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-semibold text-slate-700">Your Full Name <span className="text-rose-500">*</span></label>
+                    {contactErrors.name && (
+                      <span className="text-[10px] font-bold text-rose-500">Required</span>
+                    )}
+                  </div>
                   <input
-                    required
                     type="text"
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    onChange={(e) => {
+                      setFormData({ ...formData, name: e.target.value });
+                      if (contactErrors.name) setContactErrors((prev) => ({ ...prev, name: undefined }));
+                    }}
                     placeholder="e.g. Dr. Sarah Jenkins"
-                    className="w-full rounded-xl border border-slate-200 p-2.5 outline-none focus:border-indigo-600 text-slate-900"
+                    className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
+                      contactErrors.name
+                        ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                        : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                    }`}
                   />
+                  {contactErrors.name && (
+                    <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                      <span>⚠️</span> {contactErrors.name}
+                    </p>
+                  )}
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Work Email *</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-semibold text-slate-700">Work Email <span className="text-rose-500">*</span></label>
+                      {contactErrors.email && (
+                        <span className="text-[10px] font-bold text-rose-500">Required</span>
+                      )}
+                    </div>
                     <input
-                      required
-                      type="email"
+                      type="text"
                       value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      onChange={(e) => {
+                        setFormData({ ...formData, email: e.target.value });
+                        if (contactErrors.email) setContactErrors((prev) => ({ ...prev, email: undefined }));
+                      }}
                       placeholder="sarah@healinghands.com.au"
-                      className="w-full rounded-xl border border-slate-200 p-2.5 outline-none focus:border-indigo-600 text-slate-900"
+                      className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
+                        contactErrors.email
+                          ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                          : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                      }`}
                     />
+                    {contactErrors.email && (
+                      <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                        <span>⚠️</span> {contactErrors.email}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">Clinic / Business Name</label>

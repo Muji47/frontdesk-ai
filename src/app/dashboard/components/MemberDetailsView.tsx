@@ -55,6 +55,7 @@ export default function MemberDetailsView({
   const [editName, setEditName] = useState(member.name);
   const [editRole, setEditRole] = useState(member.role);
   const [isSavingInfo, setIsSavingInfo] = useState(false);
+  const [editMemberErrors, setEditMemberErrors] = useState<{ name?: string }>({});
 
   // New Custom Template State
   const [isAddingCustom, setIsAddingCustom] = useState(false);
@@ -63,6 +64,7 @@ export default function MemberDetailsView({
   const [newContent, setNewContent] = useState("");
   const [newCategory, setNewCategory] = useState("General");
   const [isSubmittingCustom, setIsSubmittingCustom] = useState(false);
+  const [customErrors, setCustomErrors] = useState<{ title?: string; command?: string; content?: string }>({});
 
   // Editing Existing Template State
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
@@ -71,6 +73,7 @@ export default function MemberDetailsView({
   const [editContent, setEditContent] = useState("");
   const [editCategory, setEditCategory] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editErrors, setEditErrors] = useState<{ title?: string; command?: string; content?: string }>({});
 
   // Copy feedback & Simulator
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -116,11 +119,14 @@ export default function MemberDetailsView({
     setTimeout(() => setSuccessMsg(null), 3500);
   }
 
-  // Handle Member Info Save
+  // Handle Member Info Save with Inline Validation
   async function handleSaveMemberInfo(e: React.FormEvent) {
     e.preventDefault();
-    if (!editName.trim()) return;
-
+    if (!editName.trim()) {
+      setEditMemberErrors({ name: "Full display name is required." });
+      return;
+    }
+    setEditMemberErrors({});
     setIsSavingInfo(true);
     setError(null);
     try {
@@ -139,6 +145,7 @@ export default function MemberDetailsView({
       }
       notifySuccess("Member details updated successfully!");
       setIsEditingInfo(false);
+      setEditMemberErrors({});
       if (onUpdateMember) {
         onUpdateMember({ id: member.id, name: editName.trim(), role: editRole });
       }
@@ -149,20 +156,45 @@ export default function MemberDetailsView({
     }
   }
 
-  // Handle Create Custom Template
+  // Handle Create Custom Template with Clean Inline Validation
   async function handleCreateCustomTemplate(e: React.FormEvent) {
     e.preventDefault();
-    if (!newTitle.trim() || !newCommand.trim() || !newContent.trim()) {
-      setError("Please fill in Title, Command Shortcut, and Message Content.");
+    const errors: { title?: string; command?: string; content?: string } = {};
+
+    if (!newTitle.trim()) {
+      errors.title = "Template title is required (e.g. Telehealth Video Link).";
+    } else if (newTitle.trim().length < 2) {
+      errors.title = "Template title must be at least 2 characters.";
+    }
+
+    let cmd = newCommand.trim();
+    if (!cmd) {
+      errors.command = "Command shortcut is required (e.g. /zoom or /greeting).";
+    } else {
+      if (!cmd.startsWith("/")) cmd = "/" + cmd;
+      if (!/^\/[a-zA-Z0-9_\-]+$/.test(cmd)) {
+        errors.command = "Command shortcut may only contain letters, numbers, and dashes (e.g. /telehealth).";
+      } else {
+        const duplicate = templates.find((t) => t.command.toLowerCase() === cmd.toLowerCase());
+        if (duplicate) {
+          errors.command = `Shortcut "${cmd}" is already used by "${duplicate.title}". Please choose a different shortcut.`;
+        }
+      }
+    }
+
+    if (!newContent.trim()) {
+      errors.content = "Message content is required. Please type your message template.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setCustomErrors(errors);
       return;
     }
 
+    setCustomErrors({});
     setIsSubmittingCustom(true);
     setError(null);
     try {
-      let cmd = newCommand.trim();
-      if (!cmd.startsWith("/")) cmd = "/" + cmd;
-
       const res = await fetch("/api/dashboard/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -184,6 +216,7 @@ export default function MemberDetailsView({
       setNewCommand("");
       setNewContent("");
       setNewCategory("General");
+      setCustomErrors({});
       setIsAddingCustom(false);
       await fetchTemplates();
     } catch (err: any) {
@@ -200,20 +233,46 @@ export default function MemberDetailsView({
     setEditCommand(t.command);
     setEditContent(t.content);
     setEditCategory(t.category);
+    setEditErrors({});
   }
 
   async function handleSaveEditedTemplate(templateId: string) {
-    if (!editTitle.trim() || !editCommand.trim() || !editContent.trim()) {
-      setError("Title, command shortcut, and content cannot be empty.");
+    const errors: { title?: string; command?: string; content?: string } = {};
+
+    if (!editTitle.trim()) {
+      errors.title = "Template title is required.";
+    } else if (editTitle.trim().length < 2) {
+      errors.title = "Title must be at least 2 characters.";
+    }
+
+    let cmd = editCommand.trim();
+    if (!cmd) {
+      errors.command = "Command shortcut is required.";
+    } else {
+      if (!cmd.startsWith("/")) cmd = "/" + cmd;
+      if (!/^\/[a-zA-Z0-9_\-]+$/.test(cmd)) {
+        errors.command = "Shortcut may only contain letters, numbers, and dashes (e.g. /zoom).";
+      } else {
+        const duplicate = templates.find((t) => t.id !== templateId && t.command.toLowerCase() === cmd.toLowerCase());
+        if (duplicate) {
+          errors.command = `Shortcut "${cmd}" is already used by "${duplicate.title}". Please choose a different shortcut.`;
+        }
+      }
+    }
+
+    if (!editContent.trim()) {
+      errors.content = "Personal message content is required.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setEditErrors(errors);
       return;
     }
 
     setIsSavingEdit(true);
+    setEditErrors({});
     setError(null);
     try {
-      let cmd = editCommand.trim();
-      if (!cmd.startsWith("/")) cmd = "/" + cmd;
-
       const res = await fetch("/api/dashboard/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -233,6 +292,7 @@ export default function MemberDetailsView({
 
       notifySuccess(`Template "${cmd}" updated successfully!`);
       setEditingTemplateId(null);
+      setEditErrors({});
       await fetchTemplates();
     } catch (err: any) {
       setError(err.message || "Failed to save template edits.");
@@ -521,6 +581,7 @@ export default function MemberDetailsView({
         {isEditingInfo && (
           <form
             onSubmit={handleSaveMemberInfo}
+            noValidate
             className="mt-6 pt-5 border-t border-slate-100 bg-slate-50/80 -mx-6 -mb-6 p-6 space-y-4"
           >
             <div className="flex items-center justify-between">
@@ -529,7 +590,10 @@ export default function MemberDetailsView({
               </b>
               <button
                 type="button"
-                onClick={() => setIsEditingInfo(false)}
+                onClick={() => {
+                  setIsEditingInfo(false);
+                  setEditMemberErrors({});
+                }}
                 className="text-xs text-slate-400 hover:text-slate-600 font-semibold"
               >
                 Cancel
@@ -538,16 +602,33 @@ export default function MemberDetailsView({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                  Full Display Name
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase">
+                    Full Display Name <span className="text-rose-500">*</span>
+                  </label>
+                  {editMemberErrors.name && (
+                    <span className="text-[10px] font-bold text-rose-500">Required</span>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs bg-white text-slate-900 focus:outline-indigo-500"
-                  required
+                  onChange={(e) => {
+                    setEditName(e.target.value);
+                    if (editMemberErrors.name) setEditMemberErrors({});
+                  }}
+                  className={`w-full rounded-xl border px-3 py-2 text-xs bg-white text-slate-900 outline-none transition ${
+                    editMemberErrors.name
+                      ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                      : "border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  }`}
                 />
+                {editMemberErrors.name && (
+                  <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1.5 animate-in fade-in">
+                    <span>⚠️</span>
+                    <span>{editMemberErrors.name}</span>
+                  </p>
+                )}
               </div>
 
               <div>
@@ -655,6 +736,7 @@ export default function MemberDetailsView({
       {isAddingCustom && (
         <form
           onSubmit={handleCreateCustomTemplate}
+          noValidate
           className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/60 to-purple-50/40 p-5 shadow-xs space-y-4 animate-fade-in"
         >
           <div className="flex items-center justify-between">
@@ -669,34 +751,69 @@ export default function MemberDetailsView({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                Template Title
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-bold text-slate-700 uppercase">
+                  Template Title <span className="text-rose-500">*</span>
+                </label>
+                {customErrors.title && (
+                  <span className="text-[10px] font-bold text-rose-500">Required</span>
+                )}
+              </div>
               <input
                 type="text"
                 placeholder="e.g. Telehealth Video Link"
                 value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs bg-white text-slate-900 focus:outline-indigo-500"
-                required
+                onChange={(e) => {
+                  setNewTitle(e.target.value);
+                  if (customErrors.title) setCustomErrors((prev) => ({ ...prev, title: undefined }));
+                }}
+                className={`w-full rounded-xl border px-3 py-2 text-xs bg-white text-slate-900 outline-none transition ${
+                  customErrors.title
+                    ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                    : "border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                }`}
               />
+              {customErrors.title && (
+                <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1.5 animate-in fade-in">
+                  <span>⚠️</span>
+                  <span>{customErrors.title}</span>
+                </p>
+              )}
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                Command Shortcut (Slash Macro)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-bold text-slate-700 uppercase">
+                  Command Shortcut <span className="text-rose-500">*</span>
+                </label>
+                {customErrors.command && (
+                  <span className="text-[10px] font-bold text-rose-500">Required</span>
+                )}
+              </div>
               <div className="relative">
                 <input
                   type="text"
                   placeholder="/zoom"
                   value={newCommand}
-                  onChange={(e) => setNewCommand(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs bg-white text-slate-900 font-mono focus:outline-indigo-500"
-                  required
+                  onChange={(e) => {
+                    setNewCommand(e.target.value);
+                    if (customErrors.command) setCustomErrors((prev) => ({ ...prev, command: undefined }));
+                  }}
+                  className={`w-full rounded-xl border px-3 py-2 text-xs bg-white text-slate-900 font-mono outline-none transition ${
+                    customErrors.command
+                      ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                      : "border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  }`}
                 />
               </div>
-              <span className="text-[10px] text-slate-400 mt-0.5 block">Typing this in chat will expand the message</span>
+              {customErrors.command ? (
+                <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1.5 animate-in fade-in">
+                  <span>⚠️</span>
+                  <span>{customErrors.command}</span>
+                </p>
+              ) : (
+                <span className="text-[10px] text-slate-400 mt-0.5 block">Typing this in chat will expand the message</span>
+              )}
             </div>
 
             <div>
@@ -708,7 +825,7 @@ export default function MemberDetailsView({
                 placeholder="e.g. Consultation, Care, General"
                 value={newCategory}
                 onChange={(e) => setNewCategory(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs bg-white text-slate-900 focus:outline-indigo-500"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs bg-white text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
               />
             </div>
           </div>
@@ -716,25 +833,45 @@ export default function MemberDetailsView({
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="block text-[11px] font-bold text-slate-700 uppercase">
-                Message Content
+                Message Content <span className="text-rose-500">*</span>
               </label>
-              <span className="text-[10px] text-slate-400">{newContent.length} characters</span>
+              <div className="flex items-center gap-2">
+                {customErrors.content && (
+                  <span className="text-[10px] font-bold text-rose-500">Required</span>
+                )}
+                <span className="text-[10px] text-slate-400">{newContent.length} characters</span>
+              </div>
             </div>
             <textarea
               rows={3}
               placeholder="Type the full message text to be delivered to the patient or visitor..."
               value={newContent}
-              onChange={(e) => setNewContent(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs bg-white text-slate-900 focus:outline-indigo-500 leading-relaxed"
-              required
+              onChange={(e) => {
+                setNewContent(e.target.value);
+                if (customErrors.content) setCustomErrors((prev) => ({ ...prev, content: undefined }));
+              }}
+              className={`w-full rounded-xl border px-3 py-2 text-xs bg-white text-slate-900 outline-none leading-relaxed transition ${
+                customErrors.content
+                  ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                  : "border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              }`}
             />
+            {customErrors.content && (
+              <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1.5 animate-in fade-in">
+                <span>⚠️</span>
+                <span>{customErrors.content}</span>
+              </p>
+            )}
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
               type="button"
-              onClick={() => setIsAddingCustom(false)}
-              className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-white rounded-xl transition"
+              onClick={() => {
+                setIsAddingCustom(false);
+                setCustomErrors({});
+              }}
+              className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-white rounded-xl transition cursor-pointer"
             >
               Cancel
             </button>
@@ -898,28 +1035,66 @@ export default function MemberDetailsView({
                     /* Inline Editing Mode */
                     <div className="space-y-3 my-3 pt-2 border-t border-slate-100">
                       <div>
-                        <label className="block text-[10px] font-bold text-slate-600 uppercase mb-0.5">
-                          Title
-                        </label>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <label className="block text-[10px] font-bold text-slate-600 uppercase">
+                            Title <span className="text-rose-500">*</span>
+                          </label>
+                          {editErrors.title && (
+                            <span className="text-[10px] font-bold text-rose-500">Required</span>
+                          )}
+                        </div>
                         <input
                           type="text"
                           value={editTitle}
-                          onChange={(e) => setEditTitle(e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs text-slate-900 focus:outline-indigo-500"
+                          onChange={(e) => {
+                            setEditTitle(e.target.value);
+                            if (editErrors.title) setEditErrors((prev) => ({ ...prev, title: undefined }));
+                          }}
+                          className={`w-full rounded-xl border px-2.5 py-1.5 text-xs text-slate-900 outline-none transition ${
+                            editErrors.title
+                              ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                              : "border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                          }`}
                         />
+                        {editErrors.title && (
+                          <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1 animate-in fade-in">
+                            <span>⚠️</span>
+                            <span>{editErrors.title}</span>
+                          </p>
+                        )}
                       </div>
+
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-[10px] font-bold text-slate-600 uppercase mb-0.5">
-                            Command
-                          </label>
+                          <div className="flex items-center justify-between mb-0.5">
+                            <label className="block text-[10px] font-bold text-slate-600 uppercase">
+                              Command <span className="text-rose-500">*</span>
+                            </label>
+                            {editErrors.command && (
+                              <span className="text-[10px] font-bold text-rose-500">Required</span>
+                            )}
+                          </div>
                           <input
                             type="text"
                             value={editCommand}
-                            onChange={(e) => setEditCommand(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs font-mono text-slate-900 focus:outline-indigo-500"
+                            onChange={(e) => {
+                              setEditCommand(e.target.value);
+                              if (editErrors.command) setEditErrors((prev) => ({ ...prev, command: undefined }));
+                            }}
+                            className={`w-full rounded-xl border px-2.5 py-1.5 text-xs font-mono text-slate-900 outline-none transition ${
+                              editErrors.command
+                                ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                                : "border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            }`}
                           />
+                          {editErrors.command && (
+                            <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1 animate-in fade-in">
+                              <span>⚠️</span>
+                              <span>{editErrors.command}</span>
+                            </p>
+                          )}
                         </div>
+
                         <div>
                           <label className="block text-[10px] font-bold text-slate-600 uppercase mb-0.5">
                             Category
@@ -928,26 +1103,49 @@ export default function MemberDetailsView({
                             type="text"
                             value={editCategory}
                             onChange={(e) => setEditCategory(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs text-slate-900 focus:outline-indigo-500"
+                            className="w-full rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
                           />
                         </div>
                       </div>
+
                       <div>
-                        <label className="block text-[10px] font-bold text-slate-600 uppercase mb-0.5">
-                          Personal Message Content
-                        </label>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <label className="block text-[10px] font-bold text-slate-600 uppercase">
+                            Personal Message Content <span className="text-rose-500">*</span>
+                          </label>
+                          {editErrors.content && (
+                            <span className="text-[10px] font-bold text-rose-500">Required</span>
+                          )}
+                        </div>
                         <textarea
                           rows={3}
                           value={editContent}
-                          onChange={(e) => setEditContent(e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs text-slate-900 focus:outline-indigo-500 leading-relaxed"
+                          onChange={(e) => {
+                            setEditContent(e.target.value);
+                            if (editErrors.content) setEditErrors((prev) => ({ ...prev, content: undefined }));
+                          }}
+                          className={`w-full rounded-xl border px-2.5 py-1.5 text-xs text-slate-900 outline-none leading-relaxed transition ${
+                            editErrors.content
+                              ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                              : "border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                          }`}
                         />
+                        {editErrors.content && (
+                          <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1.5 mt-1 animate-in fade-in">
+                            <span>⚠️</span>
+                            <span>{editErrors.content}</span>
+                          </p>
+                        )}
                       </div>
+
                       <div className="flex items-center justify-end gap-2 pt-1">
                         <button
                           type="button"
-                          onClick={() => setEditingTemplateId(null)}
-                          className="px-2.5 py-1 text-xs font-semibold text-slate-500 hover:text-slate-700"
+                          onClick={() => {
+                            setEditingTemplateId(null);
+                            setEditErrors({});
+                          }}
+                          className="px-2.5 py-1 text-xs font-semibold text-slate-500 hover:text-slate-700 cursor-pointer"
                         >
                           Cancel
                         </button>
@@ -955,7 +1153,7 @@ export default function MemberDetailsView({
                           type="button"
                           disabled={isSavingEdit}
                           onClick={() => handleSaveEditedTemplate(t.id)}
-                          className="px-3.5 py-1 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg transition shadow-2xs"
+                          className="px-3.5 py-1 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg transition shadow-2xs cursor-pointer"
                         >
                           {isSavingEdit ? "Saving..." : "Save Changes"}
                         </button>

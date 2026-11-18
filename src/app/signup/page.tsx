@@ -33,6 +33,28 @@ export default function SignupPage() {
     e.preventDefault();
     setGeneralError("");
     setFieldErrors({});
+
+    const clientErrors: Record<string, string[]> = {};
+    if (!form.fullName.trim()) {
+      clientErrors.name = ["Your full name is required."];
+    } else if (form.fullName.trim().length < 2) {
+      clientErrors.name = ["Name must be at least 2 characters."];
+    }
+    if (!form.email.trim()) {
+      clientErrors.email = ["Business email is required."];
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      clientErrors.email = ["Please enter a valid email address (e.g. name@company.com)."];
+    }
+    if (!form.password) {
+      clientErrors.password = ["Password is required."];
+    } else if (form.password.length < 8) {
+      clientErrors.password = ["Password must be at least 8 characters."];
+    }
+    if (Object.keys(clientErrors).length > 0) {
+      setFieldErrors(clientErrors);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -106,7 +128,6 @@ export default function SignupPage() {
             <div>
               <label className="block font-semibold text-slate-700 mb-1">Clinic or Business Name *</label>
               <input
-                required
                 type="text"
                 value={form.businessName}
                 onChange={(e) => {
@@ -115,12 +136,14 @@ export default function SignupPage() {
                 }}
                 placeholder="e.g. Healing Hands Physiotherapy"
                 className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
-                  fieldErrors.businessName?.length ? "border-red-500 bg-red-50/20" : "border-slate-200 focus:border-indigo-600"
+                  fieldErrors.businessName?.length
+                    ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                    : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                 }`}
               />
               {fieldErrors.businessName?.map((err, i) => (
-                <span key={i} className="mt-1 block text-[11px] text-red-600 font-medium">
-                  {err}
+                <span key={i} className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                  <span>⚠️</span> {err}
                 </span>
               ))}
             </div>
@@ -159,11 +182,15 @@ export default function SignupPage() {
         )}
 
         {step === 2 && (
-          <form onSubmit={handleRegister} className="mt-6 space-y-4 text-xs">
+          <form onSubmit={handleRegister} noValidate className="mt-6 space-y-4 text-xs">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Your Full Name *</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-semibold text-slate-700">Your Full Name <span className="text-rose-500">*</span></label>
+                {fieldErrors.name?.length ? (
+                  <span className="text-[10px] font-bold text-rose-500">Required</span>
+                ) : null}
+              </div>
               <input
-                required
                 type="text"
                 value={form.fullName}
                 onChange={(e) => {
@@ -172,21 +199,27 @@ export default function SignupPage() {
                 }}
                 placeholder="Dr. Sarah Jenkins"
                 className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
-                  fieldErrors.name?.length ? "border-red-500 bg-red-50/20" : "border-slate-200 focus:border-indigo-600"
+                  fieldErrors.name?.length
+                    ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                    : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                 }`}
               />
               {fieldErrors.name?.map((err, i) => (
-                <span key={i} className="mt-1 block text-[11px] text-red-600 font-medium">
-                  {err}
+                <span key={i} className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                  <span>⚠️</span> {err}
                 </span>
               ))}
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Business Email *</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-semibold text-slate-700">Business Email <span className="text-rose-500">*</span></label>
+                {fieldErrors.email?.length ? (
+                  <span className="text-[10px] font-bold text-rose-500">Required</span>
+                ) : null}
+              </div>
               <input
-                required
-                type="email"
+                type="text"
                 value={form.email}
                 onChange={(e) => {
                   setForm({ ...form, email: e.target.value });
@@ -194,20 +227,26 @@ export default function SignupPage() {
                 }}
                 placeholder="sarah@healinghands.com.au"
                 className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
-                  fieldErrors.email?.length ? "border-red-500 bg-red-50/20" : "border-slate-200 focus:border-indigo-600"
+                  fieldErrors.email?.length
+                    ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                    : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                 }`}
               />
               {fieldErrors.email?.map((err, i) => (
-                <span key={i} className="mt-1 block text-[11px] text-red-600 font-medium">
-                  {err}
+                <span key={i} className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                  <span>⚠️</span> {err}
                 </span>
               ))}
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Create Password (min. 8 characters) *</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-semibold text-slate-700">Create Password (min. 8 characters) <span className="text-rose-500">*</span></label>
+                {fieldErrors.password?.length ? (
+                  <span className="text-[10px] font-bold text-rose-500">Required</span>
+                ) : null}
+              </div>
               <input
-                required
                 type="password"
                 value={form.password}
                 onChange={(e) => {
@@ -216,12 +255,14 @@ export default function SignupPage() {
                 }}
                 placeholder="••••••••••••"
                 className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
-                  fieldErrors.password?.length ? "border-red-500 bg-red-50/20" : "border-slate-200 focus:border-indigo-600"
+                  fieldErrors.password?.length
+                    ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                    : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                 }`}
               />
               {fieldErrors.password?.map((err, i) => (
-                <span key={i} className="mt-1 block text-[11px] text-red-600 font-medium">
-                  {err}
+                <span key={i} className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                  <span>⚠️</span> {err}
                 </span>
               ))}
             </div>

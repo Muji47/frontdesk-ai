@@ -26,6 +26,21 @@ export default function LoginPage() {
     e.preventDefault();
     setGeneralError("");
     setFieldErrors({});
+
+    const clientErrors: Record<string, string[]> = {};
+    if (!email.trim()) {
+      clientErrors.email = ["Business email is required."];
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      clientErrors.email = ["Please enter a valid email address (e.g. name@company.com)."];
+    }
+    if (!password) {
+      clientErrors.password = ["Password is required."];
+    }
+    if (Object.keys(clientErrors).length > 0) {
+      setFieldErrors(clientErrors);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -99,12 +114,16 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="mt-6 space-y-4 text-xs">
+        <form onSubmit={handleLogin} noValidate className="mt-6 space-y-4 text-xs">
           <div>
-            <label className="block font-semibold text-slate-700 mb-1">Business Email</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block font-semibold text-slate-700">Business Email</label>
+              {fieldErrors.email?.length ? (
+                <span className="text-[10px] font-bold text-rose-500">Required</span>
+              ) : null}
+            </div>
             <input
-              required
-              type="email"
+              type="text"
               value={email}
               onChange={(e) => {
                 setEmail(e.target.value);
@@ -112,12 +131,14 @@ export default function LoginPage() {
               }}
               placeholder="reception@yourclinic.com.au"
               className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
-                fieldErrors.email?.length ? "border-red-500 bg-red-50/20" : "border-slate-200 focus:border-indigo-600"
+                fieldErrors.email?.length
+                  ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                  : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
               }`}
             />
             {fieldErrors.email?.map((err, i) => (
-              <span key={i} className="mt-1 block text-[11px] text-red-600 font-medium">
-                {err}
+              <span key={i} className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                <span>⚠️</span> {err}
               </span>
             ))}
           </div>
@@ -128,7 +149,6 @@ export default function LoginPage() {
               <Link href="/forgot-password" className="text-indigo-600 hover:underline text-[11px]">Forgot password?</Link>
             </div>
             <input
-              required
               type="password"
               value={password}
               onChange={(e) => {
@@ -137,12 +157,14 @@ export default function LoginPage() {
               }}
               placeholder="••••••••••••"
               className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
-                fieldErrors.password?.length ? "border-red-500 bg-red-50/20" : "border-slate-200 focus:border-indigo-600"
+                fieldErrors.password?.length
+                  ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                  : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
               }`}
             />
             {fieldErrors.password?.map((err, i) => (
-              <span key={i} className="mt-1 block text-[11px] text-red-600 font-medium">
-                {err}
+              <span key={i} className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                <span>⚠️</span> {err}
               </span>
             ))}
           </div>

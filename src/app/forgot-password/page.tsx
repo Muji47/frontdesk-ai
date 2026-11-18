@@ -8,12 +8,25 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [devUrl, setDevUrl] = useState<string | null>(null);
 
   async function handleForgot(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setEmailError(null);
+
+    const trimmed = email.trim();
+    if (!trimmed) {
+      setEmailError("Account email is required.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setEmailError("Please enter a valid email address (e.g. name@company.com).");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -105,22 +118,38 @@ export default function ForgotPasswordPage() {
             </div>
           </div>
         ) : (
-          <form onSubmit={handleForgot} className="mt-6 space-y-4 text-xs">
+          <form onSubmit={handleForgot} noValidate className="mt-6 space-y-4 text-xs">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Account Email</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-semibold text-slate-700">Account Email</label>
+                {emailError && (
+                  <span className="text-[10px] font-bold text-rose-500">Required</span>
+                )}
+              </div>
               <input
-                required
-                type="email"
+                type="text"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (emailError) setEmailError(null);
+                }}
                 placeholder="reception@yourclinic.com.au"
-                className="w-full rounded-xl border border-slate-200 p-2.5 outline-none transition text-slate-900 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
+                  emailError
+                    ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                    : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                }`}
               />
+              {emailError && (
+                <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                  <span>⚠️</span> {emailError}
+                </p>
+              )}
             </div>
 
             <button
               type="submit"
-              disabled={loading || !email.trim()}
+              disabled={loading}
               className="w-full rounded-xl bg-indigo-600 py-3 font-bold text-white shadow-md hover:bg-indigo-700 transition disabled:opacity-50 cursor-pointer"
             >
               {loading ? "Sending Reset Link..." : "Send Reset Link →"}

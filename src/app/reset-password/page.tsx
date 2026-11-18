@@ -24,6 +24,7 @@ function ResetPasswordContent() {
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<{ password?: string; confirm?: string }>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -57,13 +58,23 @@ function ResetPasswordContent() {
   async function handleSetPassword(e: React.FormEvent) {
     e.preventDefault();
     setSubmitError("");
+    setFieldErrors({});
 
-    if (password.length < 8) {
-      setSubmitError("Password must be at least 8 characters long.");
-      return;
+    const errors: { password?: string; confirm?: string } = {};
+    if (!password) {
+      errors.password = "New password is required.";
+    } else if (password.length < 8) {
+      errors.password = "Password must be at least 8 characters long.";
     }
-    if (password !== confirmPassword) {
-      setSubmitError("Passwords do not match. Please verify both inputs.");
+
+    if (!confirmPassword) {
+      errors.confirm = "Please confirm your password.";
+    } else if (password !== confirmPassword) {
+      errors.confirm = "Passwords do not match. Please verify both inputs.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
 
@@ -180,34 +191,66 @@ function ResetPasswordContent() {
               </div>
             )}
 
-            <form onSubmit={handleSetPassword} className="space-y-4 text-xs">
+            <form onSubmit={handleSetPassword} noValidate className="space-y-4 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">New Password</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-semibold text-slate-700">New Password</label>
+                  {fieldErrors.password && (
+                    <span className="text-[10px] font-bold text-rose-500">Required</span>
+                  )}
+                </div>
                 <input
-                  required
                   type="password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (fieldErrors.password) setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                  }}
                   placeholder="Min 8 characters"
-                  className="w-full rounded-xl border border-slate-200 p-2.5 outline-none transition text-slate-900 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                  className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
+                    fieldErrors.password
+                      ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                      : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                  }`}
                 />
+                {fieldErrors.password && (
+                  <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                    <span>⚠️</span> {fieldErrors.password}
+                  </p>
+                )}
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Confirm Password</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-semibold text-slate-700">Confirm Password</label>
+                  {fieldErrors.confirm && (
+                    <span className="text-[10px] font-bold text-rose-500">Required</span>
+                  )}
+                </div>
                 <input
-                  required
                   type="password"
                   value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    if (fieldErrors.confirm) setFieldErrors((prev) => ({ ...prev, confirm: undefined }));
+                  }}
                   placeholder="Repeat new password"
-                  className="w-full rounded-xl border border-slate-200 p-2.5 outline-none transition text-slate-900 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                  className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
+                    fieldErrors.confirm
+                      ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                      : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                  }`}
                 />
+                {fieldErrors.confirm && (
+                  <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                    <span>⚠️</span> {fieldErrors.confirm}
+                  </p>
+                )}
               </div>
 
               <button
                 type="submit"
-                disabled={submitting || !password.trim() || !confirmPassword.trim()}
+                disabled={submitting}
                 className="w-full rounded-xl bg-indigo-600 py-3 font-bold text-white shadow-md hover:bg-indigo-700 transition disabled:opacity-50 cursor-pointer"
               >
                 {submitting ? "Saving Password..." : isInvite ? "Activate Account & Sign In →" : "Save Password & Sign In →"}

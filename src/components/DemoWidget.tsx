@@ -134,6 +134,7 @@ export function DemoWidget({ cfg }: { cfg: Industry }) {
 
       <div className="px-3 pt-2 text-xs text-slate-400">You’re chatting with an AI assistant.</div>
       <form
+        noValidate
         className="flex gap-2 p-3"
         onSubmit={(e) => {
           e.preventDefault();

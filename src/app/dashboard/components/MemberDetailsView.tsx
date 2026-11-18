@@ -77,6 +77,12 @@ export default function MemberDetailsView({
   const [simulatorInput, setSimulatorInput] = useState("");
   const [simulatorMatched, setSimulatorMatched] = useState<string | null>(null);
 
+  // Custom Modal States (replacing all native browser confirm dialogs)
+  const [templateToDelete, setTemplateToDelete] = useState<UserMessageTemplate | null>(null);
+  const [isDeletingTemplate, setIsDeletingTemplate] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isResettingDefaults, setIsResettingDefaults] = useState(false);
+
   // Fetch templates for this member
   async function fetchTemplates() {
     setIsLoading(true);
@@ -235,26 +241,28 @@ export default function MemberDetailsView({
     }
   }
 
-  // Handle Delete Template
-  async function handleDeleteTemplate(t: UserMessageTemplate) {
-    if (!confirm(`Are you sure you want to delete template "${t.command}" (${t.title})?`)) {
-      return;
-    }
+  // Handle Delete Template via Custom Modal Confirmation
+  async function confirmDeleteTemplate() {
+    if (!templateToDelete || isDeletingTemplate) return;
 
+    setIsDeletingTemplate(true);
     setError(null);
     try {
       const res = await fetch(
-        `/api/dashboard/templates?id=${encodeURIComponent(t.id)}&userId=${encodeURIComponent(member.id)}`,
+        `/api/dashboard/templates?id=${encodeURIComponent(templateToDelete.id)}&userId=${encodeURIComponent(member.id)}`,
         { method: "DELETE" }
       );
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to delete template.");
       }
-      notifySuccess(`Template "${t.command}" removed.`);
+      notifySuccess(`Template "${templateToDelete.command}" removed successfully.`);
+      setTemplateToDelete(null);
       await fetchTemplates();
     } catch (err: any) {
       setError(err.message || "Failed to delete template.");
+    } finally {
+      setIsDeletingTemplate(false);
     }
   }
 
@@ -291,17 +299,11 @@ export default function MemberDetailsView({
     }
   }
 
-  // Handle Reset to Defaults
-  async function handleResetToDefaults() {
-    if (
-      !confirm(
-        "Are you sure you want to reset all predefined messages to standard clinic defaults? Any personal edits to predefined templates will be refreshed."
-      )
-    ) {
-      return;
-    }
+  // Handle Reset to Defaults via Custom Modal Confirmation
+  async function confirmResetDefaults() {
+    if (isResettingDefaults) return;
 
-    setIsLoading(true);
+    setIsResettingDefaults(true);
     setError(null);
     try {
       const res = await fetch("/api/dashboard/templates", {
@@ -314,6 +316,7 @@ export default function MemberDetailsView({
         throw new Error(data.error || "Failed to reset templates.");
       }
       notifySuccess("Predefined messages have been restored to defaults!");
+      setIsResetModalOpen(false);
       setTemplates(data.data.templates || []);
       if (onTemplatesChanged && isSelf) {
         onTemplatesChanged();
@@ -321,7 +324,7 @@ export default function MemberDetailsView({
     } catch (err: any) {
       setError(err.message || "Could not reset templates.");
     } finally {
-      setIsLoading(false);
+      setIsResettingDefaults(false);
     }
   }
 
@@ -610,7 +613,7 @@ export default function MemberDetailsView({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={handleResetToDefaults}
+              onClick={() => setIsResetModalOpen(true)}
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl transition shadow-2xs cursor-pointer"
               title="Restore standard clinic defaults for all predefined templates"
             >
@@ -1014,7 +1017,7 @@ export default function MemberDetailsView({
                             <span className="text-slate-200">|</span>
                             <button
                               type="button"
-                              onClick={() => handleDeleteTemplate(t)}
+                              onClick={() => setTemplateToDelete(t)}
                               className="text-rose-600 hover:text-rose-800 font-semibold transition cursor-pointer hover:underline"
                               title="Delete custom template"
                             >
@@ -1095,6 +1098,149 @@ export default function MemberDetailsView({
           )}
         </div>
       </div>
+
+      {/* ============================================================ */}
+      {/* CUSTOM CONFIRMATION MODAL 1: RESTORE PREDEFINED DEFAULTS     */}
+      {/* ============================================================ */}
+      {isResetModalOpen && (
+        <div
+          onClick={() => !isResettingDefaults && setIsResetModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4 animate-in zoom-in-95 duration-150 text-slate-900"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 shadow-xs">
+                <span className="text-xl">↺</span>
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-slate-900">
+                  Restore Predefined Messages?
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Reset practice responses back to original defaults
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-amber-50/70 border border-amber-200/80 p-3.5 text-xs text-amber-900 leading-relaxed space-y-2">
+              <p>
+                Are you sure you want to reset all <b>predefined messages</b> to standard clinic defaults?
+              </p>
+              <div className="text-[11px] text-amber-800 space-y-1.5 pt-2 border-t border-amber-200/50">
+                <div className="flex items-start gap-1.5">
+                  <span className="shrink-0 mt-0.5">⚠️</span>
+                  <span>Personal customizations made to predefined responses will be refreshed with original templates.</span>
+                </div>
+                <div className="flex items-start gap-1.5">
+                  <span className="shrink-0 mt-0.5">🔒</span>
+                  <span>Any custom templates you created will remain untouched and active.</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isResettingDefaults}
+                onClick={() => setIsResetModalOpen(false)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isResettingDefaults}
+                onClick={confirmResetDefaults}
+                className="rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 shadow-xs transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {isResettingDefaults ? (
+                  <span>Restoring...</span>
+                ) : (
+                  <>
+                    <span>↺</span>
+                    <span>Restore Defaults</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* CUSTOM CONFIRMATION MODAL 2: DELETE CUSTOM TEMPLATE          */}
+      {/* ============================================================ */}
+      {templateToDelete && (
+        <div
+          onClick={() => !isDeletingTemplate && setTemplateToDelete(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4 animate-in zoom-in-95 duration-150 text-slate-900"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 shadow-xs">
+                <span className="text-xl">🗑️</span>
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-slate-900">
+                  Delete Custom Template?
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  This macro shortcut will be permanently removed
+                </p>
+              </div>
+            </div>
+
+            {/* Template Preview Card */}
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-900">{templateToDelete.title}</span>
+                <span className="font-mono text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md font-bold text-[11px]">
+                  {templateToDelete.command}
+                </span>
+              </div>
+              <p className="text-slate-600 text-[11px] italic bg-white p-2.5 rounded-lg border border-slate-100 line-clamp-2">
+                "{templateToDelete.content}"
+              </p>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              This macro will no longer be available in live conversation takeover or slash auto-expansion.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isDeletingTemplate}
+                onClick={() => setTemplateToDelete(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingTemplate}
+                onClick={confirmDeleteTemplate}
+                className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 shadow-xs transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {isDeletingTemplate ? (
+                  <span>Deleting...</span>
+                ) : (
+                  <>
+                    <span>🗑️</span>
+                    <span>Delete Template</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

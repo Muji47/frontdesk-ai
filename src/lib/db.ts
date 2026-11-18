@@ -392,6 +392,24 @@ try {
     );
 
     CREATE INDEX IF NOT EXISTS idx_dispatched_emails_to ON dispatched_emails(to_email);
+
+    -- User Message Templates & Predefined Macros
+    CREATE TABLE IF NOT EXISTS user_message_templates (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      command TEXT NOT NULL,
+      content TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'General',
+      is_predefined INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_msg_templates_user ON user_message_templates(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_msg_templates_cmd ON user_message_templates(user_id, command);
   `);
 } catch (err) {
   console.error("Billing schema migration warning:", err);

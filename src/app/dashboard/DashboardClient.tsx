@@ -18,6 +18,8 @@ import type {
   DashboardBillingInvoice,
   ConversationMessage,
 } from "@/server/services/dashboard.service";
+import MemberDetailsView, { type MemberRecord } from "./components/MemberDetailsView";
+import type { UserMessageTemplate } from "@/lib/templates";
 import {
   CURRENCY_CONFIGS,
   type BillingCurrency,
@@ -164,6 +166,32 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<string>("overview");
   const [selectedConvId, setSelectedConvId] = useState<string>(initialData.conversations[0]?.id || "");
+  const [selectedMemberForDetail, setSelectedMemberForDetail] = useState<MemberRecord | null>(null);
+  const [userTemplates, setUserTemplates] = useState<UserMessageTemplate[]>([]);
+
+  const fetchCurrentUserTemplates = useCallback(async () => {
+    try {
+      const res = await fetch("/api/dashboard/templates");
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.data?.templates)) {
+        setUserTemplates(data.data.templates);
+      }
+    } catch (err) {
+      console.error("Failed to fetch templates:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCurrentUserTemplates();
+  }, [fetchCurrentUserTemplates]);
+
+  function openMemberDetailsPage(member: MemberRecord) {
+    setSelectedMemberForDetail(member);
+    setActiveTab("member-details");
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
 
   // Dynamic state from server DB
   const [metrics, setMetrics] = useState(initialData.metrics);
@@ -1247,8 +1275,31 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
   }
 
-  // Staff Canned Response Macros
+  // Staff Canned Response Macros (Synced with personal user templates & fallback defaults)
   const cannedMacros = useMemo(() => {
+    if (userTemplates.length > 0) {
+      return userTemplates
+        .filter((t) => t.is_active === 1)
+        .map((t) => {
+          const raw = t.command.replace("/", "");
+          const icon =
+            raw === "greeting" ? "👋 " :
+            raw === "fees" || raw === "pricing" ? "🏷️ " :
+            raw === "booking" ? "📅 " :
+            raw === "hicaps" ? "💳 " :
+            raw === "location" ? "📍 " :
+            raw === "hours" ? "⏰ " :
+            raw === "track" || raw === "shipping" ? "📦 " :
+            raw === "return" ? "↩️ " :
+            raw === "handoff" || raw === "escalate" ? "🤝 " : "⚡ ";
+          return {
+            label: `${icon}${t.command}`,
+            command: t.command,
+            text: t.content,
+          };
+        });
+    }
+
     if (user.industry === "ecommerce") {
       return [
         { label: "📦 /track", command: "/track", text: "Your order is in transit with FedEx and is scheduled for delivery tomorrow by 4:00 PM." },
@@ -1279,7 +1330,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         { label: "📅 /booking", command: "/booking", text: "Dr. Sarah Lee has an opening tomorrow at 2:30 PM. Shall I reserve this appointment slot for you?" },
       ];
     }
-  }, [user.industry]);
+  }, [userTemplates, user.industry]);
 
   function handleReplyInputChange(val: string) {
     let expanded = val;
@@ -2369,8 +2420,15 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
-              onClick={openUserProfileModal}
-              title="Click to view & edit your user account profile"
+              onClick={() =>
+                openMemberDetailsPage({
+                  id: user.userId,
+                  name: currentUserState.name,
+                  email: user.email,
+                  role: user.role,
+                })
+              }
+              title="Click to view account details & personal message templates"
               className="flex items-center gap-2.5 min-w-0 flex-1 text-left p-1 rounded-xl hover:bg-slate-200/60 transition group cursor-pointer"
             >
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-[11px] font-bold text-white shadow-xs group-hover:ring-2 group-hover:ring-indigo-500/50 transition">
@@ -2521,7 +2579,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-bold text-slate-900 capitalize">
-                  {navItems.find((n) => n.id === activeTab)?.label}
+                  {activeTab === "member-details"
+                    ? `${selectedMemberForDetail?.name || "Staff Member"} (Details & Templates)`
+                    : navItems.find((n) => n.id === activeTab)?.label || "Dashboard"}
                 </h1>
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-semibold border border-slate-200 capitalize">
                   {user.industry}
@@ -2613,8 +2673,15 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             </button>
             <button
               type="button"
-              onClick={openUserProfileModal}
-              title="My User Account Profile & Settings"
+              onClick={() =>
+                openMemberDetailsPage({
+                  id: user.userId,
+                  name: currentUserState.name,
+                  email: user.email,
+                  role: user.role,
+                })
+              }
+              title="My Account Details & Message Templates"
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-300 shadow-2xs transition cursor-pointer"
             >
               <span className="h-5 w-5 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-bold text-[10px] flex items-center justify-center">
@@ -4056,20 +4123,39 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
 
                 {/* Staff Canned Response Macros & Auto-expansion */}
-                <div className="px-3 py-2 bg-slate-50 border-t border-slate-200/80 flex items-center gap-1.5 overflow-x-auto text-[11px] shrink-0">
-                  <span className="text-slate-500 font-bold shrink-0 text-[10px] uppercase tracking-wider flex items-center gap-1">
-                    ⚡ Fast Macros:
-                  </span>
-                  {cannedMacros.map((macro, mIdx) => (
-                    <button
-                      key={mIdx}
-                      onClick={() => setReplyText(macro.text)}
-                      className="shrink-0 px-2.5 py-1 rounded-full bg-white hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 transition font-medium border border-slate-200/80 shadow-2xs flex items-center gap-1 text-[11px] cursor-pointer"
-                      title={`Click to fill or type ${macro.command} + Space: ${macro.text}`}
-                    >
-                      <span className="font-semibold">{macro.label}</span>
-                    </button>
-                  ))}
+                <div className="px-3 py-2 bg-slate-50 border-t border-slate-200/80 flex items-center justify-between gap-1.5 overflow-x-auto text-[11px] shrink-0">
+                  <div className="flex items-center gap-1.5 overflow-x-auto">
+                    <span className="text-slate-500 font-bold shrink-0 text-[10px] uppercase tracking-wider flex items-center gap-1">
+                      ⚡ Fast Macros:
+                    </span>
+                    {cannedMacros.map((macro, mIdx) => (
+                      <button
+                        key={mIdx}
+                        onClick={() => setReplyText(macro.text)}
+                        className="shrink-0 px-2.5 py-1 rounded-full bg-white hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 transition font-medium border border-slate-200/80 shadow-2xs flex items-center gap-1 text-[11px] cursor-pointer"
+                        title={`Click to fill or type ${macro.command} + Space: ${macro.text}`}
+                      >
+                        <span className="font-semibold">{macro.label}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openMemberDetailsPage({
+                        id: user.userId,
+                        name: currentUserState.name,
+                        email: user.email,
+                        role: user.role,
+                      })
+                    }
+                    className="shrink-0 ml-2 text-[10px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50/80 hover:bg-indigo-100 px-2.5 py-1 rounded-full border border-indigo-200 flex items-center gap-1 transition cursor-pointer"
+                    title="Open your personal message templates and predefined macros page"
+                  >
+                    <span>⚙️</span>
+                    <span>Edit Templates</span>
+                  </button>
                 </div>
 
                 {/* Reply Input Bar */}
@@ -5118,9 +5204,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         return (
                           <tr key={member.id} className="hover:bg-slate-50/70 transition group">
                             <td
-                              onClick={() => (isSelf ? openUserProfileModal() : openEditMemberModal(member))}
+                              onClick={() => openMemberDetailsPage(member)}
                               className="py-3.5 px-4 cursor-pointer"
-                              title="Click to view details and edit"
+                              title="Click to view details and manage personal templates"
                             >
                               <div className="flex items-center gap-3">
                                 <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-500 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs group-hover:ring-2 group-hover:ring-indigo-500/40 transition">
@@ -5134,7 +5220,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                                         You
                                       </span>
                                     )}
-                                    <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition">✏️</span>
+                                    <span className="text-[10px] text-indigo-500 font-bold opacity-0 group-hover:opacity-100 transition">View →</span>
                                   </div>
                                   <span className="text-[11px] text-slate-400 font-mono">{member.email}</span>
                                 </div>
@@ -5170,23 +5256,42 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                             </td>
                             <td className="py-3.5 px-4 text-right">
                               {isSelf ? (
-                                <button
-                                  type="button"
-                                  onClick={openUserProfileModal}
-                                  className="text-indigo-600 hover:text-indigo-800 font-semibold text-[11px] transition cursor-pointer hover:underline inline-flex items-center gap-1"
-                                  title="View & edit your user account profile"
-                                >
-                                  <span>✏️ Edit Profile</span>
-                                </button>
+                                <div className="flex items-center justify-end gap-2.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => openMemberDetailsPage(member)}
+                                    className="text-indigo-600 hover:text-indigo-800 font-bold text-[11px] transition cursor-pointer hover:underline inline-flex items-center gap-1"
+                                    title="Open your details and manage personal message templates"
+                                  >
+                                    <span>Details & Templates →</span>
+                                  </button>
+                                  <span className="text-slate-200">|</span>
+                                  <button
+                                    type="button"
+                                    onClick={openUserProfileModal}
+                                    className="text-slate-500 hover:text-slate-700 font-semibold text-[11px] transition cursor-pointer hover:underline inline-flex items-center gap-1"
+                                    title="Edit user account credentials"
+                                  >
+                                    <span>Security</span>
+                                  </button>
+                                </div>
                               ) : (
                                 <div className="flex items-center justify-end gap-2.5">
                                   <button
                                     type="button"
+                                    onClick={() => openMemberDetailsPage(member)}
+                                    className="text-indigo-600 hover:text-indigo-800 font-bold text-[11px] transition cursor-pointer hover:underline inline-flex items-center gap-1"
+                                    title="View member details and personal message templates"
+                                  >
+                                    <span>Details & Templates →</span>
+                                  </button>
+                                  <span className="text-slate-200">|</span>
+                                  <button
+                                    type="button"
                                     onClick={() => openEditMemberModal(member)}
-                                    className="text-indigo-600 hover:text-indigo-800 font-semibold text-[11px] transition cursor-pointer hover:underline inline-flex items-center gap-1"
+                                    className="text-slate-600 hover:text-indigo-700 font-semibold text-[11px] transition cursor-pointer hover:underline inline-flex items-center gap-1"
                                     title="View details & edit staff permissions"
                                   >
-                                    <span>✏️</span>
                                     <span>Edit</span>
                                   </button>
                                   {!isOwner && (
@@ -5244,6 +5349,45 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ===================== TAB: MEMBER DETAILS & MESSAGE TEMPLATES ===================== */}
+        {activeTab === "member-details" && (
+          <MemberDetailsView
+            member={
+              selectedMemberForDetail || {
+                id: user.userId,
+                name: currentUserState.name,
+                email: user.email,
+                role: user.role,
+                created_at: new Date().toISOString(),
+              }
+            }
+            currentUser={{
+              userId: user.userId,
+              email: user.email,
+              name: currentUserState.name,
+              role: user.role,
+              orgId: user.orgId,
+              orgName: user.orgName,
+              industry: user.industry,
+            }}
+            onBack={() => {
+              setActiveTab("team");
+              if (typeof window !== "undefined") {
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }
+            }}
+            onUpdateMember={(updated) => {
+              setTeamMembers((prev) =>
+                prev.map((m) => (m.id === updated.id ? { ...m, name: updated.name, role: updated.role } : m))
+              );
+              if (updated.id === user.userId) {
+                setCurrentUserState((prev) => ({ ...prev, name: updated.name }));
+              }
+            }}
+            onTemplatesChanged={fetchCurrentUserTemplates}
+          />
         )}
 
         {/* ===================== TAB: BILLING ===================== */}

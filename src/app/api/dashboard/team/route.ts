@@ -228,13 +228,6 @@ export async function PATCH(req: NextRequest) {
       throw new UnauthorizedError("You must be logged in to edit team members.");
     }
 
-    const callerRow = db
-      .prepare("SELECT role FROM users WHERE id = ?")
-      .get(user.userId) as { role: string } | undefined;
-    if (callerRow?.role !== "owner" && callerRow?.role !== "admin") {
-      throw new ForbiddenError("Only organization owners or administrators can edit team members.");
-    }
-
     const body = await req.json().catch(() => ({}));
     const targetId = typeof body.id === "string" ? body.id.trim() : "";
     const newName = typeof body.name === "string" ? body.name.trim() : undefined;
@@ -242,6 +235,21 @@ export async function PATCH(req: NextRequest) {
 
     if (!targetId) {
       throw new ValidationError("Team member ID is required.");
+    }
+
+    const callerRow = db
+      .prepare("SELECT role FROM users WHERE id = ?")
+      .get(user.userId) as { role: string } | undefined;
+
+    const isCallerOwner = callerRow?.role === "owner";
+    const isCallerAdmin = callerRow?.role === "admin";
+    const isSelf = targetId === user.userId;
+
+    // Permissions check:
+    // Only organization owners or administrators can edit other team members.
+    // Regular subusers can only update their own profile name.
+    if (!isCallerOwner && !isCallerAdmin && !isSelf) {
+      throw new ForbiddenError("Only organization owners or administrators can edit team members.");
     }
 
     const targetUser = db
@@ -260,6 +268,28 @@ export async function PATCH(req: NextRequest) {
       throw new ValidationError("Team member not found in your organization.");
     }
 
+    // Role modification enforcement:
+    // 1. Subusers cannot update their role by themselves under any circumstances.
+    // 2. Only the organization owner can change member roles.
+    if (newRole !== undefined && newRole !== targetUser.role) {
+      if (isSelf) {
+        throw new ForbiddenError("You cannot update your own role. Subusers cannot change their own role; only the organization owner can change roles.");
+      }
+      if (!isCallerOwner) {
+        throw new ForbiddenError("Only the organization owner can change member roles. Subusers cannot update roles.");
+      }
+      if (targetUser.role === "owner") {
+        throw new ForbiddenError("The primary organization owner's role cannot be changed.");
+      }
+      const allowedRoles = ["admin", "receptionist", "viewer"];
+      if (!allowedRoles.includes(newRole)) {
+        throw new ValidationError("Invalid role. Allowed roles: Administrator, Receptionist, Viewer.");
+      }
+      db.prepare("UPDATE users SET role = ? WHERE id = ?").run(newRole, targetId);
+      targetUser.role = newRole;
+    }
+
+    // Name update
     if (newName !== undefined) {
       if (newName.length < 2) {
         throw new ValidationError("Staff member name must be at least 2 characters.");
@@ -268,19 +298,14 @@ export async function PATCH(req: NextRequest) {
       targetUser.name = newName;
     }
 
-    if (newRole !== undefined) {
-      const allowedRoles = ["admin", "receptionist", "viewer"];
-      if (!allowedRoles.includes(newRole)) {
-        throw new ValidationError("Invalid role. Allowed roles: Administrator, Receptionist, Viewer.");
-      }
-      if (targetUser.role === "owner") {
-        throw new ForbiddenError("The primary organization owner's role cannot be changed.");
-      }
-      db.prepare("UPDATE users SET role = ? WHERE id = ?").run(newRole, targetId);
-      targetUser.role = newRole;
-    }
-
+    // Template editing permissions
     if (body.canEditCompanyTemplates !== undefined) {
+      if (isSelf && !isCallerOwner && !isCallerAdmin) {
+        throw new ForbiddenError("You cannot modify your own template editing permissions.");
+      }
+      if (!isCallerOwner && !isCallerAdmin) {
+        throw new ForbiddenError("Only organization owners or administrators can manage template permissions.");
+      }
       const allowed = body.canEditCompanyTemplates ? 1 : 0;
       db.prepare("UPDATE users SET can_edit_company_templates = ? WHERE id = ?").run(allowed, targetId);
       targetUser.can_edit_company_templates = allowed;

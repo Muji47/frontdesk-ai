@@ -221,15 +221,21 @@ export default function MemberDetailsView({
     setIsSavingInfo(true);
     setError(null);
     try {
+      const payload: Record<string, any> = {
+        id: member.id,
+        name: editName.trim(),
+      };
+      if (isOwner && !isSelf) {
+        payload.role = editRole;
+      }
+      if (isManagement && !isSelf) {
+        payload.canEditCompanyTemplates = editMemberCanEditTemplates;
+      }
+
       const res = await fetch("/api/dashboard/team", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: member.id,
-          name: editName.trim(),
-          role: editRole,
-          canEditCompanyTemplates: editMemberCanEditTemplates,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -240,7 +246,12 @@ export default function MemberDetailsView({
       setEditMemberErrors({});
       setMemberCanEditTemplates(editMemberCanEditTemplates);
       if (onUpdateMember) {
-        onUpdateMember({ id: member.id, name: editName.trim(), role: editRole, canEditCompanyTemplates: editMemberCanEditTemplates });
+        onUpdateMember({
+          id: member.id,
+          name: editName.trim(),
+          role: isOwner && !isSelf ? editRole : member.role,
+          canEditCompanyTemplates: isManagement && !isSelf ? editMemberCanEditTemplates : Boolean(member.can_edit_company_templates),
+        });
       }
     } catch (err: any) {
       setError(err.message || "Could not save member details.");
@@ -731,27 +742,52 @@ export default function MemberDetailsView({
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                  Role Permissions
+                  Role & Access Level
                 </label>
-                <select
-                  value={editRole}
-                  onChange={(e) => setEditRole(e.target.value)}
-                  disabled={member.role === "owner" && currentUser.role !== "owner"}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs bg-white text-slate-900 focus:outline-indigo-500"
-                >
-                  {member.role === "owner" ? (
-                    <option value="owner">Owner (Primary Organization Account)</option>
-                  ) : (
-                    <>
+                {isOwner && !isSelf ? (
+                  <>
+                    <select
+                      value={editRole}
+                      onChange={(e) => setEditRole(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs bg-white text-slate-900 focus:outline-indigo-500"
+                    >
                       <option value="admin">Administrator (Full settings & billing control)</option>
                       <option value="receptionist">Receptionist / Front Desk (Live inbox, takeover, macros)</option>
                       <option value="viewer">Viewer (Read-only access)</option>
-                    </>
-                  )}
-                </select>
+                    </select>
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      As practice owner, you can modify this staff member&apos;s role.
+                    </span>
+                  </>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="w-full rounded-xl border border-slate-200 bg-slate-100/80 px-3 py-2 text-xs text-slate-800 font-semibold flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        {member.role === "owner" ? (
+                          <><span>👑</span><span>Owner</span></>
+                        ) : member.role === "admin" ? (
+                          <><span>🛡️</span><span>Administrator</span></>
+                        ) : member.role === "receptionist" ? (
+                          <><span>💬</span><span>Receptionist</span></>
+                        ) : (
+                          <><span>👁️</span><span>Viewer</span></>
+                        )}
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                        <span>🔒</span>
+                        <span>Role Locked</span>
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      {isSelf
+                        ? "You cannot update your own role. Subusers cannot change their own role; only the practice owner can assign or modify roles."
+                        : "Subusers cannot update roles. Only the organization owner can change member roles."}
+                    </p>
+                  </div>
+                )}
               </div>
 
-              {isManagement && member.role !== "owner" && (
+              {isManagement && member.role !== "owner" && !isSelf && (
                 <div className="md:col-span-2 p-3 rounded-xl border border-indigo-100 bg-white space-y-1">
                   <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
                     <input

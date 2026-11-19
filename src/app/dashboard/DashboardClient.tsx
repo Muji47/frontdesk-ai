@@ -1239,15 +1239,21 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
     setIsSavingMemberEdit(true);
     try {
+      const payload: Record<string, any> = {
+        id: editingMember.id,
+        name,
+      };
+      if (user.role === "owner" && editingMember.id !== user.userId) {
+        payload.role = editMemberRole;
+      }
+      if ((user.role === "owner" || user.role === "admin") && editingMember.id !== user.userId) {
+        payload.canEditCompanyTemplates = editMemberCanEditTemplates;
+      }
+
       const res = await fetch("/api/dashboard/team", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: editingMember.id,
-          name,
-          role: editMemberRole,
-          canEditCompanyTemplates: editMemberCanEditTemplates,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -5518,19 +5524,32 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
             {/* RBAC Role Permissions Matrix Card */}
             <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5 shadow-xs space-y-3">
-              <b className="text-xs font-bold text-slate-900 block">Role Permissions Overview</b>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div className="flex items-center justify-between">
+                <b className="text-xs font-bold text-slate-900 block">Role Permissions Overview</b>
+                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                  👑 Role Assignment: Practice Owner Only
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                <div className="bg-white p-3.5 rounded-xl border border-amber-200/80 space-y-1">
+                  <div className="font-bold text-amber-900 flex items-center gap-1.5">
+                    <span>👑 Practice Owner</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Exclusive authority to assign and change staff member roles, manage billing, configure practice-wide policies, and delete accounts. Subusers cannot alter roles.
+                  </p>
+                </div>
                 <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-1">
                   <div className="font-bold text-purple-900 flex items-center gap-1.5">
                     <span>🛡️ Administrator</span>
                   </div>
                   <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Full organizational control: edit AI prompts & persona, upload knowledge docs, connect Cliniko PMS, manage billing and staff invites.
+                    Full organizational control: edit AI prompts & persona, upload knowledge docs, connect PMS integrations, and manage staff invites.
                   </p>
                 </div>
                 <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-1">
                   <div className="font-bold text-sky-900 flex items-center gap-1.5">
-                    <span>💬 Receptionist / Front Desk</span>
+                    <span>💬 Receptionist</span>
                   </div>
                   <p className="text-[11px] text-slate-500 leading-relaxed">
                     Live inbox triage, real-time takeover chat, canned slash macros, appointment & tracking queries, visitor phone call triage.
@@ -7614,16 +7633,21 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-700">Role & Access Level</label>
                   {editingMember.role === "owner" ? (
-                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold flex items-center gap-2">
-                      <span>👑</span>
-                      <span>Primary Organization Owner (cannot be modified)</span>
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <span>👑</span>
+                        <span>Primary Organization Owner</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100/70 border border-amber-300 px-2 py-0.5 rounded-md">
+                        Immutable
+                      </span>
                     </div>
-                  ) : (
+                  ) : user.role === "owner" && editingMember.id !== user.userId ? (
                     <>
                       <select
                         value={editMemberRole}
                         onChange={(e) => setEditMemberRole(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 bg-white"
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 bg-white text-slate-900"
                       >
                         <option value="receptionist">Receptionist (Live Inbox, Takeover Chat & Bookings)</option>
                         <option value="admin">Administrator (Full Config, AI Setup, Knowledge & Team)</option>
@@ -7637,10 +7661,28 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           : "👁️ Viewers have read-only access to conversation transcripts, leads, and analytics."}
                       </p>
                     </>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs font-semibold flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <span>{editingMember.role === "admin" ? "🛡️" : editingMember.role === "receptionist" ? "💬" : "👁️"}</span>
+                          <span className="capitalize">{editingMember.role}</span>
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                          <span>🔒</span>
+                          <span>Role Locked</span>
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        {editingMember.id === user.userId
+                          ? "You cannot update your own role. Subusers cannot change their own role; only the organization owner can change roles."
+                          : "Subusers cannot update member roles. Only the organization owner can change roles."}
+                      </p>
+                    </div>
                   )}
                 </div>
 
-                {editingMember.role !== "owner" && (
+                {editingMember.role !== "owner" && editingMember.id !== user.userId && (user.role === "owner" || user.role === "admin") && (
                   <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50/50 space-y-1.5">
                     <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
                       <input

@@ -717,6 +717,22 @@ export function ensureSuperadmin() {
 // Ensure platform superadmin is seeded
 ensureSuperadmin();
 
+export function ensureReceptionistUser() {
+  const checkRecep = db.prepare("SELECT id FROM users WHERE email = 'receptionist@echo.ai'").get();
+  if (!checkRecep) {
+    withTransaction(() => {
+      const { hash, salt } = hashPassword("password123");
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, organization_id, email, name, password_hash, salt, role, is_superadmin, can_edit_company_templates)
+        VALUES ('usr_recep_101', 'org_demo_101', 'receptionist@echo.ai', 'Clara Receptionist', ?, ?, 'receptionist', 0, 0)
+      `).run(hash, salt);
+    });
+  }
+}
+
+// Ensure demo receptionist user is seeded
+ensureReceptionistUser();
+
 export function ensureMarketingInquiries() {
   try {
     const existingCount = db.prepare("SELECT COUNT(*) as count FROM marketing_inquiries").get() as { count: number };

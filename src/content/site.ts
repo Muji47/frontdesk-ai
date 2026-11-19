@@ -125,9 +125,54 @@ export const compareRows: { row: string; generic: string; human: string; us: str
 ];
 
 export const plans = [
-  { id: "starter", name: "Starter", monthly: 39, blurb: "Answer questions and capture leads.", features: ["1 website", "500 AI conversations / mo", "Knowledge base & FAQs", "Basic handover & leads", "1 team member"] },
-  { id: "growth", name: "Growth", monthly: 99, highlight: true, blurb: "Book appointments and handle orders.", features: ["Everything in Starter", "2,000 conversations / mo", "Booking & order integrations", "Advanced analytics", "Basic automations", "3 team members"] },
-  { id: "pro", name: "Pro", monthly: 199, blurb: "For busier or multi-site businesses.", features: ["Everything in Growth", "3 websites", "8,000 conversations / mo", "Advanced automations & leads", "10 team members", "Priority support"] },
+  {
+    id: "starter",
+    name: "Starter",
+    monthly: 39,
+    blurb: "Solo practitioners & single-site front desks.",
+    convLimit: 500,
+    seatsLimit: 1,
+    features: [
+      "500 AI conversations / mo",
+      "1 Staff team seat",
+      "1 Website embed & live widget",
+      "Knowledge base & approved FAQs",
+      "Email & live inbox handover",
+    ],
+  },
+  {
+    id: "growth",
+    name: "Growth",
+    monthly: 99,
+    highlight: true,
+    blurb: "Multi-practitioner clinics & high-volume reception.",
+    convLimit: 2000,
+    seatsLimit: 3,
+    features: [
+      "Everything in Starter",
+      "2,000 AI conversations / mo",
+      "3 Staff team seats",
+      "Cliniko, Halaxy & Shopify 2-way sync",
+      "Self-learning Q&A approval queue",
+      "Advanced triage analytics",
+    ],
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    monthly: 199,
+    blurb: "Multi-location clinic groups & enterprise SLAs.",
+    convLimit: 8000,
+    seatsLimit: 10,
+    features: [
+      "Everything in Growth",
+      "8,000 AI conversations / mo",
+      "10 Staff team seats",
+      "3 Websites / multi-location support",
+      "Custom webhooks & automations",
+      "Priority SLA & VIP onboarding support",
+    ],
+  },
 ];
 
 export const compareTable: { feature: string; starter: string; growth: string; pro: string }[] = [

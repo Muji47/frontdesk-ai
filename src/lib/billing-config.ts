@@ -1,4 +1,4 @@
-export type BillingPlanTier = "starter" | "growth" | "scale";
+export type BillingPlanTier = "starter" | "growth" | "scale" | "pro";
 export type BillingCycleType = "monthly" | "biannual" | "annual";
 export type BillingCurrency = "USD" | "AUD" | "GBP" | "EUR";
 export type BillingProvider = "lemonsqueezy" | "paddle";
@@ -21,9 +21,10 @@ export const CURRENCY_CONFIGS: Record<BillingCurrency, CurrencyConfig> = {
     taxLabel: "Tax (10%)",
     taxRate: 0.1,
     monthlyBase: {
-      starter: 49,
+      starter: 39,
       growth: 99,
-      scale: 249,
+      scale: 199,
+      pro: 199,
     },
   },
   AUD: {
@@ -33,9 +34,10 @@ export const CURRENCY_CONFIGS: Record<BillingCurrency, CurrencyConfig> = {
     taxLabel: "Tax (10%)",
     taxRate: 0.1,
     monthlyBase: {
-      starter: 49,
+      starter: 39,
       growth: 99,
-      scale: 249,
+      scale: 199,
+      pro: 199,
     },
   },
   GBP: {
@@ -45,9 +47,10 @@ export const CURRENCY_CONFIGS: Record<BillingCurrency, CurrencyConfig> = {
     taxLabel: "Tax (10%)",
     taxRate: 0.1,
     monthlyBase: {
-      starter: 49,
+      starter: 39,
       growth: 99,
-      scale: 249,
+      scale: 199,
+      pro: 199,
     },
   },
   EUR: {
@@ -57,9 +60,10 @@ export const CURRENCY_CONFIGS: Record<BillingCurrency, CurrencyConfig> = {
     taxLabel: "Tax (10%)",
     taxRate: 0.1,
     monthlyBase: {
-      starter: 49,
+      starter: 39,
       growth: 99,
-      scale: 249,
+      scale: 199,
+      pro: 199,
     },
   },
 };
@@ -102,7 +106,7 @@ export function calculatePlanCharge(
   })}`;
 
   const planLabel =
-    plan === "starter" ? "Starter Plan" : plan === "scale" ? "Scale Plan" : "Growth Plan";
+    plan === "starter" ? "Starter Plan" : plan === "scale" || plan === "pro" ? "Pro Plan" : "Growth Plan";
   const cycleLabel =
     cycle === "biannual"
       ? "Bi-Annual (6 Months)"

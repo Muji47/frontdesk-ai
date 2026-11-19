@@ -4,30 +4,56 @@ import { useState } from "react";
 import Link from "next/link";
 import { plans, compareTable, addons, pricingFaq } from "@/content/site";
 
+export type BillingCycle = "monthly" | "biannual" | "annual";
+
 export function PricingTable() {
-  const [annual, setAnnual] = useState(false);
+  const [cycle, setCycle] = useState<BillingCycle>("monthly");
 
   return (
     <div className="space-y-14">
-      {/* Billing Cycle Toggle */}
+      {/* Billing Cycle Toggle: Monthly | Bi-Annual (-10%) | Annual (-20%) */}
       <div className="flex justify-center">
-        <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-white p-1.5 shadow-sm">
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white p-1.5 shadow-sm">
           <button
-            onClick={() => setAnnual(false)}
-            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
-              !annual ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"
+            type="button"
+            onClick={() => setCycle("monthly")}
+            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition cursor-pointer ${
+              cycle === "monthly" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"
             }`}
           >
             Monthly billing
           </button>
           <button
-            onClick={() => setAnnual(true)}
-            className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition ${
-              annual ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"
+            type="button"
+            onClick={() => setCycle("biannual")}
+            className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition cursor-pointer ${
+              cycle === "biannual" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <span>Bi-Annual billing</span>
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                cycle === "biannual" ? "bg-indigo-700 text-indigo-100" : "bg-amber-100 text-amber-700"
+              }`}
+            >
+              Save 10%
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCycle("annual")}
+            className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition cursor-pointer ${
+              cycle === "annual" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"
             }`}
           >
             <span>Annual billing</span>
-            <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Save 20%</span>
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                cycle === "annual" ? "bg-indigo-700 text-indigo-100" : "bg-emerald-100 text-emerald-700"
+              }`}
+            >
+              Save 20%
+            </span>
           </button>
         </div>
       </div>
@@ -35,7 +61,19 @@ export function PricingTable() {
       {/* Pricing Cards */}
       <div className="grid gap-6 md:grid-cols-3">
         {plans.map((p) => {
-          const finalPrice = annual ? Math.round(p.monthly * 0.8) : p.monthly;
+          const finalPrice =
+            cycle === "biannual"
+              ? Math.round(p.monthly * 0.9)
+              : cycle === "annual"
+              ? Math.round(p.monthly * 0.8)
+              : p.monthly;
+          const billingNote =
+            cycle === "biannual"
+              ? `Billed bi-annually ($${(finalPrice * 6).toLocaleString()} / 6 mo)`
+              : cycle === "annual"
+              ? `Billed annually ($${(finalPrice * 12).toLocaleString()} / yr)`
+              : "Billed monthly";
+
           return (
             <div
               key={p.id}
@@ -56,9 +94,17 @@ export function PricingTable() {
                   <span className="text-4xl font-extrabold tracking-tight text-slate-900">${finalPrice}</span>
                   <span className="text-sm font-medium text-slate-500">/ month</span>
                 </div>
-                {annual && (
-                  <div className="text-[11px] font-medium text-emerald-600">Billed annually (${finalPrice * 12}/yr)</div>
-                )}
+                <div
+                  className={`text-[11px] font-medium mt-0.5 ${
+                    cycle === "biannual"
+                      ? "text-amber-600"
+                      : cycle === "annual"
+                      ? "text-emerald-600"
+                      : "text-slate-500"
+                  }`}
+                >
+                  {billingNote}
+                </div>
 
                 <ul className="mt-6 space-y-2.5 text-xs text-slate-600">
                   {p.features.map((f) => (
@@ -72,8 +118,8 @@ export function PricingTable() {
 
               <div className="mt-8">
                 <Link
-                  href="/signup"
-                  className={`block w-full rounded-xl py-3 text-center text-xs font-bold shadow-sm transition ${
+                  href={`/signup?plan=${p.id}&cycle=${cycle}`}
+                  className={`block w-full rounded-xl py-3 text-center text-xs font-bold shadow-sm transition cursor-pointer ${
                     p.highlight
                       ? "bg-indigo-600 text-white hover:bg-indigo-700"
                       : "border border-slate-300 text-slate-700 hover:border-indigo-600 hover:text-indigo-600"

@@ -134,7 +134,7 @@ export interface DashboardBillingInvoice {
 }
 
 export interface DashboardBillingData {
-  plan: "starter" | "growth" | "scale";
+  plan: "starter" | "growth" | "scale" | "pro";
   billingCycle: "monthly" | "biannual" | "annual";
   currency: BillingCurrency;
   provider: BillingProvider;
@@ -455,8 +455,8 @@ export class DashboardService {
       | undefined;
 
     const rawPlan = (orgRow?.plan || "growth").toLowerCase();
-    const plan: "starter" | "growth" | "scale" =
-      rawPlan === "starter" ? "starter" : rawPlan === "scale" || rawPlan === "enterprise" ? "scale" : "growth";
+    const plan: "starter" | "growth" | "scale" | "pro" =
+      rawPlan === "starter" ? "starter" : rawPlan === "scale" || rawPlan === "pro" || rawPlan === "enterprise" ? "pro" : "growth";
     const rawCycle = (orgRow?.billing_cycle || "monthly").toLowerCase();
     const billingCycle: "monthly" | "biannual" | "annual" =
       rawCycle === "biannual" ? "biannual" : rawCycle === "annual" ? "annual" : "monthly";
@@ -674,7 +674,7 @@ export class DashboardService {
    */
   public static updateSubscription(
     orgId: string,
-    targetPlan: "starter" | "growth" | "scale",
+    targetPlan: "starter" | "growth" | "scale" | "pro",
     targetCycle: "monthly" | "biannual" | "annual",
     simulateFailedCharge = false,
     overrideCurrency?: BillingCurrency
@@ -683,7 +683,7 @@ export class DashboardService {
       .prepare("SELECT plan, billing_cycle, billing_currency, billing_provider FROM organizations WHERE id = ?")
       .get(orgId) as { plan?: string; billing_cycle?: string; billing_currency?: string; billing_provider?: string } | undefined;
 
-    const currentPlan = (orgRow?.plan || "growth").toLowerCase() as "starter" | "growth" | "scale";
+    const currentPlan = (orgRow?.plan || "growth").toLowerCase() as "starter" | "growth" | "scale" | "pro";
     const currentCycle = (orgRow?.billing_cycle || "monthly").toLowerCase() as "monthly" | "biannual" | "annual";
 
     const rawCurr = (overrideCurrency || orgRow?.billing_currency || "AUD").toUpperCase();
@@ -722,7 +722,7 @@ export class DashboardService {
     let unusedCreditCents = 0;
     let daysRemaining = 0;
     let prorationNote: string | null = null;
-    const oldPlanLabel = currentPlan === "starter" ? "Starter Plan" : currentPlan === "scale" ? "Scale Plan" : "Growth Plan";
+    const oldPlanLabel = currentPlan === "starter" ? "Starter Plan" : currentPlan === "scale" || currentPlan === "pro" ? "Pro Plan" : "Growth Plan";
 
     if (lastPaid && lastPaid.amount_cents > 0 && (targetPlan !== currentPlan || targetCycle !== currentCycle)) {
       const oldCycleDays = getCycleDays(lastPaid.billing_cycle || currentCycle);

@@ -125,7 +125,7 @@ function playNotificationChime() {
 }
 
 export const PLAN_CATALOG: Array<{
-  id: "starter" | "growth" | "scale";
+  id: "starter" | "growth" | "pro";
   name: string;
   tagline: string;
   baseMonthly: number;
@@ -136,29 +136,49 @@ export const PLAN_CATALOG: Array<{
   {
     id: "starter",
     name: "Starter",
-    tagline: "Solo practitioners & single-site front desks",
-    baseMonthly: 49,
+    tagline: "Solo practitioners & single-site front desks.",
+    baseMonthly: 39,
     convLimit: 500,
     seatsLimit: 1,
-    features: ["500 AI conversations / mo", "1 Staff seat", "Website embed widget", "Email & live inbox handover"],
+    features: [
+      "500 AI conversations / mo",
+      "1 Staff team seat",
+      "1 Website embed & live widget",
+      "Knowledge base & approved FAQs",
+      "Email & live inbox handover",
+    ],
   },
   {
     id: "growth",
     name: "Growth",
-    tagline: "Multi-practitioner clinics & high-volume reception",
+    tagline: "Multi-practitioner clinics & high-volume reception.",
     baseMonthly: 99,
     convLimit: 2000,
     seatsLimit: 3,
-    features: ["2,000 AI conversations / mo", "3 Staff seats", "Cliniko & Shopify 2-way sync", "Self-learning Q&A approval queue"],
+    features: [
+      "Everything in Starter",
+      "2,000 AI conversations / mo",
+      "3 Staff team seats",
+      "Cliniko, Halaxy & Shopify 2-way sync",
+      "Self-learning Q&A approval queue",
+      "Advanced triage analytics",
+    ],
   },
   {
-    id: "scale",
-    name: "Scale",
-    tagline: "Multi-location clinic groups & enterprise SLAs",
-    baseMonthly: 249,
-    convLimit: 10000,
+    id: "pro",
+    name: "Pro",
+    tagline: "Multi-location clinic groups & enterprise SLAs.",
+    baseMonthly: 199,
+    convLimit: 8000,
     seatsLimit: 10,
-    features: ["10,000 AI conversations / mo", "10 Staff seats", "Priority SLA & custom webhooks", "Dedicated multi-site analytics"],
+    features: [
+      "Everything in Growth",
+      "8,000 AI conversations / mo",
+      "10 Staff team seats",
+      "3 Websites / multi-location support",
+      "Custom webhooks & automations",
+      "Priority SLA & VIP onboarding support",
+    ],
   },
 ];
 
@@ -379,7 +399,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   // Billing, Subscription Cycles, Payment Methods & Invoice Modal State
   const [billingState, setBillingState] = useState<DashboardBillingData>(
     initialData.billing || {
-      plan: (user.plan as "starter" | "growth" | "scale") || "growth",
+      plan: (user.plan as "starter" | "growth" | "scale" | "pro") || "growth",
       billingCycle: "monthly",
       currency: "AUD",
       provider: "lemonsqueezy",
@@ -398,9 +418,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
   );
 
-  const currentPlanId = (billingState.plan as "starter" | "growth" | "scale") || "growth";
+  const currentPlanId = (billingState.plan as "starter" | "growth" | "scale" | "pro") || "growth";
   const activePlanMeta = useMemo(() => {
-    return PLAN_CATALOG.find((p) => p.id === currentPlanId) || PLAN_CATALOG[1];
+    return (
+      PLAN_CATALOG.find((p) => p.id === currentPlanId || (currentPlanId === "scale" && p.id === "pro")) ||
+      PLAN_CATALOG[1]
+    );
   }, [currentPlanId]);
 
   const seatLimit = activePlanMeta.seatsLimit;
@@ -426,7 +449,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [busyCardId, setBusyCardId] = useState<string | null>(null);
   const [viewingInvoice, setViewingInvoice] = useState<DashboardBillingInvoice | null>(null);
   const [pendingPlanSelection, setPendingPlanSelection] = useState<{
-    plan: "starter" | "growth" | "scale";
+    plan: "starter" | "growth" | "scale" | "pro";
     cycle: "monthly" | "biannual" | "annual";
   } | null>(null);
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
@@ -2010,14 +2033,14 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   }
 
   async function handleUpdateSubscription(
-    targetPlan: "starter" | "growth" | "scale",
+    targetPlan: "starter" | "growth" | "scale" | "pro",
     targetCycle: "monthly" | "biannual" | "annual",
     simulateFailedCharge = false
   ) {
     // If no payment method is on file, navigate down to Payment Methods and activate the embedded Stripe Element
     if (!simulateFailedCharge && billingState.paymentMethods.length === 0) {
       const planLabel =
-        targetPlan === "starter" ? "Starter Plan" : targetPlan === "scale" ? "Scale Plan" : "Growth Plan";
+        targetPlan === "starter" ? "Starter Plan" : targetPlan === "scale" || targetPlan === "pro" ? "Pro Plan" : "Growth Plan";
       const cycleLabel =
         targetCycle === "biannual"
           ? "Bi-Annual (6 Months)"
@@ -5703,10 +5726,11 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
         {activeTab === "billing" && (!isManagement ? renderPermissionGate("Billing & Subscription Management") : (() => {
           const planCatalog = PLAN_CATALOG;
 
-          const tierOrder: Record<"starter" | "growth" | "scale", number> = {
+          const tierOrder: Record<"starter" | "growth" | "scale" | "pro", number> = {
             starter: 1,
             growth: 2,
             scale: 3,
+            pro: 3,
           };
 
           const getCyclePricing = (baseMonthly: number, cycle: "monthly" | "biannual" | "annual") => {
@@ -5725,7 +5749,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             return { perMonth, months, totalCharge, cycleLabel, cycleShort };
           };
 
-          const activePlanMeta = planCatalog.find((p) => p.id === billingState.plan) || planCatalog[1];
+          const activePlanMeta =
+            planCatalog.find((p) => p.id === billingState.plan || (billingState.plan === "scale" && p.id === "pro")) ||
+            planCatalog[1];
           const activePricing = getCyclePricing(activePlanMeta.baseMonthly, billingState.billingCycle);
           const defaultCard = billingState.paymentMethods.find((pm) => pm.isDefault);
 
@@ -5965,10 +5991,12 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {planCatalog.map((tier) => {
                     const pricing = getCyclePricing(tier.baseMonthly, selectedCycle);
+                    const isPlanMatch =
+                      billingState.plan === tier.id || (billingState.plan === "scale" && tier.id === "pro");
                     const isExactCurrent =
-                      billingState.plan === tier.id && billingState.billingCycle === selectedCycle;
+                      isPlanMatch && billingState.billingCycle === selectedCycle;
                     const isSamePlanDifferentCycle =
-                      billingState.plan === tier.id && billingState.billingCycle !== selectedCycle;
+                      isPlanMatch && billingState.billingCycle !== selectedCycle;
                     const isUpgrade = tierOrder[tier.id] > tierOrder[billingState.plan];
                     const isDowngrade = tierOrder[tier.id] < tierOrder[billingState.plan];
                     const btnLoading = isUpdatingPlan === `${tier.id}_${selectedCycle}`;
@@ -5994,7 +6022,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                       <div
                         key={tier.id}
                         className={`rounded-2xl border p-5 flex flex-col justify-between transition ${
-                          billingState.plan === tier.id
+                          isPlanMatch
                             ? "border-indigo-600 bg-indigo-50/20 ring-1 ring-indigo-600"
                             : "border-slate-200 bg-white hover:border-slate-300"
                         }`}
@@ -6002,7 +6030,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         <div>
                           <div className="flex items-center justify-between gap-2">
                             <h4 className="text-base font-extrabold text-slate-900">{tier.name}</h4>
-                            {billingState.plan === tier.id && (
+                            {isPlanMatch && (
                               <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
                                 Active Tier
                               </span>

@@ -24,7 +24,9 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const plan: BillingPlanTier =
-      body.plan === "starter" || body.plan === "scale" ? body.plan : "growth";
+      body.plan === "starter" || body.plan === "scale" || body.plan === "pro"
+        ? (body.plan === "scale" ? "pro" : body.plan)
+        : "growth";
     const billingCycle: BillingCycleType =
       body.billingCycle === "biannual" || body.billingCycle === "annual"
         ? body.billingCycle

@@ -48,7 +48,9 @@ export async function POST(req: NextRequest) {
 
     if (action === "update_subscription") {
       const plan =
-        body.plan === "starter" || body.plan === "scale" ? body.plan : "growth";
+        body.plan === "starter" || body.plan === "scale" || body.plan === "pro"
+          ? (body.plan === "scale" ? "pro" : body.plan)
+          : "growth";
       const billingCycle =
         body.billingCycle === "biannual" || body.billingCycle === "annual"
           ? body.billingCycle

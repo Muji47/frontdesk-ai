@@ -448,6 +448,23 @@ try {
     CREATE INDEX IF NOT EXISTS idx_user_msg_templates_org_pre ON user_message_templates(organization_id, is_predefined);
     CREATE INDEX IF NOT EXISTS idx_user_msg_templates_user ON user_message_templates(user_id);
     CREATE INDEX IF NOT EXISTS idx_user_msg_templates_cmd ON user_message_templates(organization_id, command);
+
+    -- Marketing Inquiries & Contact Submissions
+    CREATE TABLE IF NOT EXISTS marketing_inquiries (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      business TEXT,
+      industry TEXT DEFAULT 'clinic',
+      website TEXT,
+      message TEXT NOT NULL,
+      source TEXT DEFAULT 'contact_form',
+      status TEXT DEFAULT 'new',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_marketing_inquiries_created ON marketing_inquiries(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_marketing_inquiries_status ON marketing_inquiries(status);
   `);
 } catch (err) {
   console.error("Billing schema migration warning:", err);
@@ -699,5 +716,91 @@ export function ensureSuperadmin() {
 
 // Ensure platform superadmin is seeded
 ensureSuperadmin();
+
+export function ensureMarketingInquiries() {
+  try {
+    const existingCount = db.prepare("SELECT COUNT(*) as count FROM marketing_inquiries").get() as { count: number };
+    if (!existingCount || existingCount.count === 0) {
+      const now = new Date();
+      const past1 = new Date(now.getTime() - 1000 * 60 * 42).toISOString();
+      const past2 = new Date(now.getTime() - 1000 * 60 * 180).toISOString();
+      const past3 = new Date(now.getTime() - 1000 * 60 * 60 * 24).toISOString();
+
+      const stmt = db.prepare(`
+        INSERT INTO marketing_inquiries (id, name, email, business, industry, website, message, source, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      stmt.run(
+        "inq_seed_001",
+        "Dr. Marcus Vance",
+        "marcus.vance@sydneychiro.com.au",
+        "Sydney Spinal & Sports Chiro",
+        "clinic",
+        "https://sydneychiro.com.au",
+        "We have 4 chiropractors and miss 15-20 calls every Saturday. Can Echo.ai directly book into our Cliniko calendar without double-booking? We would love to join the founding clinic program.",
+        "contact_form",
+        "new",
+        past1
+      );
+
+      stmt.run(
+        "inq_seed_002",
+        "Sophie Lin",
+        "sophie@lumierejewels.com",
+        "Lumière Fine Jewelry",
+        "ecommerce",
+        "https://lumierejewels.com",
+        "Looking to automate shipping tracking and custom ring sizing queries via our Shopify store. Does the 14-day trial include full Shopify order lookup?",
+        "contact_form",
+        "contacted",
+        past2
+      );
+
+      stmt.run(
+        "inq_seed_003",
+        "Michael Thorne",
+        "mthorne@thornelegal.com.au",
+        "Thorne & Associates Law",
+        "other",
+        "https://thornelegal.com.au",
+        "Do you offer tailored AI onboarding for after-hours client intake and emergency legal triage? Would like to discuss enterprise compliance.",
+        "contact_form",
+        "qualified",
+        past3
+      );
+    }
+
+    // Ensure sample visitor chats exist for org_echo_sales
+    const existingSalesChats = db.prepare("SELECT COUNT(*) as count FROM conversations WHERE organization_id = 'org_echo_sales'").get() as { count: number };
+    if (!existingSalesChats || existingSalesChats.count === 0) {
+      const convId = "conv_sales_visitor_101";
+      const now = new Date();
+      const t1 = new Date(now.getTime() - 1000 * 60 * 25).toISOString();
+      const t2 = new Date(now.getTime() - 1000 * 60 * 24).toISOString();
+      const t3 = new Date(now.getTime() - 1000 * 60 * 22).toISOString();
+      const t4 = new Date(now.getTime() - 1000 * 60 * 21).toISOString();
+
+      db.prepare(`
+        INSERT INTO conversations (id, organization_id, visitor_name, visitor_contact, channel, status, resolution_badge, last_message, created_at, last_activity_at)
+        VALUES (?, 'org_echo_sales', 'Website Visitor (Melbourne)', 'melbourne.practice@gmail.com', 'web', 'ACTIVE', 'Booking Inquiry', 'How much does that cost per month?', ?, ?)
+      `).run(convId, t1, t4);
+
+      db.prepare(`
+        INSERT INTO messages (id, conversation_id, sender, content, created_at)
+        VALUES 
+          ('msg_sales_01', ?, 'client', 'Hi! Does Echo.ai connect with Cliniko for real-time dental bookings?', ?),
+          ('msg_sales_02', ?, 'ai', 'Yes! Echo.ai integrates directly with Cliniko via verified API sync. It can query live appointment slots and book confirmed appointments directly into your clinician schedules with zero double-booking.', ?),
+          ('msg_sales_03', ?, 'client', 'How much does that cost per month?', ?),
+          ('msg_sales_04', ?, 'ai', 'Our Growth plan at $99/month includes live calendar sync for up to 3 team members, SMS confirmations, and 2,000 monthly patient conversations. We also offer a 14-day free trial with no credit card required!', ?)
+      `).run(convId, t1, convId, t2, convId, t3, convId, t4);
+    }
+  } catch (err) {
+    console.error("Marketing inquiries seeding notice:", err);
+  }
+}
+
+// Ensure marketing inquiries and chats are seeded
+ensureMarketingInquiries();
 
 export { db };

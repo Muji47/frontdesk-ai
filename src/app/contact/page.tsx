@@ -5,7 +5,8 @@ import { PageHero } from "@/components/SiteShell";
 
 export default function ContactPage() {
   const [submitted, setSubmitted] = useState(false);
-  const [contactErrors, setContactErrors] = useState<{ name?: string; email?: string }>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [contactErrors, setContactErrors] = useState<{ name?: string; email?: string; notes?: string; general?: string }>({});
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -15,9 +16,9 @@ export default function ContactPage() {
     notes: "",
   });
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const errors: { name?: string; email?: string } = {};
+    const errors: { name?: string; email?: string; notes?: string; general?: string } = {};
     if (!formData.name.trim()) {
       errors.name = "Your full name is required.";
     }
@@ -26,6 +27,9 @@ export default function ContactPage() {
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
       errors.email = "Please enter a valid email address (e.g. name@company.com).";
     }
+    if (!formData.notes.trim()) {
+      errors.notes = "Please describe what your practice or business is looking for.";
+    }
 
     if (Object.keys(errors).length > 0) {
       setContactErrors(errors);
@@ -33,7 +37,26 @@ export default function ContactPage() {
     }
 
     setContactErrors({});
-    setSubmitted(true);
+    setIsSubmitting(true);
+
+    try {
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error?.message || "Failed to submit inquiry. Please try again.");
+      }
+
+      setSubmitted(true);
+    } catch (err: any) {
+      setContactErrors({ general: err.message || "Failed to submit your inquiry. Please try again." });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -161,22 +184,49 @@ export default function ContactPage() {
                   </div>
                 </div>
 
+                {contactErrors.general && (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                    <span>⚠️</span>
+                    <span>{contactErrors.general}</span>
+                  </div>
+                )}
+
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">How can we help?</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-semibold text-slate-700">
+                      How can we help? <span className="text-rose-500">*</span>
+                    </label>
+                    {contactErrors.notes && (
+                      <span className="text-[10px] font-bold text-rose-500">Required</span>
+                    )}
+                  </div>
                   <textarea
                     rows={4}
                     value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    placeholder="Tell us about your current booking software or main challenges..."
-                    className="w-full rounded-xl border border-slate-200 p-2.5 outline-none focus:border-indigo-600 text-slate-900"
+                    onChange={(e) => {
+                      setFormData({ ...formData, notes: e.target.value });
+                      if (contactErrors.notes) setContactErrors((prev) => ({ ...prev, notes: undefined }));
+                    }}
+                    placeholder="Tell us about your current booking software, practice challenges, or questions..."
+                    className={`w-full rounded-xl border p-2.5 outline-none transition text-slate-900 ${
+                      contactErrors.notes
+                        ? "border-rose-400 bg-rose-50/20 ring-1 ring-rose-400 focus:border-rose-500"
+                        : "border-slate-200 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                    }`}
                   />
+                  {contactErrors.notes && (
+                    <p className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-600 font-medium animate-in fade-in">
+                      <span>⚠️</span> {contactErrors.notes}
+                    </p>
+                  )}
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full rounded-xl bg-indigo-600 py-3 text-center text-xs font-bold text-white shadow-md hover:bg-indigo-700 transition"
+                  disabled={isSubmitting}
+                  className="w-full rounded-xl bg-indigo-600 py-3 text-center text-xs font-bold text-white shadow-md hover:bg-indigo-700 transition disabled:opacity-50 cursor-pointer"
                 >
-                  Send Inquiry / Book Consultation →
+                  {isSubmitting ? "Sending Inquiry..." : "Send Inquiry / Book Consultation →"}
                 </button>
               </form>
             )}

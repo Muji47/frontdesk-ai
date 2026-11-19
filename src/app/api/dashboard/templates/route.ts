@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
-  getUserTemplates,
+  getTemplatesForUser,
   saveUserTemplate,
   deleteUserTemplate,
-  resetUserTemplates,
+  resetOrgPredefinedTemplates,
 } from "@/lib/templates";
 import {
   handleApiError,
@@ -24,23 +24,29 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const targetUserId = searchParams.get("userId") || user.userId;
 
-    // Verify target user belongs to same organization
+    // Verify target user belongs to caller's organization
     const targetUser = db
-      .prepare("SELECT id, organization_id, name FROM users WHERE id = ? AND organization_id = ?")
-      .get(targetUserId, user.orgId) as { id: string; organization_id: string; name: string } | undefined;
+      .prepare("SELECT id, organization_id, name, role FROM users WHERE id = ? AND organization_id = ?")
+      .get(targetUserId, user.orgId) as { id: string; organization_id: string; name: string; role: string } | undefined;
 
     if (!targetUser) {
       throw new ValidationError("User not found in your organization.");
     }
 
-    const templates = getUserTemplates(targetUserId);
+    const { companyTemplates, personalTemplates, allTemplates } = getTemplatesForUser(user.orgId, targetUserId);
+    const canManageCompanyTemplates = user.role === "owner" || user.role === "admin";
 
     return NextResponse.json({
       success: true,
       data: {
-        templates,
+        templates: allTemplates,
+        companyTemplates,
+        personalTemplates,
         userId: targetUserId,
         userName: targetUser.name,
+        userRole: targetUser.role,
+        orgName: user.orgName,
+        canManageCompanyTemplates,
       },
     });
   } catch (err) {
@@ -60,10 +66,7 @@ export async function POST(req: NextRequest) {
 
     // If managing someone else's templates, caller must be owner or admin
     if (targetUserId !== user.userId) {
-      const caller = db
-        .prepare("SELECT role FROM users WHERE id = ?")
-        .get(user.userId) as { role: string } | undefined;
-      if (caller?.role !== "owner" && caller?.role !== "admin") {
+      if (user.role !== "owner" && user.role !== "admin") {
         throw new ForbiddenError("Only administrators can edit another staff member's templates.");
       }
     }
@@ -76,14 +79,20 @@ export async function POST(req: NextRequest) {
       throw new ValidationError("Target user not found in your organization.");
     }
 
-    const saved = saveUserTemplate(targetUserId, {
-      id: body.id,
-      title: body.title,
-      command: body.command,
-      content: body.content,
-      category: body.category,
-      is_active: body.is_active,
-    });
+    const saved = saveUserTemplate(
+      targetUserId,
+      {
+        id: body.id,
+        title: body.title,
+        command: body.command,
+        content: body.content,
+        category: body.category,
+        is_active: body.is_active,
+        is_predefined: body.is_predefined,
+      },
+      user.orgId,
+      user.role
+    );
 
     return NextResponse.json({
       success: true,
@@ -111,16 +120,7 @@ export async function DELETE(req: NextRequest) {
       throw new ValidationError("Template ID is required.");
     }
 
-    if (targetUserId !== user.userId) {
-      const caller = db
-        .prepare("SELECT role FROM users WHERE id = ?")
-        .get(user.userId) as { role: string } | undefined;
-      if (caller?.role !== "owner" && caller?.role !== "admin") {
-        throw new ForbiddenError("Only administrators can delete another staff member's templates.");
-      }
-    }
-
-    deleteUserTemplate(targetUserId, templateId);
+    deleteUserTemplate(targetUserId, templateId, user.orgId, user.role);
 
     return NextResponse.json({
       success: true,
@@ -138,25 +138,27 @@ export async function PUT(req: NextRequest) {
       throw new UnauthorizedError("You must be logged in to reset templates.");
     }
 
+    // Predefined templates belong to the company: only owners and admins can restore company defaults
+    if (user.role !== "owner" && user.role !== "admin") {
+      throw new ForbiddenError("Only Practice Owners and Administrators have permission to reset company standard templates.");
+    }
+
     const body = await req.json().catch(() => ({}));
     const targetUserId = body.userId || user.userId;
 
-    if (targetUserId !== user.userId) {
-      const caller = db
-        .prepare("SELECT role FROM users WHERE id = ?")
-        .get(user.userId) as { role: string } | undefined;
-      if (caller?.role !== "owner" && caller?.role !== "admin") {
-        throw new ForbiddenError("Only administrators can reset another staff member's templates.");
-      }
-    }
+    // Reset company predefined templates back to standard clinic/industry defaults
+    resetOrgPredefinedTemplates(user.orgId, user.role);
 
-    const templates = resetUserTemplates(targetUserId);
+    // Fetch updated template lists for this user
+    const { companyTemplates, personalTemplates, allTemplates } = getTemplatesForUser(user.orgId, targetUserId);
 
     return NextResponse.json({
       success: true,
-      message: "Predefined templates have been restored to defaults.",
+      message: "Company predefined messages have been restored to practice defaults.",
       data: {
-        templates,
+        templates: allTemplates,
+        companyTemplates,
+        personalTemplates,
       },
     });
   } catch (err) {

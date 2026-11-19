@@ -38,8 +38,11 @@ export default function MemberDetailsView({
   onTemplatesChanged,
 }: MemberDetailsViewProps) {
   const isSelf = member.id === currentUser.userId || member.email.toLowerCase() === currentUser.email.toLowerCase();
-  const canEditMemberInfo = isSelf || currentUser.role === "owner" || currentUser.role === "admin";
-  const canEditTemplates = isSelf || currentUser.role === "owner" || currentUser.role === "admin";
+  const isOwner = currentUser.role === "owner";
+  const isAdmin = currentUser.role === "admin";
+  const canManageCompanyTemplates = isOwner || isAdmin;
+  const canEditMemberInfo = isSelf || canManageCompanyTemplates;
+  const canCreatePersonalTemplates = isSelf || canManageCompanyTemplates;
 
   const [templates, setTemplates] = useState<UserMessageTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -435,8 +438,8 @@ export default function MemberDetailsView({
 
       const matchesCat =
         selectedCategory === "all" ||
-        (selectedCategory === "predefined" && t.is_predefined === 1) ||
-        (selectedCategory === "custom" && t.is_predefined === 0) ||
+        ((selectedCategory === "predefined" || selectedCategory === "company") && t.is_predefined === 1) ||
+        ((selectedCategory === "custom" || selectedCategory === "personal") && t.is_predefined === 0) ||
         t.category.toLowerCase() === selectedCategory.toLowerCase();
 
       return matchesSearch && matchesCat;
@@ -684,23 +687,23 @@ export default function MemberDetailsView({
             </span>
           </h2>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-            {isSelf
-              ? "Every staff member gets a set of predefined messages. Edit any predefined response to match your personal style, or create custom slash templates to use during live chat triage."
-              : `Manage personal macros and predefined message templates for ${member.name}. These are automatically provisioned and available in live chat takeover.`}
+            Predefined messages are assigned to <b>{currentUser.orgName || "your practice"}</b> and shared across all team members for consistent patient triage. Staff members can also create personal custom macros for their individual workflow.
           </p>
         </div>
 
-        {canEditTemplates && (
-          <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {canManageCompanyTemplates && (
             <button
               type="button"
               onClick={() => setIsResetModalOpen(true)}
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl transition shadow-2xs cursor-pointer"
-              title="Restore standard clinic defaults for all predefined templates"
+              title="Restore standard clinic defaults for all company predefined templates"
             >
               <span>↺</span>
-              <span>Restore Defaults</span>
+              <span>Restore Company Defaults</span>
             </button>
+          )}
+          {canCreatePersonalTemplates && (
             <button
               type="button"
               onClick={() => setIsAddingCustom(!isAddingCustom)}
@@ -708,8 +711,24 @@ export default function MemberDetailsView({
             >
               <span>{isAddingCustom ? "✕ Close Form" : "+ Add Custom Template"}</span>
             </button>
+          )}
+        </div>
+      </div>
+
+      {/* Company Scoping & Policy Banner */}
+      <div className="rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50/70 via-indigo-50/30 to-white p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="text-lg shrink-0">🏢</span>
+          <div className="min-w-0">
+            <span className="font-bold text-slate-900">Company Standard Scoping: </span>
+            <span className="text-slate-600">
+              Predefined templates (/greeting, /fees, /booking, /hours) belong to <b>{currentUser.orgName || "Company"}</b> and are synchronized across all receptionists.
+            </span>
           </div>
-        )}
+        </div>
+        <span className="shrink-0 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-800 border border-sky-200">
+          {canManageCompanyTemplates ? "Admin Edit Enabled" : "Read-Only for Staff"}
+        </span>
       </div>
 
       {/* Stats Counter Bar */}
@@ -718,12 +737,12 @@ export default function MemberDetailsView({
           <span className="text-[11px] font-semibold text-slate-400 block uppercase tracking-wider">Total Templates</span>
           <span className="text-xl font-extrabold text-slate-900 mt-0.5 block">{templates.length}</span>
         </div>
-        <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3.5 shadow-2xs">
-          <span className="text-[11px] font-semibold text-indigo-600 block uppercase tracking-wider">Predefined Messages</span>
-          <span className="text-xl font-extrabold text-indigo-900 mt-0.5 block">{predefinedCount}</span>
+        <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-3.5 shadow-2xs">
+          <span className="text-[11px] font-semibold text-sky-700 block uppercase tracking-wider">Company Predefined</span>
+          <span className="text-xl font-extrabold text-sky-950 mt-0.5 block">{predefinedCount}</span>
         </div>
         <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-3.5 shadow-2xs">
-          <span className="text-[11px] font-semibold text-purple-600 block uppercase tracking-wider">Custom Templates</span>
+          <span className="text-[11px] font-semibold text-purple-600 block uppercase tracking-wider">Personal Macros</span>
           <span className="text-xl font-extrabold text-purple-900 mt-0.5 block">{customCount}</span>
         </div>
         <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3.5 shadow-2xs">
@@ -929,7 +948,7 @@ export default function MemberDetailsView({
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200/70"
             }`}
           >
-            Predefined ({predefinedCount})
+            🏢 Company Standard ({predefinedCount})
           </button>
           <button
             type="button"
@@ -940,7 +959,7 @@ export default function MemberDetailsView({
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200/70"
             }`}
           >
-            Custom ({customCount})
+            ✨ Personal ({customCount})
           </button>
           {categories.map((cat) => (
             <button
@@ -1002,12 +1021,14 @@ export default function MemberDetailsView({
                         ⚡ {t.command}
                       </span>
                       {t.is_predefined === 1 ? (
-                        <span className="text-[10px] font-bold text-sky-800 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-full">
-                          Predefined
+                        <span className="text-[10px] font-bold text-sky-800 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                          <span>🏢</span>
+                          <span>Company Standard</span>
                         </span>
                       ) : (
-                        <span className="text-[10px] font-bold text-purple-800 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full">
-                          Custom
+                        <span className="text-[10px] font-bold text-purple-800 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                          <span>✨</span>
+                          <span>Personal Macro</span>
                         </span>
                       )}
                       <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
@@ -1015,19 +1036,47 @@ export default function MemberDetailsView({
                       </span>
                     </div>
 
-                    {canEditTemplates && (
-                      <button
-                        type="button"
-                        onClick={() => handleToggleActive(t)}
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition cursor-pointer ${
-                          t.is_active
-                            ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                            : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
-                        }`}
-                        title={t.is_active ? "Click to mute macro" : "Click to activate macro"}
-                      >
-                        {t.is_active ? "● Active" : "○ Muted"}
-                      </button>
+                    {t.is_predefined === 1 ? (
+                      canManageCompanyTemplates ? (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleActive(t)}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition cursor-pointer ${
+                            t.is_active
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                              : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
+                          }`}
+                          title={t.is_active ? "Click to mute company macro" : "Click to activate company macro"}
+                        >
+                          {t.is_active ? "● Active" : "○ Muted"}
+                        </button>
+                      ) : (
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            t.is_active
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-slate-100 text-slate-500 border-slate-200"
+                          }`}
+                          title="Company standard macro active status managed by administrators"
+                        >
+                          {t.is_active ? "● Active" : "○ Muted"}
+                        </span>
+                      )
+                    ) : (
+                      (isSelf || canManageCompanyTemplates) && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleActive(t)}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition cursor-pointer ${
+                            t.is_active
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                              : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
+                          }`}
+                          title={t.is_active ? "Click to mute personal macro" : "Click to activate personal macro"}
+                        >
+                          {t.is_active ? "● Active" : "○ Muted"}
+                        </button>
+                      )
                     )}
                   </div>
 
@@ -1198,33 +1247,52 @@ export default function MemberDetailsView({
                       </button>
                     </div>
 
-                    {canEditTemplates && (
-                      <div className="flex items-center gap-2.5">
-                        <button
-                          type="button"
-                          onClick={() => startEditingTemplate(t)}
-                          className="text-indigo-600 hover:text-indigo-800 font-semibold inline-flex items-center gap-1 transition cursor-pointer hover:underline"
-                          title="Edit this predefined message for your own personal use"
-                        >
-                          <span>✏️</span>
-                          <span>Edit</span>
-                        </button>
-
-                        {t.is_predefined === 0 && (
+                    <div className="flex items-center gap-2.5">
+                      {t.is_predefined === 1 ? (
+                        canManageCompanyTemplates ? (
+                          <button
+                            type="button"
+                            onClick={() => startEditingTemplate(t)}
+                            className="text-indigo-600 hover:text-indigo-800 font-semibold inline-flex items-center gap-1 transition cursor-pointer hover:underline"
+                            title="Edit company standard message (updates practice-wide for all staff)"
+                          >
+                            <span>✏️</span>
+                            <span>Edit Company Standard</span>
+                          </button>
+                        ) : (
+                          <span
+                            className="text-[10px] text-slate-500 font-semibold inline-flex items-center gap-1 bg-slate-100/80 px-2 py-0.5 rounded-md border border-slate-200"
+                            title="Company standard message managed by practice administrators"
+                          >
+                            <span>🔒</span>
+                            <span>Admin Managed</span>
+                          </span>
+                        )
+                      ) : (
+                        (isSelf || canManageCompanyTemplates) && (
                           <>
+                            <button
+                              type="button"
+                              onClick={() => startEditingTemplate(t)}
+                              className="text-indigo-600 hover:text-indigo-800 font-semibold inline-flex items-center gap-1 transition cursor-pointer hover:underline"
+                              title="Edit personal custom macro"
+                            >
+                              <span>✏️</span>
+                              <span>Edit</span>
+                            </button>
                             <span className="text-slate-200">|</span>
                             <button
                               type="button"
                               onClick={() => setTemplateToDelete(t)}
                               className="text-rose-600 hover:text-rose-800 font-semibold transition cursor-pointer hover:underline"
-                              title="Delete custom template"
+                              title="Delete personal custom macro"
                             >
                               Delete
                             </button>
                           </>
-                        )}
-                      </div>
-                    )}
+                        )
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1315,26 +1383,26 @@ export default function MemberDetailsView({
               </div>
               <div>
                 <h3 className="font-bold text-sm text-slate-900">
-                  Restore Predefined Messages?
+                  Restore Company Predefined Messages?
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Reset practice responses back to original defaults
+                  Reset practice-wide responses back to original defaults
                 </p>
               </div>
             </div>
 
             <div className="rounded-xl bg-amber-50/70 border border-amber-200/80 p-3.5 text-xs text-amber-900 leading-relaxed space-y-2">
               <p>
-                Are you sure you want to reset all <b>predefined messages</b> to standard clinic defaults?
+                Are you sure you want to reset all <b>company predefined messages</b> to standard practice defaults for <b>{currentUser.orgName || "your practice"}</b>?
               </p>
               <div className="text-[11px] text-amber-800 space-y-1.5 pt-2 border-t border-amber-200/50">
                 <div className="flex items-start gap-1.5">
-                  <span className="shrink-0 mt-0.5">⚠️</span>
-                  <span>Personal customizations made to predefined responses will be refreshed with original templates.</span>
+                  <span className="shrink-0 mt-0.5">🏢</span>
+                  <span>All team members across the company will immediately have access to the standard templates.</span>
                 </div>
                 <div className="flex items-start gap-1.5">
                   <span className="shrink-0 mt-0.5">🔒</span>
-                  <span>Any custom templates you created will remain untouched and active.</span>
+                  <span>Any personal custom macros created by staff members will remain untouched and active.</span>
                 </div>
               </div>
             </div>

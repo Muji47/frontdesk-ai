@@ -1,51 +1,36 @@
 import { db } from "@/lib/db";
 import { randomBytes } from "node:crypto";
-import { ValidationError, NotFoundError } from "@/server/errors";
+import { ValidationError, NotFoundError, ForbiddenError } from "@/server/errors";
 
 export interface UserMessageTemplate {
   id: string;
-  user_id: string;
+  organization_id: string;
+  user_id: string | null;
   title: string;
   command: string;
   content: string;
   category: string;
-  is_predefined: number;
+  is_predefined: number; // 1 = Company-wide Predefined, 0 = Personal Custom
   is_active: number;
   created_at: string;
   updated_at: string;
 }
 
 /**
- * Generates initial predefined templates tailored for the user and their organization.
+ * Returns default template blueprints tailored for a practice industry.
  */
-export function seedUserPredefinedTemplates(userId: string): UserMessageTemplate[] {
-  const userRow = db
-    .prepare(`
-      SELECT u.id, u.name, u.role, o.name AS org_name, o.industry
-      FROM users u
-      LEFT JOIN organizations o ON o.id = u.organization_id
-      WHERE u.id = ?
-    `)
-    .get(userId) as {
-      id: string;
-      name: string;
-      role: string;
-      org_name: string | null;
-      industry: string | null;
-    } | undefined;
-
-  const staffName = userRow?.name || "Front Desk";
-  const orgName = userRow?.org_name || "Our Practice";
-  const industry = userRow?.industry || "clinic";
-
-  let defaultTemplates: Array<{ title: string; command: string; content: string; category: string }> = [];
-
+function getIndustryDefaultTemplates(orgName: string, industry: string): Array<{
+  title: string;
+  command: string;
+  content: string;
+  category: string;
+}> {
   if (industry === "ecommerce") {
-    defaultTemplates = [
+    return [
       {
-        title: "Personal Welcome & Greeting",
+        title: "Company Welcome & Greeting",
         command: "/greeting",
-        content: `Hi there! I'm ${staffName} with ${orgName} Customer Care. How can I help you with your order or inquiry today?`,
+        content: `Hi there! Welcome to ${orgName} Customer Care. How can I assist you with your order or inquiry today?`,
         category: "Greeting",
       },
       {
@@ -79,12 +64,14 @@ export function seedUserPredefinedTemplates(userId: string): UserMessageTemplate
         category: "Support",
       },
     ];
-  } else if (industry === "realestate") {
-    defaultTemplates = [
+  }
+
+  if (industry === "realestate") {
+    return [
       {
-        title: "Personal Welcome & Greeting",
+        title: "Agency Welcome & Greeting",
         command: "/greeting",
-        content: `Hello! I'm ${staffName} from ${orgName}. How can I assist you with your property search or viewing schedule today?`,
+        content: `Hello! Welcome to ${orgName}. How can I assist you with your property search or viewing schedule today?`,
         category: "Greeting",
       },
       {
@@ -112,12 +99,14 @@ export function seedUserPredefinedTemplates(userId: string): UserMessageTemplate
         category: "General",
       },
     ];
-  } else if (industry === "beauty") {
-    defaultTemplates = [
+  }
+
+  if (industry === "beauty") {
+    return [
       {
-        title: "Personal Welcome & Greeting",
+        title: "Salon Welcome & Greeting",
         command: "/greeting",
-        content: `Hi there! I'm ${staffName} at ${orgName}. How can I help you choose your beauty treatments or reserve an appointment?`,
+        content: `Hi there! Welcome to ${orgName}. How can I help you choose your beauty treatments or reserve an appointment?`,
         category: "Greeting",
       },
       {
@@ -145,90 +134,157 @@ export function seedUserPredefinedTemplates(userId: string): UserMessageTemplate
         category: "General",
       },
     ];
-  } else {
-    // Default Healthcare / Clinic
-    defaultTemplates = [
-      {
-        title: "Personal Welcome & Greeting",
-        command: "/greeting",
-        content: `Hi there! I'm ${staffName} from ${orgName}. How can I assist you with your appointment or consultation today?`,
-        category: "Greeting",
-      },
-      {
-        title: "Appointment Booking Options",
-        command: "/booking",
-        content: "I can help you reserve that right away! We have available consultation slots tomorrow at 10:30 AM and 2:15 PM. Which time suits you best?",
-        category: "Bookings",
-      },
-      {
-        title: "Fee Schedule & Consultation Pricing",
-        command: "/fees",
-        content: "Our consultation fees are $120 for an Initial Assessment (60 min) and $90 for Standard Follow-ups (30 min). On-the-spot health fund rebates apply.",
-        category: "Billing",
-      },
-      {
-        title: "HICAPS & Health Fund Rebates",
-        command: "/hicaps",
-        content: "We provide immediate on-the-spot electronic HICAPS claiming for Bupa, Medibank, NIB, and all major private healthcare funds.",
-        category: "Insurance",
-      },
-      {
-        title: "Clinic Location & Parking",
-        command: "/location",
-        content: "We are located at 45 Commercial Rd, South Yarra. Dedicated free patient parking is available at the rear of the clinic building.",
-        category: "Directions",
-      },
-      {
-        title: "Practice Operating Hours",
-        command: "/hours",
-        content: "Our clinic is open Monday through Friday 7:30 AM – 6:00 PM and Saturday 8:00 AM – 1:00 PM. Closed Sundays and Public Holidays.",
-        category: "General",
-      },
-      {
-        title: "Senior Clinical Handoff",
-        command: "/handoff",
-        content: "I have documented your inquiry and notified our senior practitioner on duty. A clinician will review your file and respond shortly.",
-        category: "Handoff",
-      },
-    ];
   }
 
+  // Default Healthcare / Medical Clinic
+  return [
+    {
+      title: "Clinic Welcome & Greeting",
+      command: "/greeting",
+      content: `Hello! Thank you for contacting ${orgName}. How can our front desk assist you with your appointment or inquiry today?`,
+      category: "Greeting",
+    },
+    {
+      title: "Appointment Booking Options",
+      command: "/booking",
+      content: "I can help you reserve that right away! We have available consultation slots tomorrow at 10:30 AM and 2:15 PM. Which time suits you best?",
+      category: "Bookings",
+    },
+    {
+      title: "Fee Schedule & Consultation Pricing",
+      command: "/fees",
+      content: "Our consultation fees are $120 for an Initial Assessment (60 min) and $90 for Standard Follow-ups (30 min). On-the-spot health fund rebates apply.",
+      category: "Billing",
+    },
+    {
+      title: "HICAPS & Health Fund Rebates",
+      command: "/hicaps",
+      content: "We provide immediate on-the-spot electronic HICAPS claiming for Bupa, Medibank, NIB, and all major private healthcare funds.",
+      category: "Insurance",
+    },
+    {
+      title: "Clinic Location & Parking",
+      command: "/location",
+      content: "We are located at 45 Commercial Rd, South Yarra. Dedicated free patient parking is available at the rear of the clinic building.",
+      category: "Directions",
+    },
+    {
+      title: "Practice Operating Hours",
+      command: "/hours",
+      content: "Our clinic is open Monday through Friday 7:30 AM – 6:00 PM and Saturday 8:00 AM – 1:00 PM. Closed Sundays and Public Holidays.",
+      category: "General",
+    },
+    {
+      title: "Senior Clinical Handoff",
+      command: "/handoff",
+      content: "I have documented your inquiry and notified our senior practitioner on duty. A clinician will review your file and respond shortly.",
+      category: "Handoff",
+    },
+  ];
+}
+
+/**
+ * Seeds predefined standard messages assigned to the company / organization.
+ * Predefined templates belong to the entire practice, not individual users.
+ */
+export function seedOrgPredefinedTemplates(orgId: string): UserMessageTemplate[] {
+  const orgRow = db
+    .prepare("SELECT id, name, industry FROM organizations WHERE id = ?")
+    .get(orgId) as { id: string; name: string; industry: string | null } | undefined;
+
+  const orgName = orgRow?.name || "Our Practice";
+  const industry = orgRow?.industry || "clinic";
+
+  const defaultTemplates = getIndustryDefaultTemplates(orgName, industry);
+
+  // Find owner to associate or leave user_id as null
+  const ownerRow = db
+    .prepare("SELECT id FROM users WHERE organization_id = ? AND role = 'owner' LIMIT 1")
+    .get(orgId) as { id: string } | undefined;
+  const ownerUserId = ownerRow?.id || null;
+
   const insertStmt = db.prepare(`
-    INSERT INTO user_message_templates (id, user_id, title, command, content, category, is_predefined, is_active, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    INSERT INTO user_message_templates (id, organization_id, user_id, title, command, content, category, is_predefined, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
 
   for (const t of defaultTemplates) {
     const id = "tpl_" + randomBytes(8).toString("hex");
-    insertStmt.run(id, userId, t.title, t.command, t.content, t.category);
+    insertStmt.run(id, orgId, ownerUserId, t.title, t.command, t.content, t.category);
   }
 
-  return getUserTemplates(userId);
-}
-
-/**
- * Retrieves all message templates for a given user.
- * Automatically seeds predefined messages if none exist.
- */
-export function getUserTemplates(userId: string): UserMessageTemplate[] {
-  let rows = db
+  return db
     .prepare(`
-      SELECT id, user_id, title, command, content, category, is_predefined, is_active, created_at, updated_at
+      SELECT id, organization_id, user_id, title, command, content, category, is_predefined, is_active, created_at, updated_at
       FROM user_message_templates
-      WHERE user_id = ?
-      ORDER BY is_predefined DESC, created_at ASC
+      WHERE organization_id = ? AND is_predefined = 1
+      ORDER BY created_at ASC
     `)
-    .all(userId) as unknown as UserMessageTemplate[];
-
-  if (rows.length === 0) {
-    rows = seedUserPredefinedTemplates(userId);
-  }
-
-  return rows;
+    .all(orgId) as unknown as UserMessageTemplate[];
 }
 
 /**
- * Saves a user template (creates a custom template or updates an existing one).
+ * Retrieves company-wide predefined templates and personal custom templates for a user.
+ * Automatically seeds company predefined templates if none exist for the organization.
+ */
+export function getTemplatesForUser(
+  orgId: string,
+  userId: string
+): {
+  companyTemplates: UserMessageTemplate[];
+  personalTemplates: UserMessageTemplate[];
+  allTemplates: UserMessageTemplate[];
+} {
+  // 1. Fetch company predefined templates
+  let companyTemplates = db
+    .prepare(`
+      SELECT id, organization_id, user_id, title, command, content, category, is_predefined, is_active, created_at, updated_at
+      FROM user_message_templates
+      WHERE organization_id = ? AND is_predefined = 1
+      ORDER BY created_at ASC
+    `)
+    .all(orgId) as unknown as UserMessageTemplate[];
+
+  if (companyTemplates.length === 0) {
+    companyTemplates = seedOrgPredefinedTemplates(orgId);
+  }
+
+  // 2. Fetch user's personal custom templates
+  const personalTemplates = db
+    .prepare(`
+      SELECT id, organization_id, user_id, title, command, content, category, is_predefined, is_active, created_at, updated_at
+      FROM user_message_templates
+      WHERE organization_id = ? AND user_id = ? AND is_predefined = 0
+      ORDER BY created_at ASC
+    `)
+    .all(orgId, userId) as unknown as UserMessageTemplate[];
+
+  // 3. Combined templates for live chat triage (company predefined first, then personal)
+  const allTemplates = [...companyTemplates, ...personalTemplates];
+
+  return { companyTemplates, personalTemplates, allTemplates };
+}
+
+/**
+ * Backward-compatible helper to retrieve all message templates for a given user.
+ */
+export function getUserTemplates(userId: string, explicitOrgId?: string): UserMessageTemplate[] {
+  let orgId = explicitOrgId;
+  if (!orgId) {
+    const userRow = db.prepare("SELECT organization_id FROM users WHERE id = ?").get(userId) as
+      | { organization_id: string }
+      | undefined;
+    orgId = userRow?.organization_id || "org_demo_101";
+  }
+
+  const { allTemplates } = getTemplatesForUser(orgId, userId);
+  return allTemplates;
+}
+
+/**
+ * Saves a message template with RBAC permissions:
+ * - Company Predefined Templates (is_predefined = 1): Only Owners & Admins can edit or create.
+ * - Personal Custom Templates (is_predefined = 0): Any staff member can create/edit for themselves.
  */
 export function saveUserTemplate(
   userId: string,
@@ -239,8 +295,25 @@ export function saveUserTemplate(
     content: string;
     category?: string;
     is_active?: boolean | number;
-  }
+    is_predefined?: boolean | number;
+  },
+  explicitOrgId?: string,
+  explicitRole?: string
 ): UserMessageTemplate {
+  // Determine organization and role
+  const userRow = db
+    .prepare("SELECT organization_id, role FROM users WHERE id = ?")
+    .get(userId) as { organization_id: string; role: string } | undefined;
+
+  const orgId = explicitOrgId || userRow?.organization_id;
+  const userRole = explicitRole || userRow?.role || "receptionist";
+
+  if (!orgId) {
+    throw new ValidationError("User organization not found.");
+  }
+
+  const isManagement = userRole === "owner" || userRole === "admin";
+
   const title = (data.title || "").trim();
   let command = (data.command || "").trim().toLowerCase();
   const content = (data.content || "").trim();
@@ -268,69 +341,167 @@ export function saveUserTemplate(
   }
 
   if (data.id) {
-    // Update existing template
+    // Updating existing template
     const existing = db
-      .prepare("SELECT id, user_id, is_predefined FROM user_message_templates WHERE id = ? AND user_id = ?")
-      .get(data.id, userId) as { id: string; user_id: string; is_predefined: number } | undefined;
+      .prepare(`
+        SELECT id, organization_id, user_id, is_predefined
+        FROM user_message_templates
+        WHERE id = ? AND organization_id = ?
+      `)
+      .get(data.id, orgId) as { id: string; organization_id: string; user_id: string | null; is_predefined: number } | undefined;
 
     if (!existing) {
-      throw new NotFoundError("Template not found or unauthorized to edit.");
+      throw new NotFoundError("Template not found in your organization.");
+    }
+
+    // Permission check
+    if (existing.is_predefined === 1) {
+      if (!isManagement) {
+        throw new ForbiddenError("Company standard templates can only be edited by Practice Owners and Administrators.");
+      }
+    } else {
+      if (existing.user_id !== userId && !isManagement) {
+        throw new ForbiddenError("You are only permitted to edit your own personal templates.");
+      }
+    }
+
+    // Check shortcut conflict if command changed
+    const conflict = db
+      .prepare(`
+        SELECT id, title FROM user_message_templates
+        WHERE organization_id = ? AND command = ? AND id != ?
+        AND (is_predefined = 1 OR user_id = ?)
+      `)
+      .get(orgId, command, data.id, userId) as { id: string; title: string } | undefined;
+
+    if (conflict) {
+      throw new ValidationError(`Shortcut '${command}' is already in use by '${conflict.title}'.`);
     }
 
     db.prepare(`
       UPDATE user_message_templates
       SET title = ?, command = ?, content = ?, category = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND user_id = ?
-    `).run(title, command, content, category, isActive, data.id, userId);
+      WHERE id = ? AND organization_id = ?
+    `).run(title, command, content, category, isActive, data.id, orgId);
 
-    const updated = db
+    return db
       .prepare("SELECT * FROM user_message_templates WHERE id = ?")
       .get(data.id) as unknown as UserMessageTemplate;
-
-    return updated;
   } else {
-    // Check if command already in use by this user
+    // Creating new template
+    const createAsPredefined = (data.is_predefined === 1 || data.is_predefined === true) && isManagement;
+
+    // Check shortcut conflict within organization
     const conflict = db
-      .prepare("SELECT id FROM user_message_templates WHERE user_id = ? AND command = ?")
-      .get(userId, command) as { id: string } | undefined;
+      .prepare(`
+        SELECT id, title, is_predefined FROM user_message_templates
+        WHERE organization_id = ? AND command = ?
+        AND (is_predefined = 1 OR user_id = ?)
+      `)
+      .get(orgId, command, userId) as { id: string; title: string; is_predefined: number } | undefined;
 
     if (conflict) {
-      throw new ValidationError(`Command shortcut '${command}' is already in use by another template.`);
+      const typeLabel = conflict.is_predefined === 1 ? "company predefined message" : "personal custom template";
+      throw new ValidationError(`Shortcut '${command}' is already in use by ${typeLabel} '${conflict.title}'.`);
     }
 
     const id = "tpl_" + randomBytes(8).toString("hex");
     db.prepare(`
-      INSERT INTO user_message_templates (id, user_id, title, command, content, category, is_predefined, is_active, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).run(id, userId, title, command, content, category);
+      INSERT INTO user_message_templates (id, organization_id, user_id, title, command, content, category, is_predefined, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(
+      id,
+      orgId,
+      createAsPredefined ? null : userId,
+      title,
+      command,
+      content,
+      category,
+      createAsPredefined ? 1 : 0
+    );
 
-    const created = db
+    return db
       .prepare("SELECT * FROM user_message_templates WHERE id = ?")
       .get(id) as unknown as UserMessageTemplate;
-
-    return created;
   }
 }
 
 /**
- * Deletes a template owned by the user.
+ * Deletes a template with role enforcement:
+ * - Company Predefined Templates: Only Owners and Admins can delete.
+ * - Personal Custom Templates: Owning user or Admins can delete.
  */
-export function deleteUserTemplate(userId: string, templateId: string): void {
+export function deleteUserTemplate(
+  userId: string,
+  templateId: string,
+  explicitOrgId?: string,
+  explicitRole?: string
+): void {
+  const userRow = db
+    .prepare("SELECT organization_id, role FROM users WHERE id = ?")
+    .get(userId) as { organization_id: string; role: string } | undefined;
+
+  const orgId = explicitOrgId || userRow?.organization_id;
+  const userRole = explicitRole || userRow?.role || "receptionist";
+
+  if (!orgId) {
+    throw new ValidationError("User organization not found.");
+  }
+
+  const isManagement = userRole === "owner" || userRole === "admin";
+
   const existing = db
-    .prepare("SELECT id, user_id, is_predefined FROM user_message_templates WHERE id = ? AND user_id = ?")
-    .get(templateId, userId) as { id: string; user_id: string; is_predefined: number } | undefined;
+    .prepare(`
+      SELECT id, organization_id, user_id, is_predefined
+      FROM user_message_templates
+      WHERE id = ? AND organization_id = ?
+    `)
+    .get(templateId, orgId) as { id: string; organization_id: string; user_id: string | null; is_predefined: number } | undefined;
 
   if (!existing) {
-    throw new NotFoundError("Template not found.");
+    throw new NotFoundError("Template not found in your organization.");
   }
 
-  db.prepare("DELETE FROM user_message_templates WHERE id = ? AND user_id = ?").run(templateId, userId);
+  if (existing.is_predefined === 1) {
+    if (!isManagement) {
+      throw new ForbiddenError("Only Practice Owners and Administrators can delete company standard templates.");
+    }
+  } else {
+    if (existing.user_id !== userId && !isManagement) {
+      throw new ForbiddenError("You can only delete your own personal custom templates.");
+    }
+  }
+
+  db.prepare("DELETE FROM user_message_templates WHERE id = ? AND organization_id = ?").run(templateId, orgId);
 }
 
 /**
- * Resets predefined templates for the user back to standard clinic/industry defaults.
+ * Resets COMPANY predefined templates for an organization back to standard clinic/industry defaults.
+ * Personal custom templates created by staff members are kept untouched!
  */
-export function resetUserTemplates(userId: string): UserMessageTemplate[] {
-  db.prepare("DELETE FROM user_message_templates WHERE user_id = ?").run(userId);
-  return seedUserPredefinedTemplates(userId);
+export function resetOrgPredefinedTemplates(orgId: string, userRole: string): UserMessageTemplate[] {
+  if (userRole !== "owner" && userRole !== "admin") {
+    throw new ForbiddenError("Only Practice Owners and Administrators have permission to reset company standard templates.");
+  }
+
+  // Delete only company predefined templates for this organization
+  db.prepare("DELETE FROM user_message_templates WHERE organization_id = ? AND is_predefined = 1").run(orgId);
+
+  // Seed fresh standard templates for this organization
+  return seedOrgPredefinedTemplates(orgId);
+}
+
+/**
+ * Backward-compatible reset handler.
+ */
+export function resetUserTemplates(userId: string, explicitOrgId?: string, explicitRole?: string): UserMessageTemplate[] {
+  const userRow = db
+    .prepare("SELECT organization_id, role FROM users WHERE id = ?")
+    .get(userId) as { organization_id: string; role: string } | undefined;
+
+  const orgId = explicitOrgId || userRow?.organization_id || "org_demo_101";
+  const userRole = explicitRole || userRow?.role || "receptionist";
+
+  resetOrgPredefinedTemplates(orgId, userRole);
+  return getUserTemplates(userId, orgId);
 }

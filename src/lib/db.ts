@@ -396,7 +396,8 @@ try {
     -- User Message Templates & Predefined Macros
     CREATE TABLE IF NOT EXISTS user_message_templates (
       id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
+      organization_id TEXT,
+      user_id TEXT,
       title TEXT NOT NULL,
       command TEXT NOT NULL,
       content TEXT NOT NULL,
@@ -407,9 +408,26 @@ try {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+  `);
 
+  // Ensure organization_id column exists on older schema instances
+  try {
+    db.exec("ALTER TABLE user_message_templates ADD COLUMN organization_id TEXT;");
+  } catch {}
+
+  try {
+    db.exec(`
+      UPDATE user_message_templates 
+      SET organization_id = (SELECT organization_id FROM users WHERE users.id = user_message_templates.user_id)
+      WHERE organization_id IS NULL;
+    `);
+  } catch {}
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_user_msg_templates_org ON user_message_templates(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_user_msg_templates_org_pre ON user_message_templates(organization_id, is_predefined);
     CREATE INDEX IF NOT EXISTS idx_user_msg_templates_user ON user_message_templates(user_id);
-    CREATE INDEX IF NOT EXISTS idx_user_msg_templates_cmd ON user_message_templates(user_id, command);
+    CREATE INDEX IF NOT EXISTS idx_user_msg_templates_cmd ON user_message_templates(organization_id, command);
   `);
 } catch (err) {
   console.error("Billing schema migration warning:", err);

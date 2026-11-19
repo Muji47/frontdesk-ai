@@ -15,6 +15,12 @@ export async function POST(request: Request) {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    if (user.role !== "owner" && user.role !== "admin") {
+      return NextResponse.json(
+        { error: "Access denied. Only Practice Owners and Administrators can initiate subscription checkout." },
+        { status: 403 }
+      );
+    }
 
     const body = await request.json();
     const plan: BillingPlanTier =

@@ -23,6 +23,12 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
+  if (user.role !== "owner" && user.role !== "admin") {
+    return NextResponse.json(
+      { success: false, error: "Access denied. Only Practice Owners and Administrators can modify integration configurations." },
+      { status: 403 }
+    );
+  }
 
   let body: any;
   try {

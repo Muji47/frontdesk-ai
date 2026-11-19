@@ -9,6 +9,12 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (user.role !== "owner" && user.role !== "admin") {
+    return NextResponse.json(
+      { error: "Access denied. Billing management is restricted to Practice Owners and Administrators." },
+      { status: 403 }
+    );
+  }
   const billing = DashboardService.getBillingData(user.orgId);
   return NextResponse.json({ billing });
 }
@@ -18,6 +24,12 @@ export async function POST(req: NextRequest) {
     const user = await getCurrentUser();
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (user.role !== "owner" && user.role !== "admin") {
+      return NextResponse.json(
+        { error: "Access denied. Billing modifications are restricted to Practice Owners and Administrators." },
+        { status: 403 }
+      );
     }
 
     const body = await req.json();

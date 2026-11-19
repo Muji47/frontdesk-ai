@@ -9,6 +9,8 @@ export interface MemberRecord {
   email: string;
   role: string;
   organization_id?: string;
+  can_edit_company_templates?: boolean | number;
+  canEditCompanyTemplates?: boolean;
   created_at?: string;
 }
 
@@ -20,13 +22,14 @@ export interface CurrentUserData {
   orgId: string;
   orgName: string;
   industry: string;
+  canEditCompanyTemplates?: boolean;
 }
 
 interface MemberDetailsViewProps {
   member: MemberRecord;
   currentUser: CurrentUserData;
   onBack: () => void;
-  onUpdateMember?: (updated: { id: string; name: string; role: string }) => void;
+  onUpdateMember?: (updated: { id: string; name: string; role: string; canEditCompanyTemplates?: boolean }) => void;
   onTemplatesChanged?: () => void;
 }
 
@@ -40,9 +43,20 @@ export default function MemberDetailsView({
   const isSelf = member.id === currentUser.userId || member.email.toLowerCase() === currentUser.email.toLowerCase();
   const isOwner = currentUser.role === "owner";
   const isAdmin = currentUser.role === "admin";
-  const canManageCompanyTemplates = isOwner || isAdmin;
-  const canEditMemberInfo = isSelf || canManageCompanyTemplates;
-  const canCreatePersonalTemplates = isSelf || canManageCompanyTemplates;
+  const isManagement = isOwner || isAdmin;
+
+  // Company template permission state (derived from role, user setting, or org policy)
+  const [canManageCompanyTemplates, setCanManageCompanyTemplates] = useState(
+    isOwner || isAdmin || Boolean(currentUser.canEditCompanyTemplates)
+  );
+  const [allowSubuserPolicy, setAllowSubuserPolicy] = useState(false);
+  const [memberCanEditTemplates, setMemberCanEditTemplates] = useState(
+    Boolean(member.can_edit_company_templates || member.canEditCompanyTemplates || member.role === "owner" || member.role === "admin")
+  );
+  const [isUpdatingPermission, setIsUpdatingPermission] = useState(false);
+
+  const canEditMemberInfo = isSelf || isManagement;
+  const canCreatePersonalTemplates = isSelf || isManagement;
 
   const [templates, setTemplates] = useState<UserMessageTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -57,6 +71,9 @@ export default function MemberDetailsView({
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [editName, setEditName] = useState(member.name);
   const [editRole, setEditRole] = useState(member.role);
+  const [editMemberCanEditTemplates, setEditMemberCanEditTemplates] = useState(
+    Boolean(member.can_edit_company_templates || member.canEditCompanyTemplates || member.role === "owner" || member.role === "admin")
+  );
   const [isSavingInfo, setIsSavingInfo] = useState(false);
   const [editMemberErrors, setEditMemberErrors] = useState<{ name?: string }>({});
 
@@ -100,6 +117,16 @@ export default function MemberDetailsView({
         throw new Error(data.error || "Failed to load message templates.");
       }
       setTemplates(data.data.templates || []);
+      if (data.data.canManageCompanyTemplates !== undefined) {
+        setCanManageCompanyTemplates(Boolean(data.data.canManageCompanyTemplates));
+      }
+      if (data.data.allowSubuserTemplateEditing !== undefined) {
+        setAllowSubuserPolicy(Boolean(data.data.allowSubuserTemplateEditing));
+      }
+      if (data.data.targetUserCanEditCompanyTemplates !== undefined) {
+        setMemberCanEditTemplates(Boolean(data.data.targetUserCanEditCompanyTemplates || member.role === "owner" || member.role === "admin"));
+        setEditMemberCanEditTemplates(Boolean(data.data.targetUserCanEditCompanyTemplates || member.role === "owner" || member.role === "admin"));
+      }
       if (onTemplatesChanged && isSelf) {
         onTemplatesChanged();
       }
@@ -114,12 +141,73 @@ export default function MemberDetailsView({
     fetchTemplates();
     setEditName(member.name);
     setEditRole(member.role);
+    setMemberCanEditTemplates(Boolean(member.can_edit_company_templates || member.canEditCompanyTemplates || member.role === "owner" || member.role === "admin"));
+    setEditMemberCanEditTemplates(Boolean(member.can_edit_company_templates || member.canEditCompanyTemplates || member.role === "owner" || member.role === "admin"));
   }, [member.id]);
 
   // Flash success message
   function notifySuccess(msg: string) {
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(null), 3500);
+  }
+
+  // Handle Toggle Permission for this Staff Member
+  async function handleToggleStaffTemplatePermission(newValue: boolean) {
+    if (isUpdatingPermission) return;
+    setIsUpdatingPermission(true);
+    try {
+      const res = await fetch("/api/dashboard/templates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetUserId: member.id,
+          canEditCompanyTemplates: newValue,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to update member permission.");
+      }
+      setMemberCanEditTemplates(newValue);
+      setEditMemberCanEditTemplates(newValue);
+      if (isSelf) {
+        setCanManageCompanyTemplates(newValue);
+      }
+      notifySuccess(`Updated template permissions for ${member.name}: ${newValue ? "Edit Access Granted" : "Read-Only"}`);
+      if (onUpdateMember) {
+        onUpdateMember({ id: member.id, name: member.name, role: member.role, canEditCompanyTemplates: newValue });
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to update permission.");
+    } finally {
+      setIsUpdatingPermission(false);
+    }
+  }
+
+  // Handle Toggle Practice-Wide Subuser Template Policy
+  async function handleToggleOrgPolicy(newValue: boolean) {
+    if (isUpdatingPermission) return;
+    setIsUpdatingPermission(true);
+    try {
+      const res = await fetch("/api/dashboard/templates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allowSubuserTemplateEditing: newValue,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to update company policy.");
+      }
+      setAllowSubuserPolicy(newValue);
+      notifySuccess(`Company policy updated: Receptionists ${newValue ? "can now edit" : "restricted from editing"} company predefined templates.`);
+      await fetchTemplates();
+    } catch (err: any) {
+      setError(err.message || "Failed to update company policy.");
+    } finally {
+      setIsUpdatingPermission(false);
+    }
   }
 
   // Handle Member Info Save with Inline Validation
@@ -140,6 +228,7 @@ export default function MemberDetailsView({
           id: member.id,
           name: editName.trim(),
           role: editRole,
+          canEditCompanyTemplates: editMemberCanEditTemplates,
         }),
       });
       const data = await res.json();
@@ -149,8 +238,9 @@ export default function MemberDetailsView({
       notifySuccess("Member details updated successfully!");
       setIsEditingInfo(false);
       setEditMemberErrors({});
+      setMemberCanEditTemplates(editMemberCanEditTemplates);
       if (onUpdateMember) {
-        onUpdateMember({ id: member.id, name: editName.trim(), role: editRole });
+        onUpdateMember({ id: member.id, name: editName.trim(), role: editRole, canEditCompanyTemplates: editMemberCanEditTemplates });
       }
     } catch (err: any) {
       setError(err.message || "Could not save member details.");
@@ -550,6 +640,11 @@ export default function MemberDetailsView({
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   Active Account
                 </span>
+                {memberCanEditTemplates && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    <span>✏️</span> Predefined Templates Editor
+                  </span>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 font-mono">
@@ -655,6 +750,24 @@ export default function MemberDetailsView({
                   )}
                 </select>
               </div>
+
+              {isManagement && member.role !== "owner" && (
+                <div className="md:col-span-2 p-3 rounded-xl border border-indigo-100 bg-white space-y-1">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={editRole === "admin" || editMemberCanEditTemplates}
+                      disabled={editRole === "admin"}
+                      onChange={(e) => setEditMemberCanEditTemplates(e.target.checked)}
+                      className="rounded text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>Grant permission to edit company predefined message templates</span>
+                  </label>
+                  <p className="text-[11px] text-slate-500 pl-5">
+                    When enabled, this staff member can update organization-wide canned responses (/greeting, /fees, /hours, etc.) for all receptionists.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2">
@@ -716,19 +829,77 @@ export default function MemberDetailsView({
       </div>
 
       {/* Company Scoping & Policy Banner */}
-      <div className="rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50/70 via-indigo-50/30 to-white p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="text-lg shrink-0">🏢</span>
-          <div className="min-w-0">
-            <span className="font-bold text-slate-900">Company Standard Scoping: </span>
-            <span className="text-slate-600">
-              Predefined templates (/greeting, /fees, /booking, /hours) belong to <b>{currentUser.orgName || "Company"}</b> and are synchronized across all receptionists.
+      <div className="rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50/70 via-indigo-50/30 to-white p-4 text-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="text-xl shrink-0">🏢</span>
+            <div className="min-w-0">
+              <span className="font-bold text-slate-900">Company Predefined Scoping: </span>
+              <span className="text-slate-600">
+                Predefined templates (/greeting, /fees, /booking, /hours) belong to <b>{currentUser.orgName || "Company"}</b> and synchronize across all staff.
+              </span>
+            </div>
+          </div>
+          <span
+            className={`shrink-0 text-[11px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${
+              canManageCompanyTemplates
+                ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                : "bg-amber-100 text-amber-800 border-amber-200"
+            }`}
+          >
+            <span>{canManageCompanyTemplates ? "✓" : "🔒"}</span>
+            <span>
+              {isOwner || isAdmin
+                ? "Admin Edit Enabled"
+                : canManageCompanyTemplates
+                ? "Subuser Edit Access Granted"
+                : "Read-Only for Staff"}
+            </span>
+          </span>
+        </div>
+
+        {/* Subuser Guidance Note if read-only */}
+        {!canManageCompanyTemplates && !isOwner && !isAdmin && (
+          <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-800 text-[11px] flex items-center gap-2">
+            <span>💡</span>
+            <span>
+              <b>Need to update company templates?</b> Practice administrators can grant you permission in <b>Team Settings</b> or enable company-wide template editing.
             </span>
           </div>
-        </div>
-        <span className="shrink-0 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-800 border border-sky-200">
-          {canManageCompanyTemplates ? "Admin Edit Enabled" : "Read-Only for Staff"}
-        </span>
+        )}
+
+        {/* Owner / Admin Quick Toggles */}
+        {isManagement && (
+          <div className="flex flex-wrap items-center gap-3 pt-2.5 border-t border-sky-200/50 text-[11px]">
+            {!isSelf && member.role !== "owner" && member.role !== "admin" && (
+              <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs hover:border-indigo-300 transition">
+                <input
+                  type="checkbox"
+                  checked={memberCanEditTemplates}
+                  disabled={isUpdatingPermission}
+                  onChange={(e) => handleToggleStaffTemplatePermission(e.target.checked)}
+                  className="rounded text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="font-semibold text-slate-700">
+                  Allow <b>{member.name}</b> to edit company predefined templates
+                </span>
+              </label>
+            )}
+
+            <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs hover:border-indigo-300 transition">
+              <input
+                type="checkbox"
+                checked={allowSubuserPolicy}
+                disabled={isUpdatingPermission}
+                onChange={(e) => handleToggleOrgPolicy(e.target.checked)}
+                className="rounded text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="font-semibold text-slate-700">
+                Company Policy: Allow all receptionists to edit company predefined templates
+              </span>
+            </label>
+          </div>
+        )}
       </div>
 
       {/* Stats Counter Bar */}
@@ -1160,7 +1331,7 @@ export default function MemberDetailsView({
                       <div>
                         <div className="flex items-center justify-between mb-0.5">
                           <label className="block text-[10px] font-bold text-slate-600 uppercase">
-                            Personal Message Content <span className="text-rose-500">*</span>
+                            {t.is_predefined === 1 ? "Company Predefined Message Content" : "Personal Message Content"} <span className="text-rose-500">*</span>
                           </label>
                           {editErrors.content && (
                             <span className="text-[10px] font-bold text-rose-500">Required</span>

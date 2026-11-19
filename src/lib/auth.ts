@@ -24,7 +24,7 @@ export function setSessionCookie(resCookies: NextResponse["cookies"], token: str
     name: SESSION_COOKIE_NAME,
     value: token,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.COOKIE_SECURE === "true",
     sameSite: "lax",
     expires: expiresAt,
     path: "/",

@@ -282,6 +282,34 @@ export function getUserTemplates(userId: string, explicitOrgId?: string): UserMe
 }
 
 /**
+ * Checks whether a user has permission to edit company predefined templates.
+ * Returns true if:
+ * 1. User is an Owner or Administrator
+ * 2. User has been granted individual permission (users.can_edit_company_templates = 1)
+ * 3. Organization policy allows all subusers to edit (organizations.allow_subuser_template_editing = 1)
+ */
+export function userCanEditCompanyTemplates(userId: string, orgId: string, explicitRole?: string): boolean {
+  if (explicitRole === "owner" || explicitRole === "admin") {
+    return true;
+  }
+
+  const userRow = db
+    .prepare("SELECT role, can_edit_company_templates FROM users WHERE id = ? AND organization_id = ?")
+    .get(userId, orgId) as { role: string; can_edit_company_templates?: number } | undefined;
+
+  if (!userRow) return false;
+  if (userRow.role === "owner" || userRow.role === "admin" || userRow.can_edit_company_templates === 1) {
+    return true;
+  }
+
+  const orgRow = db
+    .prepare("SELECT allow_subuser_template_editing FROM organizations WHERE id = ?")
+    .get(orgId) as { allow_subuser_template_editing?: number } | undefined;
+
+  return orgRow?.allow_subuser_template_editing === 1;
+}
+
+/**
  * Saves a message template with RBAC permissions:
  * - Company Predefined Templates (is_predefined = 1): Only Owners & Admins can edit or create.
  * - Personal Custom Templates (is_predefined = 0): Any staff member can create/edit for themselves.
@@ -356,8 +384,9 @@ export function saveUserTemplate(
 
     // Permission check
     if (existing.is_predefined === 1) {
-      if (!isManagement) {
-        throw new ForbiddenError("Company standard templates can only be edited by Practice Owners and Administrators.");
+      const canEditCompany = userCanEditCompanyTemplates(userId, orgId, userRole);
+      if (!canEditCompany) {
+        throw new ForbiddenError("You do not have permission to edit company predefined templates. Please request template editing access from your practice administrator.");
       }
     } else {
       if (existing.user_id !== userId && !isManagement) {
@@ -389,7 +418,8 @@ export function saveUserTemplate(
       .get(data.id) as unknown as UserMessageTemplate;
   } else {
     // Creating new template
-    const createAsPredefined = (data.is_predefined === 1 || data.is_predefined === true) && isManagement;
+    const canEditCompany = userCanEditCompanyTemplates(userId, orgId, userRole);
+    const createAsPredefined = (data.is_predefined === 1 || data.is_predefined === true) && canEditCompany;
 
     // Check shortcut conflict within organization
     const conflict = db
@@ -463,8 +493,9 @@ export function deleteUserTemplate(
   }
 
   if (existing.is_predefined === 1) {
-    if (!isManagement) {
-      throw new ForbiddenError("Only Practice Owners and Administrators can delete company standard templates.");
+    const canEditCompany = userCanEditCompanyTemplates(userId, orgId, userRole);
+    if (!canEditCompany) {
+      throw new ForbiddenError("You do not have permission to delete company standard templates. Please request template editing access from your practice administrator.");
     }
   } else {
     if (existing.user_id !== userId && !isManagement) {

@@ -339,6 +339,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     email: string;
     name: string;
     role: string;
+    can_edit_company_templates?: boolean | number;
     created_at: string;
   }
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -347,6 +348,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("receptionist");
+  const [inviteCanEditTemplates, setInviteCanEditTemplates] = useState(false);
+  const [editMemberCanEditTemplates, setEditMemberCanEditTemplates] = useState(false);
   const [isSubmittingInvite, setIsSubmittingInvite] = useState(false);
   const [inviteSuccess, setInviteSuccess] = useState<{ email: string; tempPass?: string; inviteUrl?: string } | null>(null);
   const [copiedInviteUrl, setCopiedInviteUrl] = useState(false);
@@ -1073,7 +1076,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       const res = await fetch("/api/dashboard/team", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, role: inviteRole }),
+        body: JSON.stringify({ name, email, role: inviteRole, canEditCompanyTemplates: inviteCanEditTemplates }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -1215,6 +1218,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     setEditingMember(member);
     setEditMemberName(member.name);
     setEditMemberRole(member.role);
+    setEditMemberCanEditTemplates(Boolean(member.can_edit_company_templates || member.role === "admin" || member.role === "owner"));
     setEditMemberErrors(null);
   }
 
@@ -1242,6 +1246,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
           id: editingMember.id,
           name,
           role: editMemberRole,
+          canEditCompanyTemplates: editMemberCanEditTemplates,
         }),
       });
       const data = await res.json();
@@ -1258,7 +1263,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
       setTeamMembers((prev) =>
         prev.map((m) =>
           m.id === editingMember.id
-            ? { ...m, name: data.member.name, role: data.member.role }
+            ? { ...m, name: data.member.name, role: data.member.role, can_edit_company_templates: data.member.can_edit_company_templates }
             : m
         )
       );
@@ -3187,6 +3192,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                           e.preventDefault();
                           handleSendPreviewMessage();
                         }}
+                        noValidate
                         className="p-2 bg-white border-t border-slate-200 flex gap-1.5 shrink-0"
                       >
                         <input
@@ -3288,6 +3294,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         e.preventDefault();
                         handleSendPreviewMessage();
                       }}
+                      noValidate
                       className="p-3 bg-white border-t border-slate-200 flex gap-2"
                     >
                       <input
@@ -3909,7 +3916,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 Ask a test question to verify how your AI receptionist will answer customer inquiries using your indexed sources.
               </p>
 
-              <form onSubmit={handleTestSearch} className="flex gap-2">
+              <form onSubmit={handleTestSearch} noValidate className="flex gap-2">
                 <input
                   value={testQuery}
                   onChange={(e) => setTestQuery(e.target.value)}
@@ -5404,23 +5411,33 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                               </div>
                             </td>
                             <td className="py-3.5 px-4">
-                              {member.role === "owner" ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                                  👑 Owner
-                                </span>
-                              ) : member.role === "admin" ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                                  🛡️ Admin
-                                </span>
-                              ) : member.role === "receptionist" ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">
-                                  💬 Receptionist
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                  Viewer
-                                </span>
-                              )}
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {member.role === "owner" ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                    👑 Owner
+                                  </span>
+                                ) : member.role === "admin" ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                    🛡️ Admin
+                                  </span>
+                                ) : member.role === "receptionist" ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">
+                                    💬 Receptionist
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                    Viewer
+                                  </span>
+                                )}
+                                {Boolean(member.can_edit_company_templates) && member.role !== "owner" && member.role !== "admin" && (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                    title="Granted permission to edit company predefined templates"
+                                  >
+                                    ✏️ Templates Editor
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-3.5 px-4">
                               <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 font-semibold">
@@ -5552,6 +5569,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               orgId: user.orgId,
               orgName: user.orgName,
               industry: user.industry,
+              canEditCompanyTemplates: user.canEditCompanyTemplates,
             }}
             onBack={() => {
               setActiveTab("team");
@@ -5561,10 +5579,22 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
             }}
             onUpdateMember={(updated) => {
               setTeamMembers((prev) =>
-                prev.map((m) => (m.id === updated.id ? { ...m, name: updated.name, role: updated.role } : m))
+                prev.map((m) =>
+                  m.id === updated.id
+                    ? {
+                        ...m,
+                        name: updated.name,
+                        role: updated.role,
+                        can_edit_company_templates:
+                          updated.canEditCompanyTemplates !== undefined
+                            ? updated.canEditCompanyTemplates
+                            : m.can_edit_company_templates,
+                      }
+                    : m
+                )
               );
               if (updated.id === user.userId) {
-                setCurrentUserState((prev) => ({ ...prev, name: updated.name }));
+                setCurrentUserState((prev) => ({ ...prev, name: updated.name, role: updated.role }));
               }
             }}
             onTemplatesChanged={fetchCurrentUserTemplates}
@@ -7100,6 +7130,22 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     </select>
                   </div>
 
+                  <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50/50 space-y-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={inviteRole === "admin" || inviteCanEditTemplates}
+                        disabled={inviteRole === "admin"}
+                        onChange={(e) => setInviteCanEditTemplates(e.target.checked)}
+                        className="rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>Allow editing company predefined message templates</span>
+                    </label>
+                    <p className="text-[11px] text-slate-500 pl-5 leading-relaxed">
+                      When checked, this staff member can update practice-wide standard templates (/greeting, /fees, /hours, etc.).
+                    </p>
+                  </div>
+
                   <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-[11px] text-slate-500">
                     ℹ️ Staff members will receive full access scoped to your organization. Current seat usage: <b>{teamMembers.length}/{seatLimit}</b>.
                   </div>
@@ -7593,6 +7639,28 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     </>
                   )}
                 </div>
+
+                {editingMember.role !== "owner" && (
+                  <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50/50 space-y-1.5">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={editMemberRole === "admin" || editMemberCanEditTemplates}
+                        disabled={editMemberRole === "admin"}
+                        onChange={(e) => setEditMemberCanEditTemplates(e.target.checked)}
+                        className="rounded text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>Grant permission to edit company predefined message templates</span>
+                    </label>
+                    <p className="text-[11px] text-slate-500 pl-5 leading-relaxed">
+                      {editMemberRole === "admin"
+                        ? "🛡️ Administrators automatically have permission to manage all company templates."
+                        : editMemberCanEditTemplates
+                        ? "✅ This subuser can edit practice-wide canned responses (/greeting, /fees, /hours, etc.)."
+                        : "🔒 Read-only access to company templates. Staff member can create personal macros."}
+                    </p>
+                  </div>
+                )}
 
                 {/* Footer Actions */}
                 <div className="flex items-center justify-between pt-2 border-t border-slate-100">

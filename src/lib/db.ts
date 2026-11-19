@@ -42,6 +42,7 @@ if (!globalForDb.__echoSqliteInitialized) {
     name TEXT NOT NULL,
     industry TEXT NOT NULL DEFAULT 'clinic',
     plan TEXT NOT NULL DEFAULT 'growth',
+    allow_subuser_template_editing INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -54,6 +55,7 @@ if (!globalForDb.__echoSqliteInitialized) {
     password_hash TEXT NOT NULL,
     salt TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'owner',
+    can_edit_company_templates INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
   );
@@ -421,6 +423,14 @@ try {
       SET organization_id = (SELECT organization_id FROM users WHERE users.id = user_message_templates.user_id)
       WHERE organization_id IS NULL;
     `);
+  } catch {}
+
+  try {
+    db.exec("ALTER TABLE users ADD COLUMN can_edit_company_templates INTEGER NOT NULL DEFAULT 0;");
+  } catch {}
+
+  try {
+    db.exec("ALTER TABLE organizations ADD COLUMN allow_subuser_template_editing INTEGER NOT NULL DEFAULT 0;");
   } catch {}
 
   db.exec(`

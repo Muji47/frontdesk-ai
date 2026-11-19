@@ -6,6 +6,7 @@ import {
   saveUserTemplate,
   deleteUserTemplate,
   resetOrgPredefinedTemplates,
+  userCanEditCompanyTemplates,
 } from "@/lib/templates";
 import {
   handleApiError,
@@ -34,7 +35,15 @@ export async function GET(req: NextRequest) {
     }
 
     const { companyTemplates, personalTemplates, allTemplates } = getTemplatesForUser(user.orgId, targetUserId);
-    const canManageCompanyTemplates = user.role === "owner" || user.role === "admin";
+    const canManageCompanyTemplates = userCanEditCompanyTemplates(user.userId, user.orgId, user.role);
+
+    const userRow = db
+      .prepare("SELECT can_edit_company_templates FROM users WHERE id = ?")
+      .get(targetUserId) as { can_edit_company_templates?: number } | undefined;
+
+    const orgRow = db
+      .prepare("SELECT allow_subuser_template_editing FROM organizations WHERE id = ?")
+      .get(user.orgId) as { allow_subuser_template_editing?: number } | undefined;
 
     return NextResponse.json({
       success: true,
@@ -47,6 +56,8 @@ export async function GET(req: NextRequest) {
         userRole: targetUser.role,
         orgName: user.orgName,
         canManageCompanyTemplates,
+        allowSubuserTemplateEditing: Boolean(orgRow?.allow_subuser_template_editing),
+        targetUserCanEditCompanyTemplates: Boolean(userRow?.can_edit_company_templates),
       },
     });
   } catch (err) {
@@ -159,6 +170,53 @@ export async function PUT(req: NextRequest) {
         templates: allTemplates,
         companyTemplates,
         personalTemplates,
+      },
+    });
+  } catch (err) {
+    return handleApiError(err);
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      throw new UnauthorizedError("You must be logged in to modify template permissions.");
+    }
+
+    if (user.role !== "owner" && user.role !== "admin") {
+      throw new ForbiddenError("Only Practice Owners and Administrators can modify template permissions.");
+    }
+
+    const body = await req.json().catch(() => ({}));
+
+    // 1. Organization-wide subuser template editing policy
+    if (body.allowSubuserTemplateEditing !== undefined) {
+      const allowed = body.allowSubuserTemplateEditing ? 1 : 0;
+      db.prepare("UPDATE organizations SET allow_subuser_template_editing = ? WHERE id = ?").run(allowed, user.orgId);
+    }
+
+    // 2. Individual subuser permission toggle
+    if (body.targetUserId && body.canEditCompanyTemplates !== undefined) {
+      const targetUser = db
+        .prepare("SELECT id FROM users WHERE id = ? AND organization_id = ?")
+        .get(body.targetUserId, user.orgId);
+      if (!targetUser) {
+        throw new ValidationError("Target user not found in your organization.");
+      }
+      const allowed = body.canEditCompanyTemplates ? 1 : 0;
+      db.prepare("UPDATE users SET can_edit_company_templates = ? WHERE id = ?").run(allowed, body.targetUserId);
+    }
+
+    const orgRow = db
+      .prepare("SELECT allow_subuser_template_editing FROM organizations WHERE id = ?")
+      .get(user.orgId) as { allow_subuser_template_editing?: number } | undefined;
+
+    return NextResponse.json({
+      success: true,
+      message: "Template permissions updated successfully.",
+      data: {
+        allowSubuserTemplateEditing: Boolean(orgRow?.allow_subuser_template_editing),
       },
     });
   } catch (err) {

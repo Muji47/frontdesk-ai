@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 
     const teamRows = db
       .prepare(`
-        SELECT id, organization_id, email, name, role, created_at
+        SELECT id, organization_id, email, name, role, can_edit_company_templates, created_at
         FROM users
         WHERE organization_id = ?
         ORDER BY created_at ASC
@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
         email: string;
         name: string;
         role: string;
+        can_edit_company_templates?: number;
         created_at: string;
       }>;
 
@@ -97,6 +98,7 @@ export async function POST(req: NextRequest) {
     const email = String(body.email || "").trim().toLowerCase();
     const name = String(body.name || "").trim();
     const role = ["admin", "receptionist", "viewer"].includes(body.role) ? body.role : "receptionist";
+    const canEditCompanyTemplates = body.canEditCompanyTemplates ? 1 : (role === "admin" ? 1 : 0);
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new ValidationError("A valid email address is required.");
@@ -127,9 +129,9 @@ export async function POST(req: NextRequest) {
 
     withTransaction(() => {
       db.prepare(`
-        INSERT INTO users (id, organization_id, email, name, password_hash, salt, role, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(newUserId, user.orgId, email, name, hash, salt, role, nowIso);
+        INSERT INTO users (id, organization_id, email, name, password_hash, salt, role, can_edit_company_templates, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(newUserId, user.orgId, email, name, hash, salt, role, canEditCompanyTemplates, nowIso);
 
       db.prepare(`
         INSERT INTO auth_tokens (id, user_id, email, token, type, expires_at)
@@ -156,6 +158,7 @@ export async function POST(req: NextRequest) {
           email,
           name,
           role,
+          can_edit_company_templates: Boolean(canEditCompanyTemplates),
           createdAt: nowIso,
           tempPassword,
         },
@@ -242,12 +245,13 @@ export async function PATCH(req: NextRequest) {
     }
 
     const targetUser = db
-      .prepare("SELECT id, name, email, role, organization_id, created_at FROM users WHERE id = ? AND organization_id = ?")
+      .prepare("SELECT id, name, email, role, can_edit_company_templates, organization_id, created_at FROM users WHERE id = ? AND organization_id = ?")
       .get(targetId, user.orgId) as {
         id: string;
         name: string;
         email: string;
         role: string;
+        can_edit_company_templates?: number;
         organization_id: string;
         created_at: string;
       } | undefined;
@@ -276,6 +280,12 @@ export async function PATCH(req: NextRequest) {
       targetUser.role = newRole;
     }
 
+    if (body.canEditCompanyTemplates !== undefined) {
+      const allowed = body.canEditCompanyTemplates ? 1 : 0;
+      db.prepare("UPDATE users SET can_edit_company_templates = ? WHERE id = ?").run(allowed, targetId);
+      targetUser.can_edit_company_templates = allowed;
+    }
+
     return NextResponse.json({
       success: true,
       member: {
@@ -284,6 +294,7 @@ export async function PATCH(req: NextRequest) {
         email: targetUser.email,
         name: targetUser.name,
         role: targetUser.role,
+        can_edit_company_templates: Boolean(targetUser.can_edit_company_templates || targetUser.role === "owner" || targetUser.role === "admin"),
         createdAt: targetUser.created_at,
       },
       message: "Team member updated successfully.",

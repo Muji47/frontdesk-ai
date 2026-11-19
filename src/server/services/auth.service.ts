@@ -17,6 +17,7 @@ export interface AuthSessionUser {
   orgName: string;
   industry: string;
   plan: string;
+  canEditCompanyTemplates?: boolean;
   agentId?: string;
   agentName?: string;
 }
@@ -193,10 +194,12 @@ export class AuthService {
         u.email,
         u.name,
         u.role,
+        u.can_edit_company_templates as userCanEditTemplates,
         o.id as orgId,
         o.name as orgName,
         o.industry,
         o.plan,
+        o.allow_subuser_template_editing as orgAllowTemplates,
         a.id as agentId,
         a.name as agentName
       FROM sessions s
@@ -204,9 +207,15 @@ export class AuthService {
       JOIN organizations o ON u.organization_id = o.id
       LEFT JOIN agents a ON a.organization_id = o.id
       WHERE s.token = ? AND s.expires_at > datetime('now')
-    `).get(token) as AuthSessionUser | undefined;
+    `).get(token) as (AuthSessionUser & { userCanEditTemplates?: number; orgAllowTemplates?: number }) | undefined;
 
     if (!row) return null;
+
+    const canEditCompanyTemplates =
+      row.role === "owner" ||
+      row.role === "admin" ||
+      row.userCanEditTemplates === 1 ||
+      row.orgAllowTemplates === 1;
 
     // Convert sqlite null-prototype object into standard plain object for React Server Components
     return {
@@ -218,6 +227,7 @@ export class AuthService {
       orgName: row.orgName,
       industry: row.industry,
       plan: row.plan,
+      canEditCompanyTemplates,
       agentId: row.agentId,
       agentName: row.agentName,
     };

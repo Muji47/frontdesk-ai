@@ -13,6 +13,12 @@ export interface AuthSessionUser {
   email: string;
   name: string;
   role: string;
+  isSuperadmin?: boolean;
+  impersonatedBy?: {
+    userId: string;
+    email: string;
+    name: string;
+  };
   orgId: string;
   orgName: string;
   industry: string;
@@ -140,6 +146,7 @@ export class AuthService {
         u.password_hash,
         u.salt,
         u.role,
+        u.is_superadmin as isSuperadmin,
         o.id as orgId,
         o.name as orgName,
         o.industry,
@@ -150,7 +157,7 @@ export class AuthService {
       JOIN organizations o ON u.organization_id = o.id
       LEFT JOIN agents a ON a.organization_id = o.id
       WHERE u.email = ?
-    `).get(input.email) as (AuthSessionUser & { password_hash: string; salt: string }) | undefined;
+    `).get(input.email) as (AuthSessionUser & { password_hash: string; salt: string; isSuperadmin?: number }) | undefined;
 
     if (!user) {
       dummyPasswordCheck();
@@ -172,6 +179,7 @@ export class AuthService {
         email: user.email,
         name: user.name,
         role: user.role,
+        isSuperadmin: Boolean(user.isSuperadmin === 1 || user.role === "superadmin"),
         orgId: user.orgId,
         orgName: user.orgName,
         industry: user.industry,
@@ -194,7 +202,9 @@ export class AuthService {
         u.email,
         u.name,
         u.role,
+        u.is_superadmin as isSuperadmin,
         u.can_edit_company_templates as userCanEditTemplates,
+        s.impersonated_by_user_id as impersonatedByUserId,
         o.id as orgId,
         o.name as orgName,
         o.industry,
@@ -207,9 +217,28 @@ export class AuthService {
       JOIN organizations o ON u.organization_id = o.id
       LEFT JOIN agents a ON a.organization_id = o.id
       WHERE s.token = ? AND s.expires_at > datetime('now')
-    `).get(token) as (AuthSessionUser & { userCanEditTemplates?: number; orgAllowTemplates?: number }) | undefined;
+    `).get(token) as (AuthSessionUser & {
+      isSuperadmin?: number;
+      userCanEditTemplates?: number;
+      orgAllowTemplates?: number;
+      impersonatedByUserId?: string | null;
+    }) | undefined;
 
     if (!row) return null;
+
+    let impersonatedBy: AuthSessionUser["impersonatedBy"] = undefined;
+    if (row.impersonatedByUserId) {
+      const superadminRow = db
+        .prepare("SELECT id, name, email FROM users WHERE id = ?")
+        .get(row.impersonatedByUserId) as { id: string; name: string; email: string } | undefined;
+      if (superadminRow) {
+        impersonatedBy = {
+          userId: superadminRow.id,
+          name: superadminRow.name,
+          email: superadminRow.email,
+        };
+      }
+    }
 
     const canEditCompanyTemplates =
       row.role === "owner" ||
@@ -217,12 +246,20 @@ export class AuthService {
       row.userCanEditTemplates === 1 ||
       row.orgAllowTemplates === 1;
 
+    const isSuperadmin = Boolean(
+      row.isSuperadmin === 1 ||
+      row.role === "superadmin" ||
+      impersonatedBy !== undefined
+    );
+
     // Convert sqlite null-prototype object into standard plain object for React Server Components
     return {
       userId: row.userId,
       email: row.email,
       name: row.name,
       role: row.role,
+      isSuperadmin,
+      impersonatedBy,
       orgId: row.orgId,
       orgName: row.orgName,
       industry: row.industry,
@@ -250,6 +287,18 @@ export class AuthService {
       INSERT INTO sessions (token, user_id, expires_at)
       VALUES (?, ?, ?)
     `).run(token, userId, expiresAt.toISOString());
+
+    return { token, expiresAt };
+  }
+
+  public static createShadowSession(targetUserId: string, superadminUserId: string): { token: string; expiresAt: Date } {
+    const token = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 4); // 4 hours shadow session
+
+    db.prepare(`
+      INSERT INTO sessions (token, user_id, expires_at, impersonated_by_user_id)
+      VALUES (?, ?, ?, ?)
+    `).run(token, targetUserId, expiresAt.toISOString(), superadminUserId);
 
     return { token, expiresAt };
   }

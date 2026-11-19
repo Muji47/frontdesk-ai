@@ -41,9 +41,9 @@ export default function MemberDetailsView({
   onTemplatesChanged,
 }: MemberDetailsViewProps) {
   const isSelf = member.id === currentUser.userId || member.email.toLowerCase() === currentUser.email.toLowerCase();
-  const isOwner = currentUser.role === "owner";
+  const isOwner = currentUser.role === "owner" || currentUser.role === "superadmin";
   const isAdmin = currentUser.role === "admin";
-  const isManagement = isOwner || isAdmin;
+  const isManagement = isOwner || isAdmin || currentUser.role === "superadmin";
 
   // Company template permission state (derived from role, user setting, or org policy)
   const [canManageCompanyTemplates, setCanManageCompanyTemplates] = useState(

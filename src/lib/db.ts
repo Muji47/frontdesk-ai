@@ -56,6 +56,7 @@ if (!globalForDb.__echoSqliteInitialized) {
     salt TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'owner',
     can_edit_company_templates INTEGER NOT NULL DEFAULT 0,
+    is_superadmin INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
   );
@@ -68,6 +69,7 @@ if (!globalForDb.__echoSqliteInitialized) {
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     expires_at DATETIME NOT NULL,
+    impersonated_by_user_id TEXT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
@@ -430,6 +432,14 @@ try {
   } catch {}
 
   try {
+    db.exec("ALTER TABLE users ADD COLUMN is_superadmin INTEGER NOT NULL DEFAULT 0;");
+  } catch {}
+
+  try {
+    db.exec("ALTER TABLE sessions ADD COLUMN impersonated_by_user_id TEXT DEFAULT NULL;");
+  } catch {}
+
+  try {
     db.exec("ALTER TABLE organizations ADD COLUMN allow_subuser_template_editing INTEGER NOT NULL DEFAULT 0;");
   } catch {}
 
@@ -661,5 +671,33 @@ export function ensureDemoAndSalesOrgs() {
 
 // Ensure sales & industry demo orgs are seeded
 ensureDemoAndSalesOrgs();
+
+export function ensureSuperadmin() {
+  const checkSuperadmin = db.prepare("SELECT id FROM users WHERE email = 'superadmin@echo.ai'").get();
+  if (!checkSuperadmin) {
+    withTransaction(() => {
+      const { hash, salt } = hashPassword("password123");
+      db.prepare(`
+        INSERT OR IGNORE INTO organizations (id, name, industry, plan)
+        VALUES ('org_echo_platform', 'Echo.ai Platform HQ', 'other', 'pro')
+      `).run();
+
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, organization_id, email, name, password_hash, salt, role, is_superadmin)
+        VALUES ('usr_superadmin', 'org_echo_platform', 'superadmin@echo.ai', 'Alex Rivera (Project Owner)', ?, ?, 'superadmin', 1)
+      `).run(hash, salt);
+
+      db.prepare(`
+        INSERT OR IGNORE INTO agents (id, organization_id, name, greeting, color, position, tone)
+        VALUES ('agt_echo_platform', 'org_echo_platform', 'Echo Platform Assistant', 'Echo.ai Platform Operations & Support Assistant.', '#4f46e5', 'right', 'Executive')
+      `).run();
+    });
+  } else {
+    db.prepare("UPDATE users SET is_superadmin = 1, role = 'superadmin' WHERE email = 'superadmin@echo.ai'").run();
+  }
+}
+
+// Ensure platform superadmin is seeded
+ensureSuperadmin();
 
 export { db };

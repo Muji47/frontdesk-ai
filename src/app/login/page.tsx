@@ -59,7 +59,11 @@ export default function LoginPage() {
         return;
       }
 
-      router.push("/dashboard");
+      if ((data as any).data?.user?.isSuperadmin || (data as any).data?.user?.role === "superadmin" || (data as any).user?.isSuperadmin || (data as any).user?.role === "superadmin") {
+        router.push("/superadmin");
+      } else {
+        router.push("/dashboard");
+      }
       router.refresh();
     } catch {
       setGeneralError("Unable to reach the server. Please check your connection and try again.");
@@ -70,6 +74,13 @@ export default function LoginPage() {
 
   function fillDemo() {
     setEmail("demo@echo.ai");
+    setPassword("password123");
+    setGeneralError("");
+    setFieldErrors({});
+  }
+
+  function fillSuperadmin() {
+    setEmail("superadmin@echo.ai");
     setPassword("password123");
     setGeneralError("");
     setFieldErrors({});
@@ -103,6 +114,26 @@ export default function LoginPage() {
           </div>
           <div className="mt-1 text-[11px] text-indigo-700">
             <code>demo@echo.ai</code> · <code>password123</code>
+          </div>
+        </div>
+
+        {/* Superadmin Quick Fill Pill */}
+        <div className="mt-2.5 rounded-2xl border border-amber-200 bg-amber-50/70 p-3 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-amber-950 flex items-center gap-1.5">
+              <span>👑</span>
+              <span>Superadmin (Project Owner):</span>
+            </span>
+            <button
+              type="button"
+              onClick={fillSuperadmin}
+              className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-sm hover:bg-amber-700 transition cursor-pointer"
+            >
+              Fill Credentials
+            </button>
+          </div>
+          <div className="mt-1 text-[11px] text-amber-800">
+            <code>superadmin@echo.ai</code> · <code>password123</code>
           </div>
         </div>
 

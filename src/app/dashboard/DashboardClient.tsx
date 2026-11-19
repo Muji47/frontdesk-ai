@@ -865,6 +865,23 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     router.refresh();
   }
 
+  const [isExitingShadow, setIsExitingShadow] = useState(false);
+
+  async function handleExitShadowLogin() {
+    setIsExitingShadow(true);
+    try {
+      const res = await fetch("/api/superadmin/shadow-exit", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error?.message || data.error || "Failed to exit shadow login");
+      }
+      window.location.href = data.redirectUrl || "/superadmin";
+    } catch (err: any) {
+      showToast({ type: "error", title: "Exit Shadow Failed", message: err.message || "Failed to exit shadow login." });
+      setIsExitingShadow(false);
+    }
+  }
+
   async function handleApproveQuestion(questionId: string) {
     const text = answersInput[questionId]?.trim();
     if (!text) {
@@ -2283,9 +2300,9 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   }
 
   const userRole = (currentUserState.role || user.role || "receptionist").toLowerCase();
-  const isOwner = userRole === "owner";
+  const isOwner = userRole === "owner" || userRole === "superadmin";
   const isAdmin = userRole === "admin";
-  const isManagement = isOwner || isAdmin;
+  const isManagement = isOwner || isAdmin || userRole === "superadmin";
   const isReceptionist = userRole === "receptionist";
   const isViewer = userRole === "viewer";
 
@@ -2529,6 +2546,28 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
         {/* 3. Fixed Bottom Footer (Always Visible User Name & Log Out) */}
         <div className="shrink-0 mt-auto p-3 border-t border-slate-200 bg-slate-50/90">
+          {(user.isSuperadmin || user.role === "superadmin") && (
+            <Link
+              href="/superadmin"
+              className="w-full mb-2 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs shadow-md shadow-amber-500/20 transition cursor-pointer"
+            >
+              <span>👑</span>
+              <span>Superadmin Console →</span>
+            </Link>
+          )}
+
+          {user.impersonatedBy && (
+            <button
+              type="button"
+              onClick={handleExitShadowLogin}
+              disabled={isExitingShadow}
+              className="w-full mb-2 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md transition cursor-pointer disabled:opacity-50"
+            >
+              <span>🕶️</span>
+              <span>{isExitingShadow ? "Exiting Shadow..." : "Exit Shadow Login"}</span>
+            </button>
+          )}
+
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
@@ -2578,6 +2617,46 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
       {/* Main Workspace Area (offset by md:ml-64 sidebar, full width on mobile) */}
       <main className="ml-0 md:ml-64 flex-1 min-w-0 h-dvh overflow-y-auto p-4 md:p-8 relative custom-scrollbar">
+        {/* SHADOW LOGIN TOP FLOATING BANNER */}
+        {user.impersonatedBy && (
+          <div className="sticky top-0 z-40 -mt-4 md:-mt-8 -mx-4 md:-mx-8 mb-6 bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 text-white px-4 md:px-8 py-3 shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 border-b border-amber-400/40">
+            <div className="flex items-center gap-3">
+              <span className="text-xl">🕶️</span>
+              <div className="text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-extrabold uppercase tracking-wider bg-black/30 px-2 py-0.5 rounded text-[10px] text-amber-200">
+                    Shadow Login Active
+                  </span>
+                  <span className="font-bold text-white">
+                    Inspecting Practice: <span className="underline decoration-amber-300">{user.orgName}</span>
+                  </span>
+                </div>
+                <div className="text-[11px] text-amber-100 mt-0.5">
+                  Logged in as Practice Owner: <b>{user.name}</b> ({user.email}) · Impersonated by Superadmin: <b>{user.impersonatedBy.name}</b>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Link
+                href="/superadmin"
+                className="bg-black/30 hover:bg-black/50 text-amber-100 px-3 py-1.5 rounded-xl text-xs font-semibold transition"
+              >
+                Superadmin Overview
+              </Link>
+              <button
+                type="button"
+                onClick={handleExitShadowLogin}
+                disabled={isExitingShadow}
+                className="bg-white hover:bg-amber-50 text-slate-900 font-extrabold px-3.5 py-1.5 rounded-xl text-xs transition shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <span>🚪</span>
+                <span>{isExitingShadow ? "Exiting Shadow..." : "Exit Shadow Login"}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Mobile Top App Bar with Hamburger Toggle */}
         <div className="md:hidden flex items-center justify-between pb-3.5 mb-4 border-b border-slate-200">
           <button

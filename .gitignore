@@ -17,3 +17,4 @@ strategy/
 *.strategy.md
 scratch/
 
+.vercel

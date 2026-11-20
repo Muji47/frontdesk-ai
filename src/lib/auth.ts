@@ -30,7 +30,7 @@ export function setSessionCookie(resCookies: NextResponse["cookies"], token: str
     name: SESSION_COOKIE_NAME,
     value: token,
     httpOnly: true,
-    secure: process.env.COOKIE_SECURE === "true",
+    secure: process.env.NODE_ENV === "production" || process.env.COOKIE_SECURE === "true",
     sameSite: "lax",
     expires: expiresAt,
     path: "/",
@@ -42,7 +42,7 @@ export function setShadowAdminCookie(resCookies: NextResponse["cookies"], token:
     name: SHADOW_ADMIN_COOKIE_NAME,
     value: token,
     httpOnly: true,
-    secure: process.env.COOKIE_SECURE === "true",
+    secure: process.env.NODE_ENV === "production" || process.env.COOKIE_SECURE === "true",
     sameSite: "lax",
     expires: new Date(Date.now() + 1000 * 60 * 60 * 24), // 24h
     path: "/",

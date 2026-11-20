@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHmac, timingSafeEqual } from "node:crypto";
 import { db, hashPassword, verifyPassword, dummyPasswordCheck, withTransaction, seedOrganizationData } from "@/lib/db";
 import {
   RegisterInputSchema,
@@ -190,42 +190,52 @@ export class AuthService {
     };
   }
 
-  /**
-   * Verifies and fetches user details from an active session token.
-   */
-  public static getSessionUser(token: string): AuthSessionUser | null {
-    if (!token) return null;
+  private static getSessionSecret(): string {
+    return process.env.SESSION_SECRET || "echo-frontdesk-secure-secret-key-2026";
+  }
 
-    const row = db.prepare(`
-      SELECT 
-        u.id as userId,
-        u.email,
-        u.name,
-        u.role,
-        u.is_superadmin as isSuperadmin,
-        u.can_edit_company_templates as userCanEditTemplates,
-        s.impersonated_by_user_id as impersonatedByUserId,
-        o.id as orgId,
-        o.name as orgName,
-        o.industry,
-        o.plan,
-        o.allow_subuser_template_editing as orgAllowTemplates,
-        a.id as agentId,
-        a.name as agentName
-      FROM sessions s
-      JOIN users u ON s.user_id = u.id
-      JOIN organizations o ON u.organization_id = o.id
-      LEFT JOIN agents a ON a.organization_id = o.id
-      WHERE s.token = ? AND s.expires_at > datetime('now')
-    `).get(token) as (AuthSessionUser & {
-      isSuperadmin?: number;
-      userCanEditTemplates?: number;
-      orgAllowTemplates?: number;
-      impersonatedByUserId?: string | null;
-    }) | undefined;
+  private static signTokenPayload(payload: string): string {
+    const hmac = createHmac("sha256", this.getSessionSecret()).update(payload).digest("hex");
+    return `s_${Buffer.from(payload).toString("base64url")}.${hmac}`;
+  }
 
-    if (!row) return null;
+  private static verifyTokenPayload(token: string): string | null {
+    if (!token.startsWith("s_")) return null;
+    const parts = token.slice(2).split(".");
+    if (parts.length !== 2) return null;
 
+    const [encodedPayload, receivedHmac] = parts;
+    try {
+      const payload = Buffer.from(encodedPayload, "base64url").toString("utf-8");
+      const expectedHmac = createHmac("sha256", this.getSessionSecret()).update(payload).digest("hex");
+
+      const receivedBuf = Buffer.from(receivedHmac);
+      const expectedBuf = Buffer.from(expectedHmac);
+      if (receivedBuf.length === expectedBuf.length && timingSafeEqual(receivedBuf, expectedBuf)) {
+        return payload;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private static formatSessionUser(row: {
+    userId: string;
+    email: string;
+    name: string;
+    role: string;
+    isSuperadmin?: number;
+    userCanEditTemplates?: number;
+    orgAllowTemplates?: number;
+    impersonatedByUserId?: string | null;
+    orgId: string;
+    orgName: string;
+    industry: string;
+    plan: string;
+    agentId?: string;
+    agentName?: string;
+  }): AuthSessionUser {
     let impersonatedBy: AuthSessionUser["impersonatedBy"] = undefined;
     if (row.impersonatedByUserId) {
       const superadminRow = db
@@ -252,7 +262,6 @@ export class AuthService {
       impersonatedBy !== undefined
     );
 
-    // Convert sqlite null-prototype object into standard plain object for React Server Components
     return {
       userId: row.userId,
       email: row.email,
@@ -270,35 +279,187 @@ export class AuthService {
     };
   }
 
+  private static fetchSessionUserById(
+    userId: string,
+    impersonatedByUserId: string | null,
+    token?: string,
+    expiresAt?: Date
+  ): AuthSessionUser | null {
+    const row = db.prepare(`
+      SELECT 
+        u.id as userId,
+        u.email,
+        u.name,
+        u.role,
+        u.is_superadmin as isSuperadmin,
+        u.can_edit_company_templates as userCanEditTemplates,
+        o.id as orgId,
+        o.name as orgName,
+        o.industry,
+        o.plan,
+        o.allow_subuser_template_editing as orgAllowTemplates,
+        a.id as agentId,
+        a.name as agentName
+      FROM users u
+      JOIN organizations o ON u.organization_id = o.id
+      LEFT JOIN agents a ON a.organization_id = o.id
+      WHERE u.id = ?
+    `).get(userId) as {
+      userId: string;
+      email: string;
+      name: string;
+      role: string;
+      isSuperadmin?: number;
+      userCanEditTemplates?: number;
+      orgAllowTemplates?: number;
+      orgId: string;
+      orgName: string;
+      industry: string;
+      plan: string;
+      agentId?: string;
+      agentName?: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    if (token && expiresAt) {
+      try {
+        db.prepare(`
+          INSERT OR IGNORE INTO sessions (token, user_id, expires_at, impersonated_by_user_id)
+          VALUES (?, ?, ?, ?)
+        `).run(token, userId, expiresAt.toISOString(), impersonatedByUserId);
+      } catch {
+        // Cache insert fail is safe to ignore
+      }
+    }
+
+    return this.formatSessionUser({
+      ...row,
+      impersonatedByUserId,
+    });
+  }
+
+  /**
+   * Verifies and fetches user details from an active session token.
+   */
+  public static getSessionUser(token: string): AuthSessionUser | null {
+    if (!token) return null;
+
+    // 1. Try querying local container sessions table
+    try {
+      const row = db.prepare(`
+        SELECT 
+          u.id as userId,
+          u.email,
+          u.name,
+          u.role,
+          u.is_superadmin as isSuperadmin,
+          u.can_edit_company_templates as userCanEditTemplates,
+          s.impersonated_by_user_id as impersonatedByUserId,
+          o.id as orgId,
+          o.name as orgName,
+          o.industry,
+          o.plan,
+          o.allow_subuser_template_editing as orgAllowTemplates,
+          a.id as agentId,
+          a.name as agentName
+        FROM sessions s
+        JOIN users u ON s.user_id = u.id
+        JOIN organizations o ON u.organization_id = o.id
+        LEFT JOIN agents a ON a.organization_id = o.id
+        WHERE s.token = ? AND s.expires_at > datetime('now')
+      `).get(token) as {
+        userId: string;
+        email: string;
+        name: string;
+        role: string;
+        isSuperadmin?: number;
+        userCanEditTemplates?: number;
+        orgAllowTemplates?: number;
+        impersonatedByUserId?: string | null;
+        orgId: string;
+        orgName: string;
+        industry: string;
+        plan: string;
+        agentId?: string;
+        agentName?: string;
+      } | undefined;
+
+      if (row) {
+        return this.formatSessionUser(row);
+      }
+    } catch (err) {
+      console.warn("Error querying local sessions table:", err);
+    }
+
+    // 2. If not found in local sessions table (e.g. across serverless lambdas), verify signed payload
+    const payload = this.verifyTokenPayload(token);
+    if (payload) {
+      const parts = payload.split(":");
+      if (parts[0] === "usr" && parts.length >= 4) {
+        const userId = parts[1];
+        const expiresAtMs = parseInt(parts[2], 10);
+        if (expiresAtMs > Date.now()) {
+          return this.fetchSessionUserById(userId, null, token, new Date(expiresAtMs));
+        }
+      } else if (parts[0] === "shw" && parts.length >= 5) {
+        const targetUserId = parts[1];
+        const superadminUserId = parts[2];
+        const expiresAtMs = parseInt(parts[3], 10);
+        if (expiresAtMs > Date.now()) {
+          return this.fetchSessionUserById(targetUserId, superadminUserId, token, new Date(expiresAtMs));
+        }
+      }
+    }
+
+    return null;
+  }
+
   /**
    * Invalidates a session token.
    */
   public static revokeSession(token: string): void {
     if (token) {
-      db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+      try {
+        db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+      } catch (err) {
+        console.warn("Could not delete session from sqlite:", err);
+      }
     }
   }
 
   public static createSession(userId: string): { token: string; expiresAt: Date } {
-    const token = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 14); // 14 days expiration
+    const nonce = randomBytes(8).toString("hex");
+    const payload = `usr:${userId}:${expiresAt.getTime()}:${nonce}`;
+    const token = this.signTokenPayload(payload);
 
-    db.prepare(`
-      INSERT INTO sessions (token, user_id, expires_at)
-      VALUES (?, ?, ?)
-    `).run(token, userId, expiresAt.toISOString());
+    try {
+      db.prepare(`
+        INSERT INTO sessions (token, user_id, expires_at)
+        VALUES (?, ?, ?)
+      `).run(token, userId, expiresAt.toISOString());
+    } catch (err) {
+      console.warn("Could not insert session into local sqlite:", err);
+    }
 
     return { token, expiresAt };
   }
 
   public static createShadowSession(targetUserId: string, superadminUserId: string): { token: string; expiresAt: Date } {
-    const token = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 4); // 4 hours shadow session
+    const nonce = randomBytes(8).toString("hex");
+    const payload = `shw:${targetUserId}:${superadminUserId}:${expiresAt.getTime()}:${nonce}`;
+    const token = this.signTokenPayload(payload);
 
-    db.prepare(`
-      INSERT INTO sessions (token, user_id, expires_at, impersonated_by_user_id)
-      VALUES (?, ?, ?, ?)
-    `).run(token, targetUserId, expiresAt.toISOString(), superadminUserId);
+    try {
+      db.prepare(`
+        INSERT INTO sessions (token, user_id, expires_at, impersonated_by_user_id)
+        VALUES (?, ?, ?, ?)
+      `).run(token, targetUserId, expiresAt.toISOString(), superadminUserId);
+    } catch (err) {
+      console.warn("Could not insert shadow session into local sqlite:", err);
+    }
 
     return { token, expiresAt };
   }

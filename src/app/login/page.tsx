@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { EchoLogo } from "@/components/EchoLogo";
@@ -21,6 +21,15 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [generalError, setGeneralError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("error") === "superadmin_required") {
+        setGeneralError("Platform Superadmin credentials required to access the Superadmin Command Center.");
+      }
+    }
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -59,12 +68,13 @@ export default function LoginPage() {
         return;
       }
 
-      if ((data as any).data?.user?.isSuperadmin || (data as any).data?.user?.role === "superadmin" || (data as any).user?.isSuperadmin || (data as any).user?.role === "superadmin") {
-        router.push("/superadmin");
-      } else {
-        router.push("/dashboard");
-      }
-      router.refresh();
+      const isSuper = Boolean(
+        (data as any).data?.user?.isSuperadmin ||
+        (data as any).data?.user?.role === "superadmin" ||
+        (data as any).user?.isSuperadmin ||
+        (data as any).user?.role === "superadmin"
+      );
+      window.location.href = isSuper ? "/superadmin" : "/dashboard";
     } catch {
       setGeneralError("Unable to reach the server. Please check your connection and try again.");
     } finally {

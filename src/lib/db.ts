@@ -3,21 +3,31 @@ import { scryptSync, randomBytes, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
+const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const runtimeRoot = process.env.INIT_CWD || [process.cwd()].join("");
 const legacyDataDir = [runtimeRoot, "data"].join(path.sep);
-// Store active SQLite DB inside node_modules/.cache so Next.js 16 Turbopack watcher never triggers HMR reload loops on SQLite WAL writes
-const dataDir = [runtimeRoot, "node_modules", ".cache", "frontdesk-sqlite"].join(path.sep);
+const legacyDbPath = [legacyDataDir, "frontdesk.sqlite"].join(path.sep);
+
+// On Vercel / serverless, filesystem outside /tmp is read-only (EROFS).
+// Store SQLite in /tmp/frontdesk-sqlite when in serverless; otherwise use node_modules/.cache to prevent Turbopack watch loops.
+const dataDir = isVercel
+  ? path.join("/tmp", "frontdesk-sqlite")
+  : [runtimeRoot, "node_modules", ".cache", "frontdesk-sqlite"].join(path.sep);
+
 if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch (err) {
+    console.error("Failed to create dataDir:", err);
+  }
 }
 
 const dbPath = [dataDir, "frontdesk.sqlite"].join(path.sep);
-const legacyDbPath = [legacyDataDir, "frontdesk.sqlite"].join(path.sep);
 if (!fs.existsSync(dbPath) && fs.existsSync(legacyDbPath)) {
   try {
     fs.copyFileSync(legacyDbPath, dbPath);
-  } catch {
-    // ignore copy error
+  } catch (err) {
+    console.warn("Could not copy legacy DB to active DB path:", err);
   }
 }
 const globalForDb = globalThis as unknown as {

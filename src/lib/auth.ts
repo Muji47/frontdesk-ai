@@ -5,6 +5,7 @@ import { AuthService, type AuthSessionUser } from "@/server/services/auth.servic
 export const SESSION_COOKIE_NAME = "echo_session";
 export const LEGACY_SESSION_COOKIE_NAME = "frontdesk_session";
 export const SHADOW_ADMIN_COOKIE_NAME = "echo_shadow_admin";
+export const USER_VAULT_COOKIE_NAME = "echo_user_vault";
 
 export type UserSession = AuthSessionUser;
 
@@ -23,6 +24,23 @@ export async function getCurrentUser(): Promise<UserSession | null> {
 export async function getShadowAdminToken(): Promise<string | null> {
   const cookieStore = await cookies();
   return cookieStore.get(SHADOW_ADMIN_COOKIE_NAME)?.value || null;
+}
+
+export async function getUserVaultToken(): Promise<string | null> {
+  const cookieStore = await cookies();
+  return cookieStore.get(USER_VAULT_COOKIE_NAME)?.value || null;
+}
+
+export function setUserVaultCookie(resCookies: NextResponse["cookies"], vaultToken: string) {
+  resCookies.set({
+    name: USER_VAULT_COOKIE_NAME,
+    value: vaultToken,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production" || process.env.COOKIE_SECURE === "true",
+    sameSite: "lax",
+    expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365), // 1 year persistence
+    path: "/",
+  });
 }
 
 export function setSessionCookie(resCookies: NextResponse["cookies"], token: string, expiresAt: Date) {

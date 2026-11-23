@@ -306,11 +306,11 @@ export default function SignupPage() {
             </div>
 
             <button
+              type="button"
               onClick={() => {
-                router.push("/dashboard");
-                router.refresh();
+                window.location.href = "/dashboard";
               }}
-              className="block w-full rounded-xl bg-indigo-600 py-3 font-bold text-white shadow-md hover:bg-indigo-700 transition"
+              className="block w-full rounded-xl bg-indigo-600 py-3 font-bold text-white shadow-md hover:bg-indigo-700 transition cursor-pointer text-center"
             >
               Enter Echo.ai Dashboard →
             </button>

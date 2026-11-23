@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = DashboardService.handleVisitorChat({
+    const result = await DashboardService.handleVisitorChat({
       orgId,
       conversationId: body.conversationId,
       message: body.message,

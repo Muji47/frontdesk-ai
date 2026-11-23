@@ -36,12 +36,12 @@
       document.querySelector("script[data-org-id]") ||
       document.querySelector("script[data-agent-id]");
 
-  const orgId =
+  let orgId =
     scriptTag?.getAttribute("data-org") ||
     scriptTag?.getAttribute("data-org-id") ||
     "org_demo_101";
 
-  const agentId =
+  let agentId =
     scriptTag?.getAttribute("data-agent-id") ||
     scriptTag?.getAttribute("data-agent") ||
     null;
@@ -675,7 +675,7 @@
   // 6. Fetch Dynamic Organization Configuration
   async function loadConfig() {
     try {
-      const res = await fetch(`${hostUrl}/api/widget/config?orgId=${encodeURIComponent(orgId)}`);
+      const res = await fetch(`${hostUrl}/api/widget/config?orgId=${encodeURIComponent(orgId)}&agentId=${encodeURIComponent(agentId || "")}`);
       if (res.status === 403) {
         const errData = await res.json().catch(() => ({}));
         console.warn(
@@ -687,6 +687,9 @@
       }
       if (res.ok) {
         const data = await res.json();
+        if (data.orgId) {
+          orgId = data.orgId;
+        }
         agentConfig = { ...agentConfig, ...data };
         applyConfig();
       }
@@ -1060,4 +1063,5 @@
 
   // Start initialization
   loadConfig();
+  }
 })();

@@ -16,8 +16,13 @@ export async function POST(req: NextRequest) {
     }
 
     const result = DashboardService.testKnowledgeQuery(user.orgId, body.query);
+    const dashData = DashboardService.getDashboardData(user.orgId, user.industry || "clinic");
 
-    return NextResponse.json({ success: true, result }, { status: 200 });
+    return NextResponse.json({
+      success: true,
+      result,
+      unansweredQuestions: dashData.unansweredQuestions
+    }, { status: 200 });
   } catch (error) {
     return handleApiError(error);
   }

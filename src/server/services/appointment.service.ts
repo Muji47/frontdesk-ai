@@ -65,7 +65,9 @@ export class AppointmentService {
     history: Array<{ sender: string; content: string }> = [],
     fallbackVisitorName?: string,
     fallbackVisitorContact?: string,
-    industry: string = "clinic"
+    industry: string = "clinic",
+    orgName?: string,
+    agentName?: string
   ): BookingParsedIntent {
     const combinedText = [...history.map((h) => h.content), currentMessage].join(" ");
     const currentLower = currentMessage.toLowerCase();
@@ -88,8 +90,8 @@ export class AppointmentService {
       isBookingIntent = false;
     } else {
       isBookingIntent =
-        /\b(book|appointment|booking|schedule|reserve|slot|see doctor|see a doctor|physio|available times?|check in|viewing|inspection|haircut|stylist)\b/i.test(
-          combinedLower
+        /\b(book|booking|schedule|reserve|slot|lock in|make an appointment|viewing|inspection|see a doctor|see doctor)\b/i.test(
+          currentLower
         ) ||
         /\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)|morning|afternoon)\b/i.test(currentLower);
     }
@@ -130,8 +132,8 @@ export class AppointmentService {
       }
     }
 
-    // 5. Extract Practitioner based on industry niche
-    let practitionerName = "Dr. Sarah Lee";
+    // 5. Extract Practitioner based on industry niche and organization context
+    let practitionerName = "our Senior Practitioner";
     if (industry === "realestate") {
       practitionerName = /\bpriya\b/i.test(combinedText) ? "Priya Sharma (Licensed Estate Agent)" : "Sam (Property Manager)";
     } else if (industry === "beauty") {
@@ -145,6 +147,12 @@ export class AppointmentService {
         practitionerName = "Dr. Alex Taylor";
       } else if (/\b(?:dr\.?\s+)?sarah(?:\s+lee)?\b/i.test(combinedText)) {
         practitionerName = "Dr. Sarah Lee";
+      } else if (/\b(?:dr\.?\s+)?zaryab(?:\s+sheikh)?\b/i.test(combinedText) || (orgName && /zaryab/i.test(orgName))) {
+        practitionerName = "Dr. Zaryab Sheikh";
+      } else if (orgName) {
+        practitionerName = `our clinical team at ${orgName}`;
+      } else {
+        practitionerName = "our Senior Clinical Specialist";
       }
     }
 

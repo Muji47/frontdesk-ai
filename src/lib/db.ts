@@ -773,6 +773,44 @@ export function ensureZaryabUser() {
     const { hash, salt } = hashPassword("password123");
     db.prepare("UPDATE users SET password_hash = ?, salt = ? WHERE LOWER(email) = 'zaryabsheikh0@gmail.com'").run(hash, salt);
   }
+
+  // Ensure verified clinical knowledge base chunks exist for Zaryab Health Clinic
+  const checkZaryabKb = db.prepare("SELECT COUNT(*) as cnt FROM knowledge_chunks WHERE organization_id = 'org_zaryab'").get() as { cnt: number };
+  if (!checkZaryabKb || checkZaryabKb.cnt === 0) {
+    withTransaction(() => {
+      const srcId = "src_zaryab_guide";
+      db.prepare(`
+        INSERT OR IGNORE INTO knowledge_sources (id, organization_id, title, source_type, status, page_count)
+        VALUES (?, 'org_zaryab', 'Zaryab Health Clinic - Patient Guide & Services', 'document', 'indexed', 4)
+      `).run(srcId);
+
+      const zaryabChunks = [
+        {
+          title: "Clinical Services & Treatment Offerings",
+          content: "Zaryab Health Clinic offers specialized allied health and physiotherapy treatments: 1) Initial Physiotherapy Assessment ($130, 60 mins) covering full biomechanical evaluation, posture analysis, diagnosis, and personalized recovery plan. 2) Musculoskeletal & Sports Injury Rehabilitation ($95, 45 mins) including joint mobilization, exercise therapy, and return-to-sport protocols. 3) Dry Needling & Myofascial Trigger Point Release ($110, 45 mins) for acute muscle spasms, tension headaches, and chronic neck/back pain. 4) Post-Operative Orthopedic Rehabilitation ($120, 45 mins) for post-surgical recovery following ACL, hip, or shoulder procedures."
+        },
+        {
+          title: "Consultation Fees, Health Insurance & Rebates",
+          content: "Our standard fee schedule: Initial Consultation: $130 (60 minutes). Standard Subsequent Consultation: $95 (45 minutes). Extended Complex Review: $140 (60 minutes). We offer on-the-spot electronic HICAPS claiming for all major health funds including Bupa, Medibank, HCF, NIB, and Teachers Health. Medicare Chronic Disease Management (CDM/EPC) plans are accepted with a valid GP referral ($58.30 rebate claimed on the spot). WorkCover and TAC approved."
+        },
+        {
+          title: "Clinic Hours, Location & Patient Parking",
+          content: "Opening hours: Monday to Friday from 8:00 AM to 6:30 PM. Saturday from 8:30 AM to 2:00 PM. Closed on Sundays and public holidays. Location: Suite 4, Level 1, 120 Collins Street, Melbourne VIC 3000. Convenient 2-hour patient parking is located directly behind the clinic building with accessible wheelchair ramp access."
+        },
+        {
+          title: "Appointments & Cancellation Policy",
+          content: "Appointments can be booked online 24/7 through our virtual receptionist or by calling our clinic reception. We require at least 24 hours notice for any cancellations or rescheduling to avoid a $45 late cancellation fee. Please arrive 5 minutes early for initial appointments."
+        }
+      ];
+
+      zaryabChunks.forEach((c, idx) => {
+        db.prepare(`
+          INSERT OR IGNORE INTO knowledge_chunks (id, source_id, organization_id, chunk_index, title, content, token_count)
+          VALUES (?, ?, 'org_zaryab', ?, ?, ?, ?)
+        `).run(`chk_zaryab_${idx + 1}`, srcId, idx + 1, c.title, c.content, Math.round(c.content.length / 4));
+      });
+    });
+  }
 }
 
 // Ensure zaryabsheikh0@gmail.com is seeded

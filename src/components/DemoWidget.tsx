@@ -26,11 +26,11 @@ export function DemoWidget({ cfg }: { cfg: Industry }) {
       return { from: "bot", text: d.handover };
     }
 
-    // Dynamic order lookup: never hallucinate #10842 if user queried a different order number
+    // Dynamic order lookup: verify against seeded store orders
     const orderMatch = q.match(/#?(\d{4,8})/);
     if (orderMatch) {
       const num = orderMatch[1];
-      if (num === "10842") {
+      if (num === "78219" || num === "10842") {
         return {
           from: "bot",
           text: `Found it — order #${num}:`,
@@ -45,7 +45,7 @@ export function DemoWidget({ cfg }: { cfg: Industry }) {
         return {
           from: "bot",
           text: `I searched our store records for order #${num}, but could not locate a matching order with that number. Please verify your order number or let me know the checkout email address you used.`,
-          chips: ["#10842", "Shipping times", "Speak to support"],
+          chips: ["#78219", "Shipping times", "Speak to support"],
         };
       }
     }

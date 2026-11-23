@@ -201,7 +201,7 @@ export const industries: Record<string, Industry> = {
       greeting: "Hi! I’m Aria, your shopping assistant. Looking for something or tracking an order?",
       chips: ["Track my order", "Find sneakers under $90", "Return an item", "Student discount?"],
       replies: [
-        { match: ["track", "order", "where is"], text: "Found it — order #10842:", card: { title: "Order #10842", lines: ["FedEx · In transit", "Arrives tomorrow by 4:00 PM"], badge: "In transit" }, chips: ["Return an item"] },
+        { match: ["track", "order", "where is"], text: "I would be happy to track your order! What is your 5-digit Order Number (e.g. #78219)?", chips: ["#78219", "Shipping policy", "Speak to support"] },
         { match: ["sneaker", "shoe", "under", "product", "recommend", "find"], text: "Here’s a pick under $90 that’s in stock:", card: { title: "NeoRunner V2 — $79", lines: ["Was $110 · Sizes 7–12", "Free shipping over $100"], badge: "In stock" } },
         { match: ["return", "refund", "exchange"], text: "You can return unworn items within 30 days for a refund or free exchange. Want me to start a return?", chips: ["Start return"] },
         { match: ["start return"], text: "Started. I’ve emailed your prepaid return label." },

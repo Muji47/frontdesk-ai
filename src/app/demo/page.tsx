@@ -46,22 +46,83 @@ export default function DemoPage() {
               <div className="mt-6 space-y-3 border-t border-slate-100 pt-5">
                 <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Test Scenarios To Try:</div>
                 <div className="grid gap-2.5 sm:grid-cols-2 text-xs">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <b className="block text-slate-800">1. Instant Slot Booking</b>
-                    <span className="text-slate-500">Click &quot;Book appointment&quot; or type &quot;Can I book tomorrow morning?&quot;</span>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <b className="block text-slate-800">2. Pricing & Policy Rules</b>
-                    <span className="text-slate-500">Type &quot;How much does a session cost?&quot;</span>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <b className="block text-slate-800">3. Safe Uncertainty & Handover</b>
-                    <span className="text-slate-500">Type &quot;Do you take Medicare insurance?&quot; or &quot;Can I talk to a person?&quot;</span>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <b className="block text-slate-800">4. Live Order Status (E-commerce)</b>
-                    <span className="text-slate-500">Type &quot;Where is my order #10842?&quot;</span>
-                  </div>
+                  {cfg.slug === "ecommerce" ? (
+                    <>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">1. Product Recommendations</b>
+                        <span className="text-slate-500">Type &quot;Find sneakers under $90&quot; or ask for sizing help.</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">2. Live Order Tracking</b>
+                        <span className="text-slate-500">Type &quot;Where is my order #78219?&quot; or check tracking status.</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">3. Shipping & Return Rules</b>
+                        <span className="text-slate-500">Type &quot;What is your return policy?&quot; or ask about shipping times.</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">4. Support Team Handover</b>
+                        <span className="text-slate-500">Type &quot;Can I speak to someone in customer support?&quot;</span>
+                      </div>
+                    </>
+                  ) : cfg.slug === "realestate" ? (
+                    <>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">1. Property Inspection</b>
+                        <span className="text-slate-500">Type &quot;Book inspection for 42 Wallaby Way this Saturday&quot;.</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">2. Pet & Lease Policies</b>
+                        <span className="text-slate-500">Type &quot;Are pets allowed in the apartment?&quot;</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">3. Pricing & Bond Rules</b>
+                        <span className="text-slate-500">Type &quot;How much is the weekly rent and bond?&quot;</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">4. Agent Handover</b>
+                        <span className="text-slate-500">Type &quot;Transfer me to the property manager&quot;.</span>
+                      </div>
+                    </>
+                  ) : cfg.slug === "beauty" ? (
+                    <>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">1. Chair & Stylist Booking</b>
+                        <span className="text-slate-500">Type &quot;Can I book a balayage appointment this Saturday?&quot;</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">2. Service Menu & Pricing</b>
+                        <span className="text-slate-500">Type &quot;How much for a cut and style?&quot;</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">3. Consultation Details</b>
+                        <span className="text-slate-500">Type &quot;Do you have openings this Friday afternoon?&quot;</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">4. Reception Handover</b>
+                        <span className="text-slate-500">Type &quot;Can I speak to my stylist directly?&quot;</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">1. Instant Slot Booking</b>
+                        <span className="text-slate-500">Click &quot;Book appointment&quot; or type &quot;Can I book tomorrow at 10 AM?&quot;</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">2. Pricing & Health Rebates</b>
+                        <span className="text-slate-500">Type &quot;How much does a session cost and do you do HICAPS?&quot;</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">3. Opening Hours & Location</b>
+                        <span className="text-slate-500">Type &quot;Where are you located and what are your opening hours?&quot;</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <b className="block text-slate-800">4. Triage & Staff Handover</b>
+                        <span className="text-slate-500">Type &quot;Can I talk to a receptionist?&quot;</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

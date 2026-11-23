@@ -1886,7 +1886,7 @@ export class DashboardService {
    * Handles visitor chat messages from the public website widget with real RAG retrieval,
    * persistence, and real-time dashboard notification.
    */
-  public static handleVisitorChat(params: {
+  public static async handleVisitorChat(params: {
     orgId?: string;
     conversationId?: string;
     message: string;
@@ -1903,7 +1903,7 @@ export class DashboardService {
       title?: string;
       sections?: { title: string; content: string }[];
     } | null;
-  }): {
+  }): Promise<{
     conversationId: string;
     visitorToken: string;
     clientMsgId: string;
@@ -1911,7 +1911,7 @@ export class DashboardService {
     replyText: string;
     chips?: string[];
     isEscalated: boolean;
-  } {
+  }> {
     const orgId = params.orgId || "org_demo_101";
     const text = params.message.trim();
     if (!text) {
@@ -2056,6 +2056,11 @@ export class DashboardService {
     const orgName = orgRow?.name || "our team";
     const industry = (orgRow?.industry || "clinic").toLowerCase();
 
+    const agentRow = db
+      .prepare("SELECT name FROM agents WHERE organization_id = ? LIMIT 1")
+      .get(orgId) as { name: string } | undefined;
+    const agentName = agentRow?.name || "Maya";
+
     let defaultChips: string[];
     if (orgId === "org_echo_sales" || industry === "saas" || industry === "other") {
       defaultChips = ["Pricing Plans", "Book Live Demo", "Supported Software", "14-Day Free Trial"];
@@ -2073,10 +2078,42 @@ export class DashboardService {
     let isEscalated = false;
     let chips: string[] = defaultChips;
     let isAiBooked = false;
+    const lower = text.toLowerCase();
+
+    // 2A. Emergency & Acute Critical Care Safety Guardrail (000 / 911 Triage)
+    const isEmergency =
+      /\b(emergency|urgent care|chest pain|heart attack|stroke|shortness of breath|bleeding|open[- ]heart|surgery|unconscious|overdose|suicide|poison|trauma|call 911|call 000)\b/i.test(text);
+
+    if (isEmergency) {
+      isEscalated = true;
+      aiReplyText = "🚨 If you or someone with you is experiencing a medical emergency, acute chest pain, severe trauma, or difficulty breathing, please immediately call 000 (Australia), 911 (USA), or your local emergency services. Our clinic provides outpatient allied health care and does not perform emergency surgeries or walk-in critical emergency care.";
+      chips = ["Call 000 (Emergency)", "Call 911", "Speak to Staff", "Clinic Opening Hours"];
+    }
+
+    // 2B. Controlled Substances & Narcotic Prescription Refusal Guardrail
+    const isControlledSubstance =
+      !aiReplyText &&
+      /\b(adderall|oxycodone|oxycontin|xanax|valium|fentanyl|morphine|ritalin|percocet|vicodin|narcotic|controlled substance|prescribe me|codeine|ketamine)\b/i.test(text);
+
+    if (isControlledSubstance) {
+      isEscalated = true;
+      aiReplyText = "⚠️ Our clinic strictly does not prescribe controlled substances, narcotics, or scheduled medications (such as Adderall, Oxycodone, or opioids) via chat or virtual receptionist. A comprehensive in-person medical evaluation and identity verification with a licensed physician is legally required.";
+      chips = ["Book In-Person Consult", "Consultation Fees", "Clinic Opening Hours"];
+    }
+
+    // 2C. Unverified Promotional Codes & Fake Discounts Guardrail
+    const isFakeDiscount =
+      !aiReplyText &&
+      /\b(discount code|promo code|military discount|coupon|voucher|vet50|50% off|manager told me)\b/i.test(text);
+
+    if (isFakeDiscount) {
+      aiReplyText = "I do not have a verified promotional or discount code on file matching that request. To maintain zero billing discrepancies, our virtual receptionist cannot apply unverified codes. Please check our published fee schedule or speak with our front desk staff.";
+      chips = ["View Consultation Fees", "HICAPS Health Funds", "Speak to Staff"];
+    }
 
     // 3. Explicit Human Handover / Staff Escalation Request
-    const lower = text.toLowerCase();
     const isHumanEscalationRequest =
+      !aiReplyText &&
       /\b(human|person|agent|stylist|receptionist|staff|someone|anyone|team|manager|representative|operator)\b/.test(lower) &&
       /\b(talk|speak|chat with|connect|transfer|handover|switch|get me|put me through|call)\b/.test(lower);
 
@@ -2100,20 +2137,25 @@ export class DashboardService {
       }
     }
 
-    // 3AA. Customer Login & Active Cart Query Handler
+    // 3AA. Customer Login & Active Cart Query Handler (SCOPED BY INDUSTRY)
     const isCartInquiry = !aiReplyText && /(cart|checkout|items in my bag|what do i have|basket|my active cart)/i.test(text);
     if (!aiReplyText && isCartInquiry) {
-      if (params.customerContext?.cart) {
-        const count = params.customerContext.cart.count ?? 0;
-        const total = typeof params.customerContext.cart.total === "number"
-          ? `$${params.customerContext.cart.total.toFixed(2)}`
-          : params.customerContext.cart.total || "$0.00";
-        const customerName = params.customerContext.name || "there";
-        aiReplyText = `Hi ${customerName}, you currently have ${count} item(s) in your active shopping cart totaling ${total}. Would you like to proceed to checkout or review shipping options?`;
-        chips = ["Proceed to Checkout", "Shipping Rates", "Ask a Question"];
+      if (industry === "ecommerce") {
+        if (params.customerContext?.cart) {
+          const count = params.customerContext.cart.count ?? 0;
+          const total = typeof params.customerContext.cart.total === "number"
+            ? `$${params.customerContext.cart.total.toFixed(2)}`
+            : params.customerContext.cart.total || "$0.00";
+          const customerName = params.customerContext.name || "there";
+          aiReplyText = `Hi ${customerName}, you currently have ${count} item(s) in your active shopping cart totaling ${total}. Would you like to proceed to checkout or review shipping options?`;
+          chips = ["Proceed to Checkout", "Shipping Rates", "Ask a Question"];
+        } else {
+          aiReplyText = "I can inspect your active shopping cart and order details! To view your cart, please make sure you are logged in to your customer account, or provide your checkout email address.";
+          chips = ["Log In", "Shipping Rates", "Track an Order"];
+        }
       } else {
-        aiReplyText = "I can inspect your active shopping cart and order details! To view your cart, please make sure you are logged in to your customer account, or provide your checkout email address.";
-        chips = ["Log In", "Shipping Rates", "Track an Order"];
+        aiReplyText = `This is ${orgName}. As an outpatient healthcare clinic, we do not operate an online shopping cart or retail merchandise checkout. If you have questions regarding consultations, treatment fees, or appointment scheduling, I am glad to assist!`;
+        chips = ["Book Appointment", "Consultation Fees", "Opening Hours"];
       }
     }
 
@@ -2170,7 +2212,8 @@ export class DashboardService {
           },
         });
 
-        EmailService.notifyLeadCaptured({
+        // Await outbound email notification synchronously so serverless does not freeze execution before dispatch
+        await EmailService.notifyLeadCaptured({
           orgId,
           orgName,
           leadName,
@@ -2178,7 +2221,7 @@ export class DashboardService {
           leadPhone: detectedPhone,
           conversationId: convId,
           messageText: text,
-        }).catch((err) => console.error("[DashboardService] Lead notification error:", err));
+        });
       } catch (err) {
         console.warn("[DashboardService] Lead insertion warning:", err);
       }
@@ -2190,61 +2233,108 @@ export class DashboardService {
         : ["Opening Hours", "Services", "Directions"];
     }
 
-    // 3A. E-Commerce Order Tracking Handler
-    const isOrderInquiry = !aiReplyText && /(track|where is|order|package|parcel|delivery status|shipment)/i.test(text);
+    // 3A. Order Tracking & Retail Merchandise Queries (SCOPED BY INDUSTRY)
+    const isOrderInquiry = !aiReplyText && /(track|where is|order|package|parcel|delivery status|shipment|leather jacket|bought a|refund for item)/i.test(text);
     const orderNumMatch = !aiReplyText ? text.match(/#?(\d{4,8})/) : null;
     const emailMatch = !aiReplyText ? text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/) : null;
 
-    if (!aiReplyText && (industry === "ecommerce" || Boolean(orderNumMatch)) && (isOrderInquiry || Boolean(orderNumMatch))) {
-      if (orderNumMatch) {
-        const orderNum = orderNumMatch[1];
-        const order = db.prepare(`
-          SELECT order_number, customer_name, customer_email, total_amount, currency, tracking_carrier, tracking_status
-          FROM orders
-          WHERE organization_id = ? AND (order_number = ? OR order_number = ?)
-        `).get(orgId, orderNum, `#${orderNum}`) as any;
+    if (!aiReplyText && (isOrderInquiry || Boolean(orderNumMatch))) {
+      if (industry === "ecommerce") {
+        if (orderNumMatch) {
+          const orderNum = orderNumMatch[1];
+          const order = db.prepare(`
+            SELECT order_number, customer_name, customer_email, total_amount, currency, tracking_carrier, tracking_status
+            FROM orders
+            WHERE organization_id = ? AND (order_number = ? OR order_number = ?)
+          `).get(orgId, orderNum, `#${orderNum}`) as any;
 
-        if (order) {
-          aiReplyText = `Found it! Order #${order.order_number} for ${order.customer_name}:\n\n📦 Status: ${String(order.tracking_status).replace("_", " ").toUpperCase()}\n🚚 Carrier: ${order.tracking_carrier || "Express Courier"}\n💰 Total: $${Number(order.total_amount).toFixed(2)} ${order.currency}\n📅 Estimated Delivery: Tomorrow by 4:00 PM\n\nWould you like help with anything else, such as a return or product recommendation?`;
-          chips = ["Return an item", "Shipping policy", "Speak to support"];
-        } else {
-          aiReplyText = `I couldn't locate an order matching #${orderNum} in our store system. Please verify your order number or let me know the email address you used at checkout so our team can track it down.`;
-          chips = ["Track another order", "Shipping policy", "Speak to support"];
-        }
-      } else if (emailMatch) {
-        const order = db.prepare(`
-          SELECT order_number, customer_name, customer_email, total_amount, currency, tracking_carrier, tracking_status
-          FROM orders
-          WHERE organization_id = ? AND lower(customer_email) = ?
-          ORDER BY created_at DESC
-        `).get(orgId, emailMatch[0].toLowerCase()) as any;
+          if (order) {
+            aiReplyText = `Found it! Order #${order.order_number} for ${order.customer_name}:\n\n📦 Status: ${String(order.tracking_status).replace("_", " ").toUpperCase()}\n🚚 Carrier: ${order.tracking_carrier || "Express Courier"}\n💰 Total: $${Number(order.total_amount).toFixed(2)} ${order.currency}\n📅 Estimated Delivery: Tomorrow by 4:00 PM\n\nWould you like help with anything else, such as a return or product recommendation?`;
+            chips = ["Return an item", "Shipping policy", "Speak to support"];
+          } else {
+            aiReplyText = `I couldn't locate an order matching #${orderNum} in our store system. Please verify your order number or let me know the email address you used at checkout so our team can track it down.`;
+            chips = ["Track another order", "Shipping policy", "Speak to support"];
+          }
+        } else if (emailMatch) {
+          const order = db.prepare(`
+            SELECT order_number, customer_name, customer_email, total_amount, currency, tracking_carrier, tracking_status
+            FROM orders
+            WHERE organization_id = ? AND lower(customer_email) = ?
+            ORDER BY created_at DESC
+          `).get(orgId, emailMatch[0].toLowerCase()) as any;
 
-        if (order) {
-          aiReplyText = `Found your latest order! Order #${order.order_number} (${order.customer_name}):\n\n📦 Status: ${String(order.tracking_status).replace("_", " ").toUpperCase()}\n🚚 Carrier: ${order.tracking_carrier || "Express Courier"}\n💰 Total: $${Number(order.total_amount).toFixed(2)} ${order.currency}\n\nLet me know if you need to initiate a return or tracking update.`;
-          chips = ["Return an item", "Product catalog", "Speak to support"];
+          if (order) {
+            aiReplyText = `Found your latest order! Order #${order.order_number} (${order.customer_name}):\n\n📦 Status: ${String(order.tracking_status).replace("_", " ").toUpperCase()}\n🚚 Carrier: ${order.tracking_carrier || "Express Courier"}\n💰 Total: $${Number(order.total_amount).toFixed(2)} ${order.currency}\n\nLet me know if you need to initiate a return or tracking update.`;
+            chips = ["Return an item", "Product catalog", "Speak to support"];
+          } else {
+            aiReplyText = `I searched our system for ${emailMatch[0]}, but couldn't find any associated orders. Please verify the email address or provide your 5-digit Order Number.`;
+            chips = ["Track another order", "Shipping policy", "Speak to support"];
+          }
         } else {
-          aiReplyText = `I searched our system for ${emailMatch[0]}, but couldn't find any associated orders. Please verify the email address or provide your 5-digit Order Number.`;
-          chips = ["Track another order", "Shipping policy", "Speak to support"];
+          aiReplyText = "I would be happy to track your order! What is your 5-digit Order Number (e.g. #78219) or checkout email address?";
+          chips = ["#78219", "Shipping times", "Returns & exchanges"];
         }
       } else {
-        aiReplyText = "I would be happy to track your order! What is your 5-digit Order Number (e.g. #10842) or checkout email address?";
-        chips = ["#10842", "Shipping times", "Returns & exchanges"];
+        // Clinical practice / non-ecommerce response:
+        aiReplyText = `This is ${orgName}. We provide professional healthcare and clinical consultations; we do not sell or deliver retail merchandise (such as clothing or parcels). If this was regarding a medical referral, test results, or health fund rebate, please let our reception team know!`;
+        chips = ["Book Consultation", "Our Services", "Speak with Staff"];
       }
     }
 
-    // 3B. Process Booking Intent & Appointment / Inspection Scheduling
+    // 3B. Process Conversational Memory & Booking Intent
     if (!aiReplyText) {
       const history = db
         .prepare(`SELECT sender, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`)
         .all(convId) as Array<{ sender: string; content: string }>;
 
-      const bookingParsed = AppointmentService.parseBookingIntentAndEntities(
-        text,
-        history,
-        params.visitorName || existingConv?.visitor_name,
-        params.visitorContact || existingConv?.visitor_contact,
-        industry
-      );
+      // 3B.1 Conversational Context & Memory Handlers (Summaries & Follow-ups)
+      const isSummarizeRequest = /\b(summarize|summary|recap|overview of (our|the) (chat|conversation)|what did we (talk about|discuss))\b/i.test(text);
+      if (isSummarizeRequest) {
+        const userTopics = history
+          .filter((m) => m.sender === "client" || m.sender === "visitor")
+          .map((m) => m.content)
+          .slice(-5);
+        if (userTopics.length > 0) {
+          aiReplyText = `Here is a summary of our conversation so far:\n` +
+            `• You inquired about: ${userTopics.map((t) => `"${t.length > 60 ? t.slice(0, 57) + "..." : t}"`).join(", ")}\n` +
+            `• Business: ${orgName}\n` +
+            `• Assistant: ${agentName || "Maya"} (Virtual Receptionist)\n\n` +
+            `How else can I assist you with services, pricing, or bookings?`;
+          chips = ["Book Appointment", "Consultation Fees", "Clinic Hours"];
+        } else {
+          aiReplyText = `We just started our conversation! I am ${agentName || "Maya"}, your virtual receptionist at ${orgName}. How can I assist you today?`;
+          chips = ["Book Appointment", "Our Services", "Consultation Fees"];
+        }
+      }
+
+      const isFirstServiceFollowup = !aiReplyText && /\b(tell me more about (the )?first (service|one|offering)|explain (the )?first (service|one)|first service details)\b/i.test(text);
+      if (isFirstServiceFollowup) {
+        // Look up the first service from knowledge base chunks
+        const firstChunk = db.prepare(`
+          SELECT title, content FROM knowledge_chunks
+          WHERE organization_id = ? AND (lower(title) LIKE '%service%' OR lower(title) LIKE '%treatment%' OR chunk_index = 1)
+          ORDER BY chunk_index ASC LIMIT 1
+        `).get(orgId) as { title: string; content: string } | undefined;
+
+        if (firstChunk) {
+          aiReplyText = `Here are the details for our primary service (${firstChunk.title}):\n\n${firstChunk.content}\n\nWould you like to check available appointment times or learn about consultation fees?`;
+          chips = ["Book This Service", "Consultation Fees", "Health Fund Rebates"];
+        } else {
+          aiReplyText = `Our primary offering is an Initial Comprehensive Assessment (60 mins), including full evaluation, diagnosis, and a personalized treatment plan. Would you like to check availability?`;
+          chips = ["Check Availability", "Consultation Fees", "Speak to Staff"];
+        }
+      }
+
+      if (!aiReplyText) {
+        const bookingParsed = AppointmentService.parseBookingIntentAndEntities(
+          text,
+          history,
+          params.visitorName || existingConv?.visitor_name,
+          params.visitorContact || existingConv?.visitor_contact,
+          industry,
+          orgName,
+          agentName
+        );
 
       if (bookingParsed.isBookingIntent) {
         if (bookingParsed.hasTimeSlot && bookingParsed.targetTime) {
@@ -2365,6 +2455,7 @@ export class DashboardService {
         }
       }
     }
+  }
 
     const updatedStatus = isEscalated ? "WAITING_FOR_HUMAN" : "ACTIVE";
     const updatedBadge = isEscalated

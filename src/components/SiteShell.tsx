@@ -22,7 +22,7 @@ export function SiteHeader() {
       .catch(() => {});
   }, [pathname]);
 
-  if (pathname?.startsWith("/dashboard")) {
+  if (pathname?.startsWith("/dashboard") || pathname?.startsWith("/chat")) {
     return null;
   }
 
@@ -69,7 +69,7 @@ export function SiteHeader() {
 
 export function SiteFooter() {
   const pathname = usePathname();
-  if (pathname?.startsWith("/dashboard")) {
+  if (pathname?.startsWith("/dashboard") || pathname?.startsWith("/chat")) {
     return null;
   }
 

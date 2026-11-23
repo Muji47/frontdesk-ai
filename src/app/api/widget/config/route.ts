@@ -1,11 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { checkOrganizationDomain } from "@/lib/domain-security";
 import { handleApiError } from "@/server/errors";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const orgId = searchParams.get("orgId") || "org_demo_101";
+
+    // Enforce Origin & Referer Domain Whitelisting
+    const origin = req.headers.get("origin") || req.headers.get("referer");
+    const domainCheck = checkOrganizationDomain(orgId, origin);
+    if (!domainCheck.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: "DOMAIN_NOT_ALLOWED",
+            message: domainCheck.reason,
+          },
+        },
+        {
+          status: 403,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+          },
+        }
+      );
+    }
 
     const orgRow = db.prepare(`
       SELECT id, name, industry, plan

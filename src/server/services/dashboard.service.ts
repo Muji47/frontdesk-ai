@@ -171,6 +171,7 @@ export interface DashboardData {
     position: string;
     tone: string;
   };
+  allowedDomains: string[];
 }
 
 // Utility to convert SQLite timestamp or relative time string
@@ -415,6 +416,16 @@ export class DashboardService {
 
     const billing = this.getBillingData(orgId);
 
+    const orgDataRow = db
+      .prepare(`SELECT allowed_domains FROM organizations WHERE id = ?`)
+      .get(orgId) as { allowed_domains?: string } | undefined;
+    const allowedDomains = orgDataRow?.allowed_domains
+      ? orgDataRow.allowed_domains
+          .split(/[\n,;\s]+/)
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+      : ["*"];
+
     return {
       metrics,
       conversations,
@@ -427,6 +438,7 @@ export class DashboardService {
       deliveryLogs,
       billing,
       agent,
+      allowedDomains: allowedDomains.length > 0 ? allowedDomains : ["*"],
     };
   }
 
@@ -1333,6 +1345,18 @@ export class DashboardService {
       data.tone?.trim() || null,
       orgId
     );
+  }
+
+  /**
+   * Updates the whitelisted client domains allowed to embed the receptionist widget and consume AI credits.
+   */
+  public static updateAllowedDomains(orgId: string, domains: string[]): string[] {
+    const clean = domains
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean);
+    const val = clean.length > 0 ? clean.join(",") : "*";
+    db.prepare(`UPDATE organizations SET allowed_domains = ? WHERE id = ?`).run(val, orgId);
+    return clean.length > 0 ? clean : ["*"];
   }
 
   /**

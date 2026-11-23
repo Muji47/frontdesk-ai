@@ -7,8 +7,8 @@ export function GlobalWidgetLauncher() {
   const pathname = usePathname();
 
   useEffect(() => {
-    // If navigating to dashboard or test embed, remove floating widget
-    if (pathname.startsWith("/dashboard") || pathname.startsWith("/test-embed")) {
+    // If navigating to dashboard, chat portal, or test embed, remove floating widget
+    if (pathname.startsWith("/dashboard") || pathname.startsWith("/chat") || pathname.startsWith("/test-embed")) {
       const existingWidget = document.getElementById("echo-receptionist-widget");
       if (existingWidget) existingWidget.remove();
       const existingScript = document.getElementById("echo-widget-script");

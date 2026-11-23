@@ -1,16 +1,39 @@
 (function () {
   "use strict";
 
-  // Prevent multiple initializations on the same page
-  if (document.getElementById("echo-receptionist-widget")) return;
-  window.__ECHO_WIDGET_INITIALIZED__ = true;
+  function start() {
+    if (document.getElementById("echo-receptionist-widget")) return;
+    if (!document.body) {
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", start, { once: true });
+        return;
+      }
+    }
+    initWidget();
+  }
 
-  // 1. Detect Host Origin & Organization ID from script attribute
-  const scriptTag =
-    document.currentScript ||
-    document.querySelector("script[src*='widget.js']") ||
-    document.querySelector("script[data-org]") ||
-    document.querySelector("script[data-org-id]");
+  // Non-blocking async bootstrap: do not block DOMContentLoaded or main thread render
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(start);
+    } else {
+      setTimeout(start, 0);
+    }
+  }
+
+  function initWidget() {
+    // Prevent multiple initializations on the same page
+    if (document.getElementById("echo-receptionist-widget")) return;
+    window.__ECHO_WIDGET_INITIALIZED__ = true;
+
+    // 1. Detect Host Origin & Organization ID from script attribute
+    const scriptTag =
+      document.currentScript ||
+      document.querySelector("script[src*='widget.js']") ||
+      document.querySelector("script[data-org]") ||
+      document.querySelector("script[data-org-id]");
 
   const orgId =
     scriptTag?.getAttribute("data-org") ||
@@ -636,6 +659,15 @@
   async function loadConfig() {
     try {
       const res = await fetch(`${hostUrl}/api/widget/config?orgId=${encodeURIComponent(orgId)}`);
+      if (res.status === 403) {
+        const errData = await res.json().catch(() => ({}));
+        console.warn(
+          "[Echo.ai Security] Widget disabled on origin '" + window.location.origin + "': " +
+          (errData.error?.message || "Domain is not whitelisted in the Echo.ai Dashboard.")
+        );
+        host.style.display = "none";
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         agentConfig = { ...agentConfig, ...data };
@@ -963,7 +995,12 @@
           renderBotMessage(data.replyText, data.chips, data.aiMsgId);
         }
       } else {
-        renderBotMessage("I'm sorry, I'm temporarily having trouble connecting. Our front desk team has been notified.", null);
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 403) {
+          renderBotMessage("⚠️ " + (errData.error?.message || "This website domain is not authorized. Please whitelist it in the Echo.ai Dashboard."), null);
+        } else {
+          renderBotMessage("I'm sorry, I'm temporarily having trouble connecting. Our front desk team has been notified.", null);
+        }
       }
     } catch (err) {
       removeTypingIndicator();

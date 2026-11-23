@@ -314,6 +314,14 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [analyticsTimeframe, setAnalyticsTimeframe] = useState<"24h" | "7d" | "30d" | "all">("7d");
   const [exportingCsv, setExportingCsv] = useState<boolean>(false);
   const [copiedEmbed, setCopiedEmbed] = useState<boolean>(false);
+  const [copiedHostedLink, setCopiedHostedLink] = useState<boolean>(false);
+  const [allowedDomains, setAllowedDomains] = useState<string[]>(
+    initialData.allowedDomains && initialData.allowedDomains.length > 0
+      ? initialData.allowedDomains
+      : ["*"]
+  );
+  const [newDomainInput, setNewDomainInput] = useState<string>("");
+  const [isSavingDomains, setIsSavingDomains] = useState<boolean>(false);
 
   // Appointments, Orders & Leads Real-Time Pipeline State
   const [appointments, setAppointments] = useState<DashboardAppointment[]>(initialData.appointments || []);
@@ -1683,7 +1691,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
 
   const handleCopyEmbed = () => {
     const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
-    const snippet = `<script src="${origin}/widget.js" data-agent-id="${initialData.agent.id}" data-org-id="${user.orgId}" data-org="${user.orgId}" async></script>`;
+    const snippet = `<script src="${origin}/widget.js" data-agent-id="${initialData.agent.id}" data-org-id="${user.orgId}" data-org="${user.orgId}" async defer></script>`;
     if (typeof navigator !== "undefined" && navigator.clipboard) {
       navigator.clipboard.writeText(snippet).catch(() => {});
     } else if (typeof document !== "undefined") {
@@ -1696,6 +1704,82 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     }
     setCopiedEmbed(true);
     setTimeout(() => setCopiedEmbed(false), 2500);
+    showToast({
+      type: "success",
+      title: "Embed Code Copied",
+      message: "Asynchronous, non-blocking script tag copied to clipboard.",
+    });
+  };
+
+  const handleCopyHostedLink = () => {
+    const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+    const link = `${origin}/chat/${user.orgId}`;
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(link).catch(() => {});
+    }
+    setCopiedHostedLink(true);
+    setTimeout(() => setCopiedHostedLink(false), 2500);
+    showToast({
+      type: "success",
+      title: "Shareable Link Copied",
+      message: `Direct link: ${link}`,
+    });
+  };
+
+  const handleAddDomain = () => {
+    const trimmed = newDomainInput.trim().toLowerCase();
+    if (!trimmed) return;
+    if (allowedDomains.includes(trimmed)) {
+      setNewDomainInput("");
+      return;
+    }
+    let updated = [...allowedDomains];
+    if (trimmed !== "*" && updated.includes("*") && updated.length === 1) {
+      updated = [trimmed];
+    } else if (!updated.includes(trimmed)) {
+      updated.push(trimmed);
+    }
+    setAllowedDomains(updated);
+    setNewDomainInput("");
+  };
+
+  const handleRemoveDomain = (domainToRemove: string) => {
+    const filtered = allowedDomains.filter((d) => d !== domainToRemove);
+    setAllowedDomains(filtered.length > 0 ? filtered : ["*"]);
+  };
+
+  const handleSaveDomains = async () => {
+    setIsSavingDomains(true);
+    try {
+      const res = await fetch("/api/dashboard/domains", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains: allowedDomains }),
+      });
+      const data = await res.json();
+      setIsSavingDomains(false);
+      if (res.ok && data.success) {
+        setAllowedDomains(data.allowedDomains);
+        showToast({
+          type: "success",
+          title: "Domain Whitelist Saved",
+          message: data.message || "Whitelisted domains successfully saved.",
+        });
+      } else {
+        showToast({
+          type: "error",
+          title: "Update Failed",
+          message: data.error?.message || "Could not save domain settings.",
+        });
+      }
+    } catch {
+      setIsSavingDomains(false);
+      showToast({
+        type: "error",
+        title: "Network Error",
+        message: "Failed to connect to server.",
+      });
+    }
   };
 
   const handleCopyOrgId = () => {
@@ -4679,20 +4763,85 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
               </div>
 
+              {/* Shareable Hosted Receptionist Link (Instant Zero-Install Access) */}
+              <div className="rounded-xl border border-indigo-200/90 bg-gradient-to-r from-indigo-50/70 via-white to-purple-50/60 p-4 shadow-2xs space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🚀</span>
+                      <b className="text-xs font-bold text-slate-900">Shareable Hosted Receptionist Link</b>
+                      <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold border border-emerald-200">
+                        Zero Code Required
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Direct standalone chat page. Use immediately on Instagram, WhatsApp, Google Business, or test with your staff before installing code.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={`/chat/${user.orgId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-300 bg-white text-xs font-semibold text-indigo-700 hover:bg-indigo-50 transition shadow-2xs"
+                    >
+                      <span>Open Link</span>
+                      <span>↗</span>
+                    </a>
+                  </div>
+                </div>
+
+                <div className="relative rounded-xl border border-slate-300 bg-white p-2.5 font-mono text-xs text-slate-700 flex items-center justify-between shadow-2xs">
+                  <span className="select-all truncate text-indigo-700 font-semibold pr-2">
+                    {typeof window !== "undefined" ? window.location.origin : "https://echo.ai"}/chat/{user.orgId}
+                  </span>
+                  <button
+                    onClick={handleCopyHostedLink}
+                    className="shrink-0 rounded-lg bg-indigo-600 px-3 py-1.5 font-bold text-white text-xs hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  >
+                    {copiedHostedLink ? (
+                      <>
+                        <span>✓</span> Copied!
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                        </svg>
+                        Copy Link
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[11px] text-slate-500 font-medium">
+                  <span className="text-slate-400">Perfect for:</span>
+                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">📱 Instagram Bio</span>
+                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">💬 WhatsApp Greeting</span>
+                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">📍 Google Business</span>
+                  <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">✉️ Email Signatures</span>
+                </div>
+              </div>
+
               {/* Code Snippet Box with Copy Button */}
               <div className="space-y-2">
                 <div className="flex justify-between items-center text-xs">
-                  <span className="font-semibold text-slate-700">1-Line Installation Script Tag</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-slate-700">1-Line Installation Script Tag</span>
+                    <span className="rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.2 text-[10px] font-bold">
+                      ⚡ Non-blocking (async defer)
+                    </span>
+                  </div>
                   <span className="text-[11px] text-slate-400">Place before the closing &lt;/body&gt; tag</span>
                 </div>
 
                 <div className="relative rounded-xl border border-slate-800 bg-slate-950 p-4 font-mono text-xs text-slate-200 flex items-center justify-between overflow-x-auto shadow-inner">
                   <code className="select-all">
-                    {`<script src="${typeof window !== "undefined" ? window.location.origin : "https://echo.ai"}/widget.js" data-org="${user.orgId}" async></script>`}
+                    {`<script src="${typeof window !== "undefined" ? window.location.origin : "https://echo.ai"}/widget.js" data-org="${user.orgId}" async defer></script>`}
                   </code>
                   <button
                     onClick={handleCopyEmbed}
-                    className="ml-4 shrink-0 rounded-lg bg-indigo-600 px-3.5 py-1.5 font-bold text-white text-xs hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs"
+                    className="ml-4 shrink-0 rounded-lg bg-indigo-600 px-3.5 py-1.5 font-bold text-white text-xs hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs cursor-pointer"
                   >
                     {copiedEmbed ? (
                       <>
@@ -4795,6 +4944,102 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Domain Whitelisting (AI Credit Protection) */}
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4.5 shadow-2xs space-y-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🛡️</span>
+                    <b className="text-xs font-bold text-slate-900">Domain Whitelisting & Origin Security</b>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold border ${
+                        allowedDomains.includes("*")
+                          ? "bg-amber-50 text-amber-800 border-amber-200"
+                          : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                      }`}
+                    >
+                      {allowedDomains.includes("*")
+                        ? "Permissive Mode (*)"
+                        : `Protected (${allowedDomains.length} domains)`}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Restricts which websites can embed your widget and consume AI credits
+                  </span>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Protect your monthly AI generation credits from unauthorized websites. If a domain is not in this whitelist, requests to load your receptionist or chat will be rejected with HTTP 403.
+                </p>
+
+                {/* Whitelisted Domain Tags */}
+                <div className="flex flex-wrap gap-2 items-center min-h-[38px] p-2 bg-slate-50 rounded-lg border border-slate-200">
+                  {allowedDomains.map((dom) => (
+                    <span
+                      key={dom}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono font-medium shadow-2xs ${
+                        dom === "*"
+                          ? "bg-amber-100 text-amber-900 border border-amber-300"
+                          : "bg-white text-slate-800 border border-slate-300"
+                      }`}
+                    >
+                      <span>{dom === "*" ? "★ * (All Origins Allowed)" : dom}</span>
+                      <button
+                        onClick={() => handleRemoveDomain(dom)}
+                        className="text-slate-400 hover:text-rose-600 font-bold ml-1 transition cursor-pointer"
+                        title={`Remove ${dom}`}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+
+                {/* Add Domain Input Form */}
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={newDomainInput}
+                    onChange={(e) => setNewDomainInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleAddDomain()}
+                    placeholder="e.g. yourclinic.com or *.yourclinic.com (or * for all)"
+                    className="flex-1 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddDomain}
+                    disabled={!newDomainInput.trim()}
+                    className="rounded-lg bg-slate-800 px-4 py-2 text-xs font-bold text-white hover:bg-slate-900 disabled:opacity-50 transition shrink-0 shadow-xs cursor-pointer"
+                  >
+                    + Add Domain
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveDomains}
+                    disabled={isSavingDomains}
+                    className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition shrink-0 flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+                  >
+                    {isSavingDomains ? (
+                      <>
+                        <svg className="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                        </svg>
+                        <span>Saving...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Save Whitelist</span>
+                        <span>✓</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
+                  <span>Wildcard subdomains supported (e.g. *.clinic.com). Default localhost is always allowed for development.</span>
+                </div>
               </div>
             </div>
 

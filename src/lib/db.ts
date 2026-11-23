@@ -53,6 +53,7 @@ if (!globalForDb.__echoSqliteInitialized) {
     industry TEXT NOT NULL DEFAULT 'clinic',
     plan TEXT NOT NULL DEFAULT 'growth',
     allow_subuser_template_editing INTEGER NOT NULL DEFAULT 0,
+    allowed_domains TEXT DEFAULT '*',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -451,6 +452,10 @@ try {
 
   try {
     db.exec("ALTER TABLE organizations ADD COLUMN allow_subuser_template_editing INTEGER NOT NULL DEFAULT 0;");
+  } catch {}
+
+  try {
+    db.exec("ALTER TABLE organizations ADD COLUMN allowed_domains TEXT DEFAULT '*';");
   } catch {}
 
   db.exec(`

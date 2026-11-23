@@ -743,6 +743,36 @@ export function ensureReceptionistUser() {
 // Ensure demo receptionist user is seeded
 ensureReceptionistUser();
 
+export function ensureZaryabUser() {
+  const checkZaryab = db.prepare("SELECT id FROM users WHERE LOWER(email) = 'zaryabsheikh0@gmail.com'").get();
+  if (!checkZaryab) {
+    withTransaction(() => {
+      const { hash, salt } = hashPassword("password123");
+      db.prepare(`
+        INSERT OR IGNORE INTO organizations (id, name, industry, plan)
+        VALUES ('org_zaryab', 'Zaryab Health Clinic', 'clinic', 'growth')
+      `).run();
+
+      db.prepare(`
+        INSERT OR IGNORE INTO users (id, organization_id, email, name, password_hash, salt, role, is_superadmin)
+        VALUES ('usr_zaryab', 'org_zaryab', 'zaryabsheikh0@gmail.com', 'Zaryab Sheikh', ?, ?, 'owner', 0)
+      `).run(hash, salt);
+
+      db.prepare(`
+        INSERT OR IGNORE INTO agents (id, organization_id, name, greeting, color, position, tone)
+        VALUES ('agt_zaryab', 'org_zaryab', 'Maya', 'Hi! Welcome to Zaryab Health Clinic. How can I assist you with appointment bookings or questions today?', '#0d9488', 'right', 'Friendly')
+      `).run();
+    });
+    seedOrganizationData('org_zaryab', 'clinic', 'Zaryab Health Clinic');
+  } else {
+    const { hash, salt } = hashPassword("password123");
+    db.prepare("UPDATE users SET password_hash = ?, salt = ? WHERE LOWER(email) = 'zaryabsheikh0@gmail.com'").run(hash, salt);
+  }
+}
+
+// Ensure zaryabsheikh0@gmail.com is seeded
+ensureZaryabUser();
+
 export function ensureMarketingInquiries() {
   try {
     const existingCount = db.prepare("SELECT COUNT(*) as count FROM marketing_inquiries").get() as { count: number };

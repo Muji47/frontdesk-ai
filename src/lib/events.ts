@@ -1,12 +1,12 @@
 import { EventEmitter } from "node:events";
 
 export interface RealtimeDashboardEvent {
-  type: "new_conversation" | "new_message" | "handover_alert" | "new_appointment" | "new_lead";
+  type: "new_conversation" | "new_message" | "handover_alert" | "new_appointment" | "new_lead" | "new_unanswered_question";
   orgId: string;
   timestamp: string;
   title: string;
   message: string;
-  targetTab: "inbox" | "overview" | "appointments" | "leads" | "knowledge" | "conversations" | "analytics" | "billing";
+  targetTab: "inbox" | "overview" | "appointments" | "leads" | "knowledge" | "conversations" | "analytics" | "billing" | "unanswered";
   targetId?: string; // conversation ID, appointment ID, etc.
   icon?: string;
   data?: any;

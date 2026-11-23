@@ -1810,6 +1810,15 @@ export class DashboardService {
           INSERT INTO unanswered_questions (id, organization_id, question, frequency_count, status)
           VALUES (?, ?, ?, 1, 'pending')
         `).run(qId, orgId, query.trim());
+
+        dashboardEventBus.emitToOrg(orgId, {
+          type: "new_unanswered_question",
+          title: "New Question in Review Queue",
+          message: `Visitor inquired: "${query.trim().slice(0, 75)}"`,
+          icon: "❓",
+          targetTab: "unanswered",
+          targetId: qId,
+        });
       } catch {}
     }
 
@@ -2111,7 +2120,7 @@ export class DashboardService {
     // 3C. Inbound Lead & Contact Information Capture
     const emailDetected = text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/);
     const phoneDetected = text.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}/);
-    const nameDetected = text.match(/(?:name is|name:|i am|i'm|from)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)/i);
+    const nameDetected = text.match(/(?:name is|name\s*:?|i am|i'm|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
 
     const detectedEmail = emailDetected ? emailDetected[0] : params.customerContext?.email;
     const detectedPhone = phoneDetected ? phoneDetected[0] : undefined;
@@ -2124,7 +2133,11 @@ export class DashboardService {
        Boolean(detectedEmail));
 
     if (!aiReplyText && isExplicitContactLead) {
-      const leadName = detectedName || params.visitorName || existingConv?.visitor_name || "Website Visitor";
+      const leadName =
+        detectedName ||
+        (params.visitorName && !params.visitorName.startsWith("Website Visitor") ? params.visitorName : undefined) ||
+        existingConv?.visitor_name ||
+        "Website Visitor";
       const leadContact = detectedEmail || detectedPhone || "";
       const leadId = "lead_" + randomBytes(6).toString("hex");
 

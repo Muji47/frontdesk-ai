@@ -17,11 +17,23 @@ export class EmailService {
    * Uses Resend API if RESEND_API_KEY is configured, or logs to verified integration delivery stream.
    */
   public static async sendEmail(payload: OutboundEmailPayload): Promise<{ success: boolean; id: string; provider: string }> {
-    const resendApiKey = process.env.RESEND_API_KEY;
-    const fromAddress = process.env.EMAIL_FROM || "Echo.ai Alerts <notifications@echo.ai>";
+    // 1. Check if organization has configured email integration in DB
+    const emailInt = db
+      .prepare("SELECT config_json FROM integrations WHERE organization_id = ? AND provider = 'email' AND status = 'connected'")
+      .get(payload.orgId) as { config_json?: string } | undefined;
+
+    let orgEmailConfig: any = null;
+    if (emailInt?.config_json) {
+      try {
+        orgEmailConfig = JSON.parse(emailInt.config_json);
+      } catch {}
+    }
+
+    const resendApiKey = orgEmailConfig?.apiKey?.trim() || process.env.RESEND_API_KEY;
+    const fromAddress = orgEmailConfig?.fromEmail?.trim() || process.env.EMAIL_FROM || "Echo.ai Alerts <onboarding@resend.dev>";
     const emailId = "email_" + Math.random().toString(36).slice(2, 12);
 
-    console.log(`[EmailService] Dispatching ${payload.eventType} email to ${payload.to}: "${payload.subject}"`);
+    console.log(`[EmailService] Dispatching ${payload.eventType} email to ${payload.to}: "${payload.subject}" (Key present: ${Boolean(resendApiKey)})`);
 
     let delivered = false;
     let providerUsed = "echo_internal_mailer";
@@ -105,11 +117,22 @@ export class EmailService {
     conversationId?: string;
     messageText: string;
   }): Promise<void> {
+    const emailInt = db
+      .prepare("SELECT config_json FROM integrations WHERE organization_id = ? AND provider = 'email' AND status = 'connected'")
+      .get(params.orgId) as { config_json?: string } | undefined;
+
+    let orgEmailConfig: any = null;
+    if (emailInt?.config_json) {
+      try {
+        orgEmailConfig = JSON.parse(emailInt.config_json);
+      } catch {}
+    }
+
     const owner = db
       .prepare("SELECT email, name FROM users WHERE organization_id = ? AND role = 'owner' LIMIT 1")
       .get(params.orgId) as { email?: string; name?: string } | undefined;
 
-    const recipient = owner?.email || "notifications@echo.ai";
+    const recipient = orgEmailConfig?.recipientEmail?.trim() || owner?.email || "notifications@echo.ai";
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://frontdesk-ai-rho-swart.vercel.app";
 
     const html = `

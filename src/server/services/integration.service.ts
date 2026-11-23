@@ -5,7 +5,7 @@ import { ValidationError } from "@/server/errors";
 export interface IntegrationRecord {
   id: string;
   organizationId: string;
-  provider: "cliniko" | "webhook" | "sms" | "shopify" | "google_calendar" | "web_widget";
+  provider: "cliniko" | "webhook" | "sms" | "shopify" | "google_calendar" | "web_widget" | "email";
   status: "connected" | "disconnected" | "error";
   config: Record<string, any>;
   lastSyncAt: string | null;
@@ -516,6 +516,122 @@ export class IntegrationService {
         message: `SMS Escalation alert verified. Test message dispatched to ${alertPhone}.`,
         details: { dispatchedTo: alertPhone },
       };
+    }
+
+    if (provider === "email") {
+      const apiKey = config.apiKey?.trim();
+      const fromEmail = config.fromEmail?.trim() || "Echo.ai Alerts <onboarding@resend.dev>";
+      const recipientEmail = config.recipientEmail?.trim() || "zaryabsheikh0@gmail.com";
+
+      if (!recipientEmail) {
+        return { success: false, durationMs: 0, message: "Recipient email is required to verify email dispatch." };
+      }
+
+      const activeKey = apiKey || process.env.RESEND_API_KEY;
+      if (!activeKey) {
+        return {
+          success: false,
+          durationMs: 0,
+          message: "A Resend API Key (starts with re_...) or SendGrid API Key is required to send live emails.",
+        };
+      }
+
+      const testSubject = "🧪 Echo.ai Live Email Verification Test";
+      const testHtml = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+          <div style="border-bottom: 2px solid #4f46e5; padding-bottom: 12px; margin-bottom: 16px;">
+            <h2 style="color: #1e293b; margin: 0; font-size: 20px;">✓ Email Dispatch Verified! 🎉</h2>
+            <p style="color: #64748b; margin: 4px 0 0 0; font-size: 13px;">Echo.ai Virtual Receptionist • Live Connection Test</p>
+          </div>
+          <p style="color: #334155; font-size: 14px; line-height: 1.6;">
+            This confirms that your <strong>Echo.ai</strong> email notification pipeline is active and communicating with Resend.
+          </p>
+          <div style="background: #f8fafc; border-radius: 8px; padding: 14px; margin: 16px 0; font-size: 13px; color: #475569;">
+            <p style="margin: 0 0 6px 0;"><strong>Recipient:</strong> ${recipientEmail}</p>
+            <p style="margin: 0 0 6px 0;"><strong>Sender:</strong> ${fromEmail}</p>
+            <p style="margin: 0;"><strong>Status:</strong> Connected & Verified</p>
+          </div>
+          <p style="color: #64748b; font-size: 12px; margin-top: 20px;">
+            Timestamp: ${new Date().toISOString()} • Echo.ai Zero-Hallucination Front Desk
+          </p>
+        </div>
+      `;
+
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${activeKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: fromEmail,
+            to: recipientEmail,
+            subject: testSubject,
+            html: testHtml,
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        const durationMs = Date.now() - startTime;
+
+        let resData: any = {};
+        try {
+          resData = await res.json();
+        } catch {}
+
+        if (res.ok) {
+          this.recordLog({
+            orgId,
+            provider: "email",
+            eventType: "test_verification",
+            status: "success",
+            statusCode: res.status,
+            payload: { to: recipientEmail, subject: testSubject },
+            response: resData,
+            durationMs,
+          });
+
+          this.saveIntegration(orgId, "email", config, "connected");
+
+          return {
+            success: true,
+            statusCode: res.status,
+            durationMs,
+            message: `✓ Test email delivered to ${recipientEmail} via Resend (ID: ${resData.id || "ok"}).`,
+            details: resData,
+          };
+        } else {
+          this.recordLog({
+            orgId,
+            provider: "email",
+            eventType: "test_verification",
+            status: "failed",
+            statusCode: res.status,
+            payload: { to: recipientEmail, subject: testSubject },
+            response: resData,
+            durationMs,
+          });
+
+          return {
+            success: false,
+            statusCode: res.status,
+            durationMs,
+            message: `Resend API rejected email (${res.status}): ${resData.message || JSON.stringify(resData)}`,
+          };
+        }
+      } catch (err: any) {
+        const durationMs = Date.now() - startTime;
+        return {
+          success: false,
+          statusCode: 504,
+          durationMs,
+          message: `Network error sending email: ${err.message}`,
+        };
+      }
     }
 
     return {

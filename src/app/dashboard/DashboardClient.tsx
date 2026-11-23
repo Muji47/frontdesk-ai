@@ -473,7 +473,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   const [integrationsList, setIntegrationsList] = useState<DashboardIntegration[]>(initialData.integrations || []);
   const [deliveryLogsList, setDeliveryLogsList] = useState<any[]>(initialData.deliveryLogs || []);
   const [savingProvider, setSavingProvider] = useState<string | null>(null);
-  const [activeIntegrationModal, setActiveIntegrationModal] = useState<"cliniko" | "webhook" | "sms" | null>(null);
+  const [activeIntegrationModal, setActiveIntegrationModal] = useState<"cliniko" | "webhook" | "sms" | "email" | null>(null);
   const [inspectingLog, setInspectingLog] = useState<any | null>(null);
 
   const clinikoExisting = integrationsList.find((i) => i.provider === "cliniko");
@@ -497,6 +497,15 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     authToken: smsExisting?.config?.authToken || "",
     fromPhone: smsExisting?.config?.fromPhone || "",
   });
+
+  const emailExisting = integrationsList.find((i) => i.provider === "email");
+  const [emailForm, setEmailForm] = useState({
+    apiKey: emailExisting?.config?.apiKey || "",
+    fromEmail: emailExisting?.config?.fromEmail || "Echo.ai Alerts <onboarding@resend.dev>",
+    recipientEmail: emailExisting?.config?.recipientEmail || user.email || "zaryabsheikh0@gmail.com",
+  });
+  const [isTestingEmail, setIsTestingEmail] = useState(false);
+  const [testEmailResult, setTestEmailResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const refreshIntegrations = useCallback(async () => {
     try {
@@ -543,6 +552,33 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
     },
     [refreshIntegrations, showToast]
   );
+
+  async function handleTestEmailConnection() {
+    setIsTestingEmail(true);
+    setTestEmailResult(null);
+    try {
+      const res = await fetch("/api/dashboard/integrations/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "email",
+          config: emailForm,
+        }),
+      });
+      const data = await res.json();
+      setTestEmailResult(data);
+      if (data.success) {
+        showToast({ type: "success", title: "Test Email Delivered", message: data.message });
+        await refreshIntegrations();
+      } else {
+        showToast({ type: "error", title: "Email Test Failed", message: data.message });
+      }
+    } catch (err: any) {
+      setTestEmailResult({ success: false, message: err.message || "Failed to reach email verification endpoint." });
+    } finally {
+      setIsTestingEmail(false);
+    }
+  }
 
   // Connect to SSE real-time socket stream with Multi-Tab Leader Election via BroadcastChannel
   // Ensures ONLY 1 browser tab maintains the server SSE connection, while broadcasting events locally to all tabs.
@@ -5161,7 +5197,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         Sends immediate SMS notifications to on-duty practitioners when patients report emergency symptoms or request clinical staff handover.
                       </p>
                       <div className="mt-2.5 flex items-center gap-2 text-[11px] text-slate-400">
-                        <span>Alert to: <strong className="text-slate-600">{smsForm.alertPhone}</strong></span>
+                        <span>Alert to: <strong className="text-slate-600">{smsForm.alertPhone || "None"}</strong></span>
                         <span>•</span>
                         <span>Gateway: <strong className="text-slate-600">Twilio SMS</strong></span>
                       </div>
@@ -5174,6 +5210,54 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                         className="rounded-xl bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition shadow-xs"
                       >
                         ⚙️ Configure SMS
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Email & Inbound Lead Notifications Card */}
+              {(() => {
+                const emailInt = integrationsList.find((i) => i.provider === "email");
+                const isConnected = emailInt?.status === "connected";
+                return (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">✉️</span>
+                          <b className="text-sm font-bold text-slate-900">Email & Inbound Lead Alerts</b>
+                        </div>
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            isConnected
+                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                              : "bg-slate-100 text-slate-600 border border-slate-200"
+                          }`}
+                        >
+                          {isConnected ? "✓ Email Connected" : "Not Configured"}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-600">
+                        Dispatches automated instant email notifications for new inbound customer leads, contact numbers, and receptionist staff escalations directly to your inbox.
+                      </p>
+                      <div className="mt-2.5 flex items-center gap-2 text-[11px] text-slate-400">
+                        <span>Recipient: <strong className="text-slate-600">{emailForm.recipientEmail}</strong></span>
+                        <span>•</span>
+                        <span>Provider: <strong className="text-slate-600">Resend API</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTestEmailResult(null);
+                          setActiveIntegrationModal("email");
+                        }}
+                        className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition shadow-xs cursor-pointer"
+                      >
+                        ⚙️ Configure Email & Send Test
                       </button>
                     </div>
                   </div>
@@ -7256,6 +7340,139 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 >
                   {savingProvider === "sms" ? "Saving..." : "Save SMS Alert"}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Email & Inbound Lead Notifications Modal */}
+        {activeIntegrationModal === "email" && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-slate-100 space-y-4">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">✉️</span>
+                  <div>
+                    <h4 className="text-base font-extrabold text-slate-900">Email & Inbound Lead Notifications</h4>
+                    <span className="text-[11px] text-slate-500">Instant email delivery for captured leads & reception escalations</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveIntegrationModal(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {testEmailResult && (
+                <div
+                  className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+                    testEmailResult.success
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                      : "bg-rose-50 border-rose-200 text-rose-800"
+                  }`}
+                >
+                  <span>{testEmailResult.success ? "✓" : "⚠️"}</span>
+                  <div className="flex-1">
+                    <strong className="block">{testEmailResult.success ? "Verification Succeeded" : "Verification Failed"}</strong>
+                    <p className="mt-0.5">{testEmailResult.message}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-3.5 text-xs">
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="font-bold text-slate-700">Resend API Key</label>
+                    <a
+                      href="https://resend.com/api-keys"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] font-bold text-indigo-600 hover:underline"
+                    >
+                      Get Free API Key (resend.com) ↗
+                    </a>
+                  </div>
+                  <input
+                    type="password"
+                    value={emailForm.apiKey}
+                    onChange={(e) => setEmailForm({ ...emailForm, apiKey: e.target.value })}
+                    placeholder="re_123456789abcdef..."
+                    className="w-full rounded-xl border border-slate-300 p-2 font-mono text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Free tier includes 3,000 emails/month. Paste your API key here or configure <code>RESEND_API_KEY</code> in environment variables.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Sender Email Address (From)</label>
+                  <input
+                    type="text"
+                    value={emailForm.fromEmail}
+                    onChange={(e) => setEmailForm({ ...emailForm, fromEmail: e.target.value })}
+                    placeholder="Echo.ai Alerts <onboarding@resend.dev>"
+                    className="w-full rounded-xl border border-slate-300 p-2 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Use <code>onboarding@resend.dev</code> for instant testing, or your verified domain (e.g. <code>alerts@yourclinic.com</code>).
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Alert Recipient Email (To)</label>
+                  <input
+                    type="email"
+                    value={emailForm.recipientEmail}
+                    onChange={(e) => setEmailForm({ ...emailForm, recipientEmail: e.target.value })}
+                    placeholder="zaryabsheikh0@gmail.com"
+                    className="w-full rounded-xl border border-slate-300 p-2 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    All new inbound leads, contact numbers, and urgent chat handovers will be sent to this inbox.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row justify-between gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleTestEmailConnection}
+                  disabled={isTestingEmail}
+                  className="rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2 font-bold text-indigo-700 hover:bg-indigo-100 transition text-xs flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {isTestingEmail ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5 text-indigo-700" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      <span>Sending Test Email...</span>
+                    </>
+                  ) : (
+                    <span>🧪 Send Live Test Email</span>
+                  )}
+                </button>
+
+                <div className="flex items-center gap-2 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setActiveIntegrationModal(null)}
+                    className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-bold text-slate-700 hover:bg-slate-50 transition text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveIntegration("email", emailForm)}
+                    disabled={savingProvider === "email"}
+                    className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white hover:bg-indigo-700 transition text-xs shadow-xs disabled:opacity-50 cursor-pointer"
+                  >
+                    {savingProvider === "email" ? "Saving..." : "Save Email Settings"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

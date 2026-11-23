@@ -214,7 +214,7 @@ export const industries: Record<string, Industry> = {
     plans: [
       { name: "Starter", price: "39", features: ["500 conversations", "FAQ & policy answers", "Product recommendations", "Email handover"] },
       { name: "Growth", price: "99", highlight: true, features: ["2,000 conversations", "Live order tracking", "Returns workflow", "Analytics", "3 team members"] },
-      { name: "Scale", price: "249", features: ["8,000 conversations", "Multiple stores", "Custom actions & API", "Priority support"] },
+      { name: "Pro", price: "199", features: ["8,000 conversations", "Multiple stores", "Custom actions & API", "Priority support"] },
     ],
     faq: [
       ["Can it show real order status?", "Yes. It verifies order number and email, then reads live status from your store."],

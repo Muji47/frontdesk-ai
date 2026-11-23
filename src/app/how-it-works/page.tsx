@@ -33,7 +33,7 @@ const steps = [
     step: "04",
     title: "Paste One Script Tag on Your Website",
     desc: "Drop our lightweight, asynchronous embed script right before the closing </body> tag. It runs inside an isolated Shadow DOM container to prevent any CSS clashes with your website.",
-    code: '<script src="https://cdn.echo.ai/widget.js" data-agent-id="agt_8f2k1" async></script>',
+    code: '<script src="https://frontdesk-ai-rho-swart.vercel.app/widget.js" data-org="YOUR_ORG_ID" async></script>',
     details: ["< 25 KB bundle size", "Mobile responsive & fast loading", "Compatible with WordPress, Shopify, Webflow, Wix"],
   },
 ];

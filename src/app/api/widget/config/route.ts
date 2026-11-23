@@ -6,7 +6,18 @@ import { handleApiError } from "@/server/errors";
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const orgId = searchParams.get("orgId") || "org_demo_101";
+    let orgId = searchParams.get("orgId") || searchParams.get("org");
+    const agentId = searchParams.get("agentId") || searchParams.get("agent");
+
+    if (!orgId && agentId) {
+      const foundAgent = db.prepare("SELECT organization_id FROM agents WHERE id = ?").get(agentId) as { organization_id: string } | undefined;
+      if (foundAgent?.organization_id) {
+        orgId = foundAgent.organization_id;
+      }
+    }
+    if (!orgId) {
+      orgId = "org_demo_101";
+    }
 
     // Enforce Origin & Referer Domain Whitelisting
     const origin = req.headers.get("origin") || req.headers.get("referer");

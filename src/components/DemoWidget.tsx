@@ -25,6 +25,31 @@ export function DemoWidget({ cfg }: { cfg: Industry }) {
     if (/(human|person|agent|staff|someone|team member)/.test(t) && !d.replies.some((r) => r.match.some((m) => t.includes(m)))) {
       return { from: "bot", text: d.handover };
     }
+
+    // Dynamic order lookup: never hallucinate #10842 if user queried a different order number
+    const orderMatch = q.match(/#?(\d{4,8})/);
+    if (orderMatch) {
+      const num = orderMatch[1];
+      if (num === "10842") {
+        return {
+          from: "bot",
+          text: `Found it — order #${num}:`,
+          card: {
+            title: `Order #${num}`,
+            lines: ["FedEx · In transit", "Arrives tomorrow by 4:00 PM"],
+            badge: "In transit",
+          },
+          chips: ["Return an item", "Speak to support"],
+        };
+      } else {
+        return {
+          from: "bot",
+          text: `I searched our store records for order #${num}, but could not locate a matching order with that number. Please verify your order number or let me know the checkout email address you used.`,
+          chips: ["#10842", "Shipping times", "Speak to support"],
+        };
+      }
+    }
+
     const hit = d.replies.find((r) => r.match.some((m) => t.includes(m)));
     if (hit) return { from: "bot", text: hit.text, chips: hit.chips, card: hit.card };
     if (/(human|person|agent|staff|someone)/.test(t)) return { from: "bot", text: d.handover };

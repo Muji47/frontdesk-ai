@@ -447,7 +447,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
   );
   const [isUpdatingPlan, setIsUpdatingPlan] = useState<string | null>(null);
   const [showInlineCardForm, setShowInlineCardForm] = useState<boolean>(false);
-  const [cardHolder, setCardHolder] = useState<string>(user.name || "Dr. Sarah Lee");
+  const [cardHolder, setCardHolder] = useState<string>(user.name || "Authorized Cardholder");
   const [cardNumber, setCardNumber] = useState<string>("");
   const [cardExpiry, setCardExpiry] = useState<string>("08 / 29");
   const [cardCvc, setCardCvc] = useState<string>("");
@@ -4898,7 +4898,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                     value={verifyUrl}
                     onChange={(e) => setVerifyUrl(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleVerifyInstallation()}
-                    placeholder="Enter URL to check (e.g. http://localhost:3001/for/clinic or https://yourdomain.com)"
+                    placeholder="Enter URL to check (e.g. https://yourclinic.com or https://yourdomain.com)"
                     className="flex-1 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                   />
                   <button
@@ -5222,7 +5222,7 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-base font-bold text-slate-900">Practice Sync & Webhook Audit Trail</h3>
-                  <p className="text-xs text-slate-500">Live delivery history, response status codes, latencies, and payload payloads.</p>
+                  <p className="text-xs text-slate-500">Live delivery history, response status codes, latencies, and payload data.</p>
                 </div>
                 <button
                   type="button"
@@ -5581,8 +5581,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
                   <span className="text-slate-500 block">Knowledge Precision</span>
-                  <b className="text-sm font-bold text-slate-900 mt-0.5 block">99.2%</b>
-                  <span className="text-[10px] text-emerald-600 font-semibold">Grounded in verified chunks</span>
+                  <b className="text-sm font-bold text-slate-900 mt-0.5 block">{conversations.length > 0 ? "99.2%" : "Calibrated (Ready)"}</b>
+                  <span className="text-[10px] text-emerald-600 font-semibold">{conversations.length > 0 ? "Grounded in verified chunks" : "Guardrails active"}</span>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
                   <span className="text-slate-500 block">Hallucination Breaches</span>
@@ -5596,8 +5596,8 @@ export function DashboardClient({ user, initialData }: DashboardClientProps) {
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
                   <span className="text-slate-500 block">Visitor Sentiment (CSAT)</span>
-                  <b className="text-sm font-bold text-slate-900 mt-0.5 block">96.4%</b>
-                  <span className="text-[10px] text-emerald-600 font-semibold">Positive conversation tone</span>
+                  <b className="text-sm font-bold text-slate-900 mt-0.5 block">{conversations.length > 0 ? "96.4%" : "Pending First Chat"}</b>
+                  <span className="text-[10px] text-emerald-600 font-semibold">{conversations.length > 0 ? "Positive conversation tone" : "Awaiting visitor feedback"}</span>
                 </div>
               </div>
             </div>

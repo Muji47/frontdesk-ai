@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
       message: body.message,
       visitorName: body.visitorName,
       visitorContact: body.visitorContact,
+      customerContext: body.customerContext,
       pageContext: body.pageContext,
     });
 

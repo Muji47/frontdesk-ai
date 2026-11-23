@@ -33,12 +33,29 @@
       document.currentScript ||
       document.querySelector("script[src*='widget.js']") ||
       document.querySelector("script[data-org]") ||
-      document.querySelector("script[data-org-id]");
+      document.querySelector("script[data-org-id]") ||
+      document.querySelector("script[data-agent-id]");
 
   const orgId =
     scriptTag?.getAttribute("data-org") ||
     scriptTag?.getAttribute("data-org-id") ||
     "org_demo_101";
+
+  const agentId =
+    scriptTag?.getAttribute("data-agent-id") ||
+    scriptTag?.getAttribute("data-agent") ||
+    null;
+
+  // Initialize Global Client SDK for Identify & Cart context
+  window.Echo = window.Echo || {};
+  window.Frontdesk = window.Frontdesk || window.Echo;
+  window.Echo.identify = function (userData) {
+    window.__ECHO_CUSTOMER_CONTEXT__ = userData;
+    try {
+      sessionStorage.setItem("echo_customer_context", JSON.stringify(userData));
+    } catch (_) {}
+  };
+  window.Frontdesk.identify = window.Echo.identify;
   let hostUrl = "";
   try {
     if (scriptTag && scriptTag.src) {
@@ -956,11 +973,24 @@
     const trimmed = (text || "").trim();
     if (!trimmed || isSending) return;
 
+    if (trimmed.length > 2000) {
+      renderBotMessage("⚠️ Message cannot exceed 2,000 characters. Please shorten your message.", null);
+      return;
+    }
+
     const userMsgEl = renderUserMessage(trimmed, null);
     input.value = "";
     isSending = true;
     sendBtn.disabled = true;
     showTypingIndicator();
+
+    let customerCtx = window.__ECHO_CUSTOMER_CONTEXT__;
+    if (!customerCtx) {
+      try {
+        const stored = sessionStorage.getItem("echo_customer_context");
+        if (stored) customerCtx = JSON.parse(stored);
+      } catch (_) {}
+    }
 
     try {
       const res = await fetch(`${hostUrl}/api/chat`, {
@@ -970,7 +1000,9 @@
           message: trimmed,
           conversationId,
           orgId,
-          visitorName: "Website Visitor (" + window.location.hostname + ")",
+          agentId,
+          visitorName: customerCtx?.name || customerCtx?.email ? (customerCtx.name || customerCtx.email) : ("Website Visitor (" + window.location.hostname + ")"),
+          customerContext: customerCtx,
           pageContext: extractHostPageContext(),
         }),
       });
@@ -998,6 +1030,8 @@
         const errData = await res.json().catch(() => ({}));
         if (res.status === 403) {
           renderBotMessage("⚠️ " + (errData.error?.message || "This website domain is not authorized. Please whitelist it in the Echo.ai Dashboard."), null);
+        } else if (res.status === 400 && errData.error?.message) {
+          renderBotMessage("⚠️ " + errData.error.message, null);
         } else {
           renderBotMessage("I'm sorry, I'm temporarily having trouble connecting. Our front desk team has been notified.", null);
         }

@@ -599,7 +599,7 @@ export function ensureDemoAndSalesOrgs() {
         },
         {
           title: "Website Setup & Installation",
-          content: "Setup takes less than 2 minutes. Point Echo.ai to your website URL or upload PDFs to train your assistant. To install, paste our lightweight script before the closing </body> tag: <script src=\"https://cdn.echo.ai/widget.js\" data-org=\"YOUR_ORG_ID\" async></script>. Works on WordPress, Shopify, Webflow, Squarespace, Wix, and custom websites."
+          content: "Setup takes less than 2 minutes. Point Echo.ai to your website URL or upload PDFs to train your assistant. To install, paste our lightweight script before the closing </body> tag: <script src=\"https://frontdesk-ai-rho-swart.vercel.app/widget.js\" data-org=\"YOUR_ORG_ID\" async></script>. Works on WordPress, Shopify, Webflow, Squarespace, Wix, and custom websites."
         },
         {
           title: "Supported Practice Software & Integrations",
